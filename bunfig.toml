@@ -1,0 +1,5 @@
+# Project-level Bun defaults for mainland China development.
+# Docker builds may overwrite this file inside the image when USE_MIRROR=false.
+
+[install]
+registry = "https://registry.npmmirror.com"

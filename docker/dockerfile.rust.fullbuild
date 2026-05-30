@@ -1,0 +1,32 @@
+FROM rust:1.95-bookworm AS backend-builder
+
+WORKDIR /build/server-rust
+
+COPY server-rust/Cargo.toml server-rust/Cargo.lock ./
+COPY server-rust/src ./src
+
+RUN cargo build --release --locked
+
+FROM debian:bookworm-slim AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV PORT=6676
+ENV PUBLIC_PATH=/app/public
+ENV DATA_DIR=/app/.blinkora
+ENV TRUST_PROXY=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=backend-builder /build/server-rust/target/release/blinkora-rust /app/blinkora-rust
+COPY release/rust/public /app/public
+COPY prisma/migrations /app/prisma/migrations
+
+RUN chmod +x /app/blinkora-rust
+
+EXPOSE 6676
+
+CMD ["/app/blinkora-rust"]

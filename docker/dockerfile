@@ -1,0 +1,118 @@
+# Bun runtime used by the Node-based builder below.
+FROM oven/bun:1.2.8 AS bun-runtime
+
+# Build Stage
+FROM node:20-bullseye AS builder
+
+# Add Build Arguments
+ARG USE_MIRROR=false
+ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG BUN_REGISTRY=https://registry.npmjs.org
+
+WORKDIR /app
+
+COPY --from=bun-runtime /usr/local/bin/bun /usr/local/bin/bun
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
+
+# Set Sharp environment variables for package installation
+ENV SHARP_IGNORE_GLOBAL_LIBVIPS=1
+ENV npm_config_sharp_binary_host="https://npmmirror.com/mirrors/sharp"
+ENV npm_config_sharp_libvips_binary_host="https://npmmirror.com/mirrors/sharp-libvips"
+
+# Set Prisma environment variables to optimize installation
+ENV PRISMA_ENGINES_MIRROR="https://registry.npmmirror.com/-/binary/prisma"
+ENV PRISMA_SKIP_POSTINSTALL_GENERATE=true
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+
+# Copy Project Files
+COPY . .
+
+# Configure registries. USE_MIRROR=true switches the default npm/Bun
+# registries to npmmirror unless explicit build args are provided.
+RUN NPM_REGISTRY_EFFECTIVE="$NPM_REGISTRY"; \
+    BUN_REGISTRY_EFFECTIVE="$BUN_REGISTRY"; \
+    if [ "$USE_MIRROR" = "true" ]; then \
+        if [ "$NPM_REGISTRY_EFFECTIVE" = "https://registry.npmjs.org" ]; then \
+            NPM_REGISTRY_EFFECTIVE="https://registry.npmmirror.com"; \
+        fi; \
+        if [ "$BUN_REGISTRY_EFFECTIVE" = "https://registry.npmjs.org" ]; then \
+            BUN_REGISTRY_EFFECTIVE="https://registry.npmmirror.com"; \
+        fi; \
+    fi; \
+    printf '[install]\nregistry = "%s"\n\n[install.cache]\ndir = "/root/.bun/install/cache"\ndisable = false\ndisableManifest = false\n' "$BUN_REGISTRY_EFFECTIVE" > bunfig.toml; \
+    printf 'registry=%s\nupdate-notifier=false\n' "$NPM_REGISTRY_EFFECTIVE" > .npmrc; \
+    npm config set registry "$NPM_REGISTRY_EFFECTIVE"; \
+    npm config set fetch-retries 5; \
+    npm config set fetch-retry-mintimeout 20000; \
+    npm config set fetch-retry-maxtimeout 120000; \
+    echo "Using npm registry: $(npm config get registry)"; \
+    echo "Using Bun registry: $BUN_REGISTRY_EFFECTIVE"; \
+    bun --revision
+
+# Install dependencies with npm to avoid Bun installer failures in Docker/overlay filesystems.
+RUN npm install --workspaces --include-workspace-root --ignore-scripts --no-audit --no-fund --legacy-peer-deps --loglevel=error
+RUN npx prisma generate --schema prisma/schema.prisma
+RUN bun run build:web
+RUN bun run build:seed
+
+RUN printf '#!/bin/sh\necho "Current Environment: $NODE_ENV"\nnpx prisma migrate deploy\nnode server/seed.js\nnode server/index.js\n' > start.sh && \
+    chmod +x start.sh
+
+
+# Runtime Stage - Using Alpine as required
+FROM node:20-alpine3.22 AS runner
+
+# Add Build Arguments
+ARG USE_MIRROR=false
+ARG NPM_REGISTRY=https://registry.npmjs.org
+
+WORKDIR /app
+
+# Environment Variables
+ENV NODE_ENV=production
+# If there is a proxy or load balancer behind HTTPS, you may need to disable secure cookies
+ENV DISABLE_SECURE_COOKIE=false
+# Set Trust Proxy
+ENV TRUST_PROXY=1
+# Set Sharp environment variables
+ENV SHARP_IGNORE_GLOBAL_LIBVIPS=1
+ENV npm_config_sharp_binary_host="https://npmmirror.com/mirrors/sharp"
+ENV npm_config_sharp_libvips_binary_host="https://npmmirror.com/mirrors/sharp-libvips"
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+
+RUN NPM_REGISTRY_EFFECTIVE="$NPM_REGISTRY"; \
+    if [ "$USE_MIRROR" = "true" ] && [ "$NPM_REGISTRY_EFFECTIVE" = "https://registry.npmjs.org" ]; then \
+        NPM_REGISTRY_EFFECTIVE="https://registry.npmmirror.com"; \
+    fi; \
+    apk add --no-cache dumb-init openssl && \
+    printf 'registry=%s\nupdate-notifier=false\n' "$NPM_REGISTRY_EFFECTIVE" > .npmrc && \
+    npm config set registry "$NPM_REGISTRY_EFFECTIVE" && \
+    npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    echo "Using npm registry: $(npm config get registry)"
+
+# Copy Build Artifacts and Necessary Files
+COPY --from=builder /app/dist ./server
+COPY --from=builder /app/server/lute.min.js ./server/lute.min.js
+COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/node_modules/.prisma/client ./node_modules/.prisma/client
+COPY --from=builder /app/start.sh ./
+
+RUN chmod +x ./start.sh && \
+    ls -la start.sh
+
+# Install dependencies with --ignore-scripts to skip native compilation
+RUN echo "Installing additional dependencies..." && \
+    npm install --no-audit --no-fund --legacy-peer-deps --loglevel=error @node-rs/crc32@1.10.6 sharp@0.34.1 prisma@5.22.0 @prisma/client@5.22.0 @langchain/core@0.3.78 @langchain/community@0.3.57 @libsql/client@0.15.15 @libsql/core@0.15.15 && \
+    npm install -g --no-audit --no-fund --legacy-peer-deps --loglevel=error prisma@5.22.0 && \
+    npx prisma generate && \
+    # find / -type d -name "onnxruntime-*" -exec rm -rf {} + 2>/dev/null || true && \
+    # npm cache clean --force && \
+    rm -rf /tmp/* && \
+    rm -rf /var/cache/apk/* /root/.npm /root/.cache
+
+# Expose Port (Adjust According to Actual Application)
+EXPOSE 6676
+
+CMD ["/usr/bin/dumb-init", "--", "/bin/sh", "-c", "./start.sh"]

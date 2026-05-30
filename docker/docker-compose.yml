@@ -1,0 +1,61 @@
+name: blinkora
+
+networks:
+  blinkora-net:
+    driver: bridge
+
+services:
+  web:
+    image: blinkora-web:latest
+    container_name: blinkora-web
+    build:
+      context: ..
+      args:
+        USE_MIRROR: ${USE_MIRROR:-true}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+        BUN_REGISTRY: ${BUN_REGISTRY:-https://registry.npmjs.org}
+      dockerfile: docker/dockerfile
+    environment:
+      NODE_ENV: production
+      NEXTAUTH_URL: http://localhost:6678
+      NEXT_PUBLIC_BASE_URL: http://localhost:6678
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in root .env before deployment}
+      DATABASE_URL: postgresql://postgres:mysecretpassword@db:5432/postgres
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: always
+    ports:
+      - 6678:6676
+    volumes:
+      - ./data/blinkora:/app/.blinkora
+      - ./data/backup:/app/backup
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://127.0.0.1:6676/"]
+      interval: 30s 
+      timeout: 10s  
+      retries: 5
+      start_period: 30s
+    networks:
+      - blinkora-net
+
+  db:
+    image: postgres:14
+    container_name: blinkora-db
+    restart: always
+    # ports:
+    #  - 5432:5432
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+    networks:
+      - blinkora-net
