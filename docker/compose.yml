@@ -1,0 +1,58 @@
+name: blinkora
+
+networks:
+  blinkora-net:
+    driver: bridge
+
+services:
+  web:
+    image: blinkora-web:latest
+    container_name: blinkora-web
+    build:
+      context: .
+      dockerfile: dockerfile.rust
+    environment:
+      NODE_ENV: production
+      PORT: 6676
+      PUBLIC_PATH: /app/public
+      DATA_DIR: /app/.blinkora
+      SCHEMA_PATH: /app/db/schema.sql
+      BLINKORA_SECRET: ${BLINKORA_SECRET:-blinkora-local-default-secret-change-me}
+      DATABASE_URL: postgresql://postgres:mysecretpassword@db:5432/postgres
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - 6676:6676
+    volumes:
+      - ./data/blinkora:/app/.blinkora
+      - ./data/backup:/app/backup
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://127.0.0.1:6676/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+    networks:
+      - blinkora-net
+
+  db:
+    image: postgres:14
+    container_name: blinkora-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: mysecretpassword
+    ports:
+      - 127.0.0.1:55433:5432
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+    networks:
+      - blinkora-net

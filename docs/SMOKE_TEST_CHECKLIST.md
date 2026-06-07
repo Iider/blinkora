@@ -5,11 +5,9 @@
 ## 使用规则
 
 - 当前统一入口：`http://localhost:6676`。
-- 当前主运行栈：Rust，入口为 `docker compose -f docker/docker-compose.rust.yml ...`，容器为 `blinkora-rust-web` / `blinkora-rust-db`，默认宿主机端口为 `6676`。
+- 当前主运行栈：Rust，入口为 `cd docker && docker compose ...`，容器为 `blinkora-web` / `blinkora-db`，默认宿主机端口为 `6676`。
 - Rust 后端固定 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_SMOKE_USER=<test-user> BLINKORA_SMOKE_PASSWORD=<test-password> bun run smoke:rust`，覆盖健康检查、静态资源、登录/注册、用户详情、Public、字体、Workspace、配置、笔记编辑/历史版本/引用/排序、标签、评论/回复/更新/删除/转 TODO、附件资源页文件夹创建/列表/重命名/移动/删除、文件上传、错误 workspace 文件读/删拒绝、同前缀兄弟文件夹不误删、导出、备份导入为新 Workspace、导入后附件路径替换与恢复文件读取、回收站、批量删除、MCP SSE 未鉴权拒绝、握手、工具清单和四个核心工具调用主路径。设置 `BLINKORA_S3_SMOKE_*` 环境变量后，还会验证真实 S3 配置、`/api/s3file/*` 上传读取、资源移动和对象删除。
-- TS/Node 参考栈入口：`docker compose -f docker/docker-compose.yml ...`，容器为 `blinkora-web` / `blinkora-db`，默认宿主机端口为 `6678`。
-- 不再使用 `6666`，该端口会被 Chromium / Edge 判定为 unsafe port。
-- 不影响旧 Blinko 服务：旧服务如仍在 `1111` 运行，不应被当前烟测命令停止、改名或占用。
+- Web 端口固定使用 `6676`，避免 Chromium / Edge 的 unsafe port 限制。
 - 优先使用浏览器真实交互验证，必要时再补充容器日志和接口检查。
 - 使用明确测试前缀，例如 `烟测 2026-05-19`，便于清理。
 - 烟测过程中创建的测试笔记、评论、附件和临时 Workspace 应在结束前清理，清理不了的内容必须记录。
@@ -37,10 +35,10 @@ Docker compose 文件：
 
 | 状态 | 检查项 | 操作 | 预期结果 |
 | --- | --- | --- | --- |
-| [ ] | Docker 服务健康 | Rust 主栈执行 `docker compose -f docker/docker-compose.rust.yml ps`；TS/Node 参考栈只在行为对照时执行 `docker compose -f docker/docker-compose.yml ps` | 当前目标栈的 Web 和 DB 容器均为 healthy |
+| [ ] | Docker 服务健康 | Rust 主栈在 `docker/` 执行 `docker compose ps` | Web 和 DB 容器均为 healthy |
 | [ ] | Web 端口正确 | 打开 Rust 主栈 `http://localhost:6676` | 页面可打开，不出现 `ERR_UNSAFE_PORT` |
-| [ ] | 无旧端口误用 | 搜索当前文档或配置中的 Web 入口 | 运行入口不指向 `6666` |
-| [ ] | 启动日志无新错误 | 对当前目标 compose 执行 `logs --tail=80 web` | 除历史未登录请求外，无新增服务端异常 |
+| [ ] | Web 端口统一 | 搜索当前文档或配置中的 Web 入口 | 运行入口使用 `6676` |
+| [ ] | 启动日志无新错误 | 对当前目标 compose 执行 `logs --tail=80 web` | 除未登录请求外，无新增服务端异常 |
 | [ ] | 前端控制台无错误 | 浏览器打开首页并查看 console | 无白屏错误、chunk 加载错误、i18n key 直出 |
 | [ ] | Vditor / Lute 资源 | 打开首页编辑器并查看 network / console；或请求 `/vditor-assets/dist/js/lute/lute.min.js` | 编辑器出现 `.vditor`，Lute 资源返回 JS，不出现 `Unexpected token '<'` 或 `Lute is not defined` |
 | [ ] | 静态资源 fallback | 请求一个不存在的 `.js`，如 `/vditor-assets/dist/js/missing-smoke.js` | 返回 `404`，不返回 `index.html` |
@@ -122,11 +120,11 @@ Docker compose 文件：
 
 | 状态 | 检查项 | 操作 | 预期结果 |
 | --- | --- | --- | --- |
-| [ ] | S3 字段命名 | 打开设置页存储区域并选择 S3 | 输入框提示保留 `Endpoint`、`Access Key`、`Secret Key`、`Bucket`、`Region ID`、`Custom Path` |
+| [ ] | S3 字段命名 | 打开设置页存储区域并选择 S3 | 输入框提示显示端点、访问密钥 ID、访问密钥、桶、地区、自定义路径 |
 | [ ] | S3 保存校验 | 填写可用 S3 / OSS / COS 配置后点击保存并验证 | 校验成功并保持 S3 存储，不误回退本地 |
-| [ ] | S3 校验失败回退 | 使用明显无效配置测试保存并验证 | 明确提示失败，并回到本地存储方案 |
-| [ ] | Custom Path 空值 | 清空 `Custom Path` 后阅读说明或上传测试文件 | 文件直接保存到 Bucket 根目录，不自动创建默认目录 |
-| [ ] | Custom Path 非空 | 设置如 `blinkora/` 后上传测试文件 | 文件保存到指定前缀下 |
+| [ ] | S3 校验失败回退 | 使用明显无效配置测试保存并验证 | 明确提示失败，实际存储保持本地，S3 表单仍显示且字段值不丢失 |
+| [ ] | 自定义路径空值 | 清空自定义路径后阅读说明或上传测试文件 | 文件直接保存到桶根目录，不自动创建默认目录 |
+| [ ] | 自定义路径非空 | 设置如 `blinkora/` 后上传测试文件 | 文件保存到指定前缀下 |
 
 ## 6. 标签、筛选和搜索
 
@@ -169,7 +167,7 @@ Docker compose 文件：
 | [ ] | 删除测试资源 | 对仅测试使用的附件选择连同资源删除 | 资源页无测试文件残留 |
 | [ ] | 删除测试标签 | 若创建了测试标签，清理标签 | 标签面板无测试标签残留 |
 | [ ] | 删除测试 Workspace | 若创建了临时 Workspace 且 UI 支持删除，删除它 | 默认 Workspace 保留，临时 Workspace 不再出现在下拉 |
-| [ ] | 复查日志 | `docker compose -f docker/docker-compose.rust.yml logs --tail=80 web` | 无烟测期间新增服务端异常 |
+| [ ] | 复查日志 | 在 `docker/` 执行 `docker compose logs --tail=80 web` | 无烟测期间新增服务端异常 |
 
 ## 通过标准
 

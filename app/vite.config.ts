@@ -45,12 +45,12 @@ export default defineConfig({
 
           if (
             packageIn(pkg, ['@heroui', '@react-aria', '@react-stately', '@react-types', '@internationalized', 'framer-motion', 'motion']) ||
-            packageIn(pkg, ['mobx', 'mobx-react-lite', '@trpc', 'superjson', 'zod', 'axios', 'dayjs', 'lodash', 'lodash-es', 'i18next', 'react-i18next', 'i18next-browser-languagedetector', 'i18next-http-backend', 'next-themes', 'nprogress', 'clsx', 'tailwind-merge', 'usehooks-ts', 'filesize'])
+            packageIn(pkg, ['mobx', 'mobx-react-lite', '@trpc', 'superjson', 'zod', 'axios', 'dayjs', 'lodash', 'lodash-es', 'i18next', 'react-i18next', 'i18next-browser-languagedetector', 'i18next-http-backend', 'next-themes', 'clsx', 'tailwind-merge', 'usehooks-ts', 'filesize'])
           ) {
             return 'vendor-foundation';
           }
 
-          if (packageIn(pkg, ['@dnd-kit', 'react-beautiful-dnd-next', 'react-dropzone', 'react-swipeable', 'react-masonry-css', 'react-burger-menu', 'rctx-contextmenu', 'vanilla-tilt'])) {
+          if (packageIn(pkg, ['@dnd-kit', 'react-beautiful-dnd-next', 'react-dropzone', 'react-masonry-css', 'react-burger-menu', 'rctx-contextmenu'])) {
             return 'vendor-interactions';
           }
 
@@ -91,11 +91,11 @@ export default defineConfig({
             return 'vendor-diagrams';
           }
 
-          if (packageIn(pkg, ['three', '@react-three', '@react-spring', '@shadergradient', 'react-photo-view', 'swiper', 'react-webcam', 'canvas-confetti', 'emoji-picker-react', 'qrcode.react', 'boring-avatars', 'react-file-icon'])) {
+          if (packageIn(pkg, ['three', '@react-three', '@react-spring', '@shadergradient', 'react-photo-view', 'swiper', 'react-webcam', 'canvas-confetti', 'emoji-picker-react', 'qrcode.react', 'react-file-icon'])) {
             return 'vendor-media';
           }
 
-          if (packageIn(pkg, ['@iconify', '@lobehub'])) {
+          if (packageIn(pkg, ['@iconify'])) {
             return 'vendor-icons';
           }
 
@@ -107,7 +107,7 @@ export default defineConfig({
             return 'vendor-compat';
           }
 
-          if (packageIn(pkg, ['@hirohe/react-watermark', 'react-hot-toast', 'react-accessible-treeview', 'react-simple-pull-to-refresh', '@floating-ui', 'aria-hidden', '@motionone', 'popmotion'])) {
+          if (packageIn(pkg, ['react-hot-toast', 'react-accessible-treeview', '@floating-ui', 'aria-hidden', '@motionone', 'popmotion'])) {
             return 'vendor-ui-helpers';
           }
 

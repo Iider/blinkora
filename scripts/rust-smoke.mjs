@@ -16,7 +16,7 @@ const s3SmokeRegion = process.env.BLINKORA_S3_SMOKE_REGION || 'us-east-1';
 const s3SmokeBucket = process.env.BLINKORA_S3_SMOKE_BUCKET || '';
 const s3SmokeAccessKey = process.env.BLINKORA_S3_SMOKE_ACCESS_KEY || '';
 const s3SmokeSecretKey = process.env.BLINKORA_S3_SMOKE_SECRET_KEY || '';
-const s3SmokeCustomPath = process.env.BLINKORA_S3_SMOKE_CUSTOM_PATH || `rust-smoke-${stamp}/`;
+const s3SmokeCustomPath = process.env.BLINKORA_S3_SMOKE_CUSTOM_PATH || `smoke-${stamp}/`;
 const mockEmbeddingSmoke = process.env.BLINKORA_MOCK_EMBEDDING_SMOKE === '1';
 const mockEmbeddingPort = Number(process.env.BLINKORA_MOCK_EMBEDDING_PORT || 55987);
 const mockEmbeddingBaseURL = process.env.BLINKORA_MOCK_EMBEDDING_BASE_URL || `http://host.docker.internal:${mockEmbeddingPort}/v1`;
@@ -25,11 +25,11 @@ const realEmbeddingUseLocalMock = process.env.BLINKORA_REAL_EMBEDDING_USE_LOCAL_
 const realEmbeddingProvider = process.env.BLINKORA_REAL_EMBEDDING_PROVIDER || 'custom';
 const realEmbeddingBaseURL = process.env.BLINKORA_REAL_EMBEDDING_BASE_URL || (realEmbeddingUseLocalMock ? mockEmbeddingBaseURL : '');
 const realEmbeddingApiKey = process.env.BLINKORA_REAL_EMBEDDING_API_KEY || (realEmbeddingUseLocalMock ? 'real-smoke-mock-key' : '');
-const realEmbeddingModelKey = process.env.BLINKORA_REAL_EMBEDDING_MODEL_KEY || (realEmbeddingUseLocalMock ? `rust-real-smoke-mock-${stamp}` : '');
+const realEmbeddingModelKey = process.env.BLINKORA_REAL_EMBEDDING_MODEL_KEY || (realEmbeddingUseLocalMock ? `blinkora-real-smoke-mock-${stamp}` : '');
 const realEmbeddingApiVersion = process.env.BLINKORA_REAL_EMBEDDING_API_VERSION || '';
 const uploadByUrlPort = Number(process.env.BLINKORA_UPLOAD_BY_URL_PORT || 55988);
-const uploadByUrlSourceURL = process.env.BLINKORA_UPLOAD_BY_URL_SOURCE_URL || `http://host.docker.internal:${uploadByUrlPort}/rust-upload-by-url-${stamp}.txt`;
-const dockerDbContainer = process.env.BLINKORA_DOCKER_DB_CONTAINER || 'blinkora-rust-db';
+const uploadByUrlSourceURL = process.env.BLINKORA_UPLOAD_BY_URL_SOURCE_URL || `http://host.docker.internal:${uploadByUrlPort}/upload-by-url-${stamp}.txt`;
+const dockerDbContainer = process.env.BLINKORA_DOCKER_DB_CONTAINER || 'blinkora-db';
 
 if (mockEmbeddingSmoke && realEmbeddingSmoke) {
   fail('Only one embedding smoke mode can be enabled at a time', {
@@ -129,9 +129,9 @@ function startMockEmbeddingServer() {
 }
 
 function startUploadByUrlServer() {
-  const body = `rust-upload-by-url-data-${stamp}`;
+  const body = `upload-by-url-data-${stamp}`;
   const server = http.createServer((req, res) => {
-    if (req.method !== 'GET' || !req.url.startsWith(`/rust-upload-by-url-${stamp}.txt`)) {
+    if (req.method !== 'GET' || !req.url.startsWith(`/upload-by-url-${stamp}.txt`)) {
       res.writeHead(404, { 'content-type': 'text/plain' });
       res.end('not found');
       return;
@@ -434,7 +434,7 @@ assert(missing.response.status === 404, 'missing js should 404', {
 
 const token = await login();
 const trpcLogin = await trpc('users.login', { name: user, password }, null);
-assert(trpcLogin?.name === user && trpcLogin?.token, 'users.login tRPC parity', trpcLogin);
+assert(trpcLogin?.name === user && trpcLogin?.token, 'users.login tRPC compatibility', trpcLogin);
 
 const userDetail = await trpc('users.detail', {}, token, 'GET');
 assert(userDetail?.name === user && userDetail?.id, 'users.detail', userDetail);
@@ -473,7 +473,7 @@ const mcp = await openMcpSession(token);
 const initialize = await mcp.rpc('initialize', {
   protocolVersion: '2024-11-05',
   capabilities: {},
-  clientInfo: { name: 'blinkora-rust-smoke', version: '1.0.0' },
+  clientInfo: { name: 'blinkora-smoke', version: '1.0.0' },
 });
 assert(initialize.result?.serverInfo?.name === 'blinkora-mcp-server', 'MCP initialize', initialize);
 
@@ -524,11 +524,11 @@ mcp.close();
 const nativeAccounts = await trpc('users.nativeAccountList', {}, token, 'GET');
 assert(Array.isArray(nativeAccounts), 'users.nativeAccountList', nativeAccounts);
 
-const publicVersion = await trpc('public.serverVersion', {}, token, 'GET');
-assert(typeof publicVersion === 'string' && publicVersion.includes('rust'), 'public.serverVersion', publicVersion);
+const systemVersion = await trpc('system.serverVersion', {}, token, 'GET');
+assert(typeof systemVersion === 'string' && systemVersion.includes('rust'), 'system.serverVersion', systemVersion);
 
-const linkPreview = await trpc('public.linkPreview', { url: 'ftp://invalid-smoke.local' }, token);
-assert(linkPreview && typeof linkPreview.title === 'string', 'public.linkPreview safe invalid URL', linkPreview);
+const linkPreview = await trpc('system.linkPreview', { url: 'ftp://invalid-smoke.local' }, token);
+assert(linkPreview && typeof linkPreview.title === 'string', 'system.linkPreview safe invalid URL', linkPreview);
 
 const fonts = await trpc('fonts.list', {}, token, 'GET');
 assert(Array.isArray(fonts), 'fonts.list', fonts);

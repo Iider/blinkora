@@ -411,7 +411,7 @@ export const useEditorInit = (
       hint: {
         extend: Extend
       },
-      // Use local server for vditor dependencies (downloaded to server/dist/js/)
+      // Vditor runtime assets are served from app/public.
       cdn,
       async ctrlEnter(md) {
         await store.handleSend()

@@ -12,12 +12,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
     && rm -rf /var/lib/apt/lists/*
 
-COPY release/rust/blinkora-rust /app/blinkora-rust
+COPY release/rust/blinkora-server /app/blinkora-server
 COPY release/rust/public /app/public
-COPY prisma/migrations /app/prisma/migrations
+COPY release/rust/db/schema.sql /app/db/schema.sql
 
-RUN chmod +x /app/blinkora-rust
+RUN chmod +x /app/blinkora-server
 
 EXPOSE 6676
 
-CMD ["/app/blinkora-rust"]
+CMD ["/app/blinkora-server"]

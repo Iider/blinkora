@@ -1,9 +1,9 @@
 FROM rust:1.95-bookworm AS backend-builder
 
-WORKDIR /build/server-rust
+WORKDIR /build/server
 
-COPY server-rust/Cargo.toml server-rust/Cargo.lock ./
-COPY server-rust/src ./src
+COPY server/Cargo.toml server/Cargo.lock ./
+COPY server/src ./src
 
 RUN cargo build --release --locked
 
@@ -21,12 +21,12 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=backend-builder /build/server-rust/target/release/blinkora-rust /app/blinkora-rust
+COPY --from=backend-builder /build/server/target/release/blinkora-server /app/blinkora-server
 COPY release/rust/public /app/public
-COPY prisma/migrations /app/prisma/migrations
+COPY db/schema.sql /app/db/schema.sql
 
-RUN chmod +x /app/blinkora-rust
+RUN chmod +x /app/blinkora-server
 
 EXPOSE 6676
 
-CMD ["/app/blinkora-rust"]
+CMD ["/app/blinkora-server"]

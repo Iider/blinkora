@@ -20,6 +20,7 @@ export const StorageSetting = observer(() => {
   const blinkora = RootStore.Get(BlinkoraStore)
   const toast = RootStore.Get(ToastPlugin)
   const [isValidatingS3, setIsValidatingS3] = useState(false)
+  const [selectedObjectStorage, setSelectedObjectStorage] = useState<'local' | 's3' | null>(null)
   const store = RootStore.Local(() => ({
     s3AccessKeyId: "",
     s3AccessKeySecret: "",
@@ -29,15 +30,17 @@ export const StorageSetting = observer(() => {
     s3CustomPath: "",
     localCustomPath: "",
   }))
+  const activeObjectStorage = blinkora.config.value?.objectStorage === 's3' ? 's3' : 'local'
+  const visibleObjectStorage = selectedObjectStorage ?? activeObjectStorage
 
   useEffect(() => {
-    store.s3AccessKeyId = blinkora.config.value?.s3AccessKeyId!
-    store.s3AccessKeySecret = blinkora.config.value?.s3AccessKeySecret!
-    store.s3Endpoint = blinkora.config.value?.s3Endpoint!
-    store.s3Region = blinkora.config.value?.s3Region!
-    store.s3Bucket = blinkora.config.value?.s3Bucket!
-    store.s3CustomPath = blinkora.config.value?.s3CustomPath!
-    store.localCustomPath = blinkora.config.value?.localCustomPath!
+    store.s3AccessKeyId = blinkora.config.value?.s3AccessKeyId ?? ''
+    store.s3AccessKeySecret = blinkora.config.value?.s3AccessKeySecret ?? ''
+    store.s3Endpoint = blinkora.config.value?.s3Endpoint ?? ''
+    store.s3Region = blinkora.config.value?.s3Region ?? ''
+    store.s3Bucket = blinkora.config.value?.s3Bucket ?? ''
+    store.s3CustomPath = blinkora.config.value?.s3CustomPath ?? ''
+    store.localCustomPath = blinkora.config.value?.localCustomPath ?? ''
   }, [blinkora.config.value])
 
   const s3RequiredFieldsFilled = [
@@ -69,12 +72,15 @@ export const StorageSetting = observer(() => {
       await blinkora.config.call()
 
       if (result.ok) {
+        setSelectedObjectStorage(null)
         toast.success(t('s3-validation-success'))
       } else {
+        setSelectedObjectStorage('s3')
         toast.error(`${t('s3-validation-failed-switch-local')}${result.message ? `: ${result.message}` : ''}`)
       }
     } catch (error) {
       await blinkora.config.call()
+      setSelectedObjectStorage('s3')
       toast.error(error instanceof Error ? error.message : t('operation-failed'))
     } finally {
       setIsValidatingS3(false)
@@ -94,15 +100,21 @@ export const StorageSetting = observer(() => {
         <Dropdown>
           <DropdownTrigger>
             <Button startContent={<Icon icon="mdi:storage" width="20" height="20" />} color='primary' >
-              {blinkora.config.value?.objectStorage ?? t('local-file-system')}
+              {visibleObjectStorage === 's3' ? 'S3' : t('local-file-system')}
             </Button>
           </DropdownTrigger>
           <DropdownMenu onAction={async (key) => {
+            const nextStorage = key.toString() === 's3' ? 's3' : 'local'
+            setSelectedObjectStorage(nextStorage)
+            if (nextStorage === 's3') {
+              return
+            }
             await PromiseCall(api.config.update.mutate({
               key: 'objectStorage',
-              value: key.toString()
+              value: nextStorage
             }), { autoAlert: false })
             await blinkora.config.call()
+            setSelectedObjectStorage(null)
           }}>
             <DropdownItem key="local">  {t('local-file-system')}</DropdownItem>
             <DropdownItem key="s3">S3</DropdownItem>
@@ -112,7 +124,7 @@ export const StorageSetting = observer(() => {
         </Dropdown>
       </div>} />
 
-    {blinkora.config.value?.objectStorage != 's3' &&
+    {visibleObjectStorage !== 's3' &&
       <Item
         leftContent={<>
           <div>{t('custom-path')}</div>
@@ -131,7 +143,14 @@ export const StorageSetting = observer(() => {
     }
 
     {
-      blinkora.config.value?.objectStorage === 's3' && <>
+      visibleObjectStorage === 's3' && <>
+        {activeObjectStorage !== 's3' && <Item
+          type="col"
+          leftContent={<>{t('s3-pending-validation')}</>}
+          rightContent={<div className="text-xs text-warning leading-5">
+            {t('s3-pending-validation-desc')}
+          </div>}
+        />}
         <Item
           leftContent={<>{t('s3-endpoint')}</>}
           rightContent={<Input value={store.s3Endpoint} onChange={e => store.s3Endpoint = e.target.value} placeholder={t('s3-endpoint')} onBlur={async (e) => {

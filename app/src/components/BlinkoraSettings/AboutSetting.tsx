@@ -16,7 +16,7 @@ export const AboutSetting = observer(() => {
   const store = RootStore.Local(() => ({
     serverVersion: new PromiseState({
       function: async () => {
-        return await api.public.serverVersion.query()
+        return await api.system.serverVersion.query()
       }
     })
   }))

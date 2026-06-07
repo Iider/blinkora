@@ -25,10 +25,8 @@
       "@/*": [
         "./src/*"
       ],
-      "@server/*": ["../server/*"],
-      "@shared/*": ["../shared/*"],
-      "@prisma/*": ["../prisma/*"]
-    },
+      "@shared/*": ["../shared/*"]
+    }
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]

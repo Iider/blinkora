@@ -1,14 +1,15 @@
 # Docker Development Notes
 
-当前默认运行栈是 Rust 后端，TS/Node 后端只作为行为参考保留。
+当前默认运行栈是 Rust 后端，`server/` 就是唯一维护的服务端。
 
 ## Rust 默认运行方式
 
 ```bash
 bun run build:rust-release
-NEXTAUTH_SECRET=replace-with-a-secure-random-secret docker compose -f docker/docker-compose.rust.yml build web
-NEXTAUTH_SECRET=replace-with-a-secure-random-secret docker compose -f docker/docker-compose.rust.yml up -d
-NEXTAUTH_SECRET=replace-with-a-secure-random-secret docker compose -f docker/docker-compose.rust.yml ps
+cd docker
+docker compose build web
+docker compose up -d
+docker compose ps
 ```
 
 访问地址：
@@ -19,21 +20,13 @@ http://localhost:6676
 
 ## Rust 运行身份
 
-- Compose project：`blinkora-rust`
-- Web container：`blinkora-rust-web`
-- Postgres container：`blinkora-rust-db`
-- Web image：`blinkora-rust-web:latest`
+- Compose project：`blinkora`
+- Web container：`blinkora-web`
+- Postgres container：`blinkora-db`
+- Web image：`blinkora-web:latest`
 - Port mapping：`6676:6676`
-- Postgres data：`docker/data/postgres-rust`
+- Postgres data：`docker/data/postgres`
 
-
-## TS/Node 参考栈
-
-TS/Node 参考栈只用于对照 Rust 行为，端口为 `6678`：
-
-```bash
-NEXTAUTH_SECRET=replace-with-a-secure-random-secret docker compose -f docker/docker-compose.yml up -d
-```
 
 ## 最小烟测
 
@@ -41,7 +34,7 @@ NEXTAUTH_SECRET=replace-with-a-secure-random-secret docker compose -f docker/doc
 curl -I http://localhost:6676/
 curl -I http://localhost:6676/signin
 curl -s http://localhost:6676/health
-docker exec blinkora-rust-db psql -U postgres -d postgres -Atc 'select count(*) from "_prisma_migrations";'
+docker exec blinkora-db psql -U postgres -d postgres -Atc "select to_regclass('public.accounts');"
 ```
 
 ## 固化烟测

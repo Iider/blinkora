@@ -5,6 +5,7 @@
   "main": "index.ts",
   "types": "index.ts",
   "dependencies": {
+    "lru-cache": "^11.1.0",
     "zod": "^4.1.12",
     "superjson": "^2.2.3"
   }

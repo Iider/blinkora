@@ -7,7 +7,6 @@ import { useTranslation } from "react-i18next";
 import { StorageState } from "@/store/standard/StorageState";
 import { UserStore } from "@/store/user";
 import { PromiseState } from "@/store/standard/PromiseState";
-import { useTheme } from "next-themes";
 import { GradientBackground } from "@/components/Common/GradientBackground";
 import { signIn } from "@/components/Auth/auth-client";
 import { useNavigate } from "react-router-dom";
@@ -21,7 +20,6 @@ export default function Component() {
   const [user, setUser] = React.useState("");
   const [password, setPassword] = React.useState("");
   const [canRegister, setCanRegister] = useState(false);
-  const { theme } = useTheme();
   const { t } = useTranslation();
   const navigate = useNavigate();
   const blinkora = RootStore.Get(BlinkoraStore);
@@ -94,8 +92,8 @@ export default function Component() {
     <GradientBackground>
       <div className="flex h-full w-screen items-center justify-center p-2 sm:p-4 lg:p-8">
         <div className="flex w-full max-w-sm flex-col gap-4 rounded-large glass-effect px-8 pb-10 pt-6 shadow-large">
-          <p className="pb-2 text-xl font-medium flex gap-2 items-center justiy-center">
-            Login With <Image src={theme === 'light' ? '/logo-light-title.png' : '/logo-dark-title.png'} width={100} radius="none"></Image>
+          <p className="flex items-center gap-2 pb-2 text-xl font-medium">
+            Login With <Image src="/logo.png" alt="Blinkora" width={30} radius="sm" /> <span>Blinkora</span>
           </p>
 
           <form className="flex flex-col gap-3" onSubmit={(e) => e.preventDefault()}>

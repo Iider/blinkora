@@ -5,7 +5,6 @@ import { PromiseCall } from "@/store/standard/PromiseState";
 import { UserStore } from "@/store/user";
 import { Button, Input } from "@heroui/react";
 import { observer } from "mobx-react-lite";
-// import { signOut } from "next-auth/react";
 import { useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";

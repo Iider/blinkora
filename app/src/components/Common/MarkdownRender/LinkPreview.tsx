@@ -40,7 +40,7 @@ export const LinkPreview = observer(({ href, text, isBlock = false }: LinkPrevie
     const fetchData = async () => {
       try {
         if (!store.previewData.value) {
-          const info = await api.public.linkPreview.query({ url: href }, { context: { skipBatch: true } })
+          const info = await api.system.linkPreview.query({ url: href }, { context: { skipBatch: true } })
           store.previewData.setValue(info)
         }
       } catch (error) {

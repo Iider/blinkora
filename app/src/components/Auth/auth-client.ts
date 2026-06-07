@@ -1,4 +1,3 @@
-// import { Session } from './auth-context';
 import { getBlinkoraEndpoint } from '@/lib/blinkoraEndpoint';
 import { eventBus } from '@/lib/event';
 import { RootStore } from '@/store';
@@ -49,9 +48,6 @@ type SignInResponse = {
   token?: string;
 };
 
-/**
- * Get current token data
- */
 export async function getTokenData(): Promise<TokenData | null> {
   try {
     const userStore = RootStore.Get(UserStore);
@@ -81,9 +77,6 @@ export async function getTokenData(): Promise<TokenData | null> {
   }
 }
 
-/**
- * Sign in function
- */
 export async function signIn(
   provider: string,
   options: SignInOptions = {}
@@ -196,9 +189,6 @@ export async function signIn(
   }
 }
 
-/**
- * Sign out function
- */
 export async function signOut(options: { redirect?: boolean; callbackUrl?: string } = {}): Promise<{ url: string }> {
   try {
     const userStore = RootStore.Get(UserStore);

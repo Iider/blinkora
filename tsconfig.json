@@ -15,13 +15,9 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
-    "typeRoots": ["./node_modules/@types", "./server/types"],
     "paths": {
-      "@/*": ["./app/src/*"],
-      "@/routerTrpc/*": ["./server/routerTrpc/*"],
-      "@/routerExpress/*": ["./server/routerExpress/*"]
+      "@/*": ["./app/src/*"]
     }
   },
-  "include": ["app/src", "server"],
-  "references": [{ "path": "./tsconfig.node.json" }]
-} 
+  "include": ["app/src", "shared"]
+}

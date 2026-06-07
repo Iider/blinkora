@@ -1,12 +1,85 @@
-import { RouterOutput } from "../../server/routerTrpc/_app";
 import { z } from "zod";
 
-export type Note = Partial<NonNullable<RouterOutput['notes']['list'][0]>>
-export type Attachment = NonNullable<Note['attachments']>[0] & { size: number }
-export type Tag = NonNullable<RouterOutput['tags']['list']>[0]
-export type Config = NonNullable<RouterOutput['config']['list']>
-export type LinkInfo = NonNullable<RouterOutput['public']['linkPreview']>
-export type ResourceType = NonNullable<RouterOutput['attachments']['list']>[0]
+export type JsonMap = Record<string, any>;
+
+export type Tag = {
+  id: number;
+  name: string;
+  icon?: string;
+  parent?: number;
+  accountId?: number | null;
+  workspaceId?: number | null;
+  sortOrder?: number;
+  metadata?: JsonMap | null;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+  [key: string]: any;
+};
+
+export type Attachment = {
+  id?: number;
+  name: string;
+  path: string;
+  size: number | string;
+  type: string;
+  noteId?: number | null;
+  accountId?: number | null;
+  workspaceId?: number | null;
+  sortOrder?: number;
+  perfixPath?: string | null;
+  depth?: number | null;
+  metadata?: JsonMap | null;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+  [key: string]: any;
+};
+
+export type NoteReference = {
+  id?: number;
+  fromNoteId?: number;
+  toNoteId?: number;
+  fromId?: number;
+  toId?: number;
+  [key: string]: any;
+};
+
+export type Note = {
+  id?: number;
+  type?: number;
+  content?: string;
+  isArchived?: boolean;
+  isRecycle?: boolean;
+  isTop?: boolean;
+  isReviewed?: boolean;
+  accountId?: number | null;
+  workspaceId?: number | null;
+  sortOrder?: number;
+  metadata?: JsonMap | null;
+  attachments?: Attachment[];
+  tags?: Tag[];
+  references?: NoteReference[];
+  referencedBy?: NoteReference[];
+  comments?: JsonMap[];
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+  [key: string]: any;
+};
+
+export type Config = Record<string, any>;
+
+export type LinkInfo = {
+  url?: string;
+  title?: string;
+  description?: string;
+  image?: string;
+  siteName?: string;
+  [key: string]: any;
+};
+
+export type ResourceType = Attachment & {
+  isFolder?: boolean;
+  folderName?: string;
+};
 export enum NoteType {
   'BLINKORA',
   'NOTE',

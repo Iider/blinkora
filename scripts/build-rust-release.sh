@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR="$ROOT_DIR/release/rust"
-TARGET_DIR="${CARGO_TARGET_DIR:-/private/tmp/blinkora-rust-target}"
+DOCKER_RELEASE_DIR="$ROOT_DIR/docker/release/rust"
+TARGET_DIR="${CARGO_TARGET_DIR:-/private/tmp/blinkora-server-target}"
 TARGET_OS="${TARGETOS:-linux}"
 HOST_ARCH="$(uname -m)"
 case "${TARGETARCH:-}" in
@@ -29,7 +30,7 @@ if ! command -v bun >/dev/null 2>&1; then
   echo "error: bun is required to build frontend release artifacts" >&2
   exit 1
 fi
-rm -rf "$RELEASE_DIR"
+rm -rf "$RELEASE_DIR" "$DOCKER_RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 
 bun run build:web --force
@@ -40,13 +41,13 @@ build_with_cargo() {
     return 1
   fi
   (
-    cd server-rust
+    cd server
     rustup target list --installed | grep -qx "$RUST_TARGET" || {
       echo "error: Rust target $RUST_TARGET is not installed. Run: rustup target add $RUST_TARGET" >&2
       exit 1
     }
     CARGO_TARGET_DIR="$TARGET_DIR" cargo build --release --locked --target "$RUST_TARGET"
-    cp "$TARGET_DIR/$RUST_TARGET/release/blinkora-rust" "$RELEASE_DIR/blinkora-rust"
+    cp "$TARGET_DIR/$RUST_TARGET/release/blinkora-server" "$RELEASE_DIR/blinkora-server"
   )
 }
 
@@ -55,7 +56,7 @@ build_with_docker() {
     echo "error: docker is required for Rust Linux binary fallback" >&2
     exit 1
   fi
-  local image="blinkora-rust-binary-builder:local"
+  local image="blinkora-server-builder:local"
   local container_id
 
   docker build \
@@ -65,7 +66,9 @@ build_with_docker() {
     .
   container_id="$(docker create "$image")"
   trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' RETURN
-  docker cp "$container_id:/build/server-rust/target/release/blinkora-rust" "$RELEASE_DIR/blinkora-rust"
+  docker cp "$container_id:/build/server/target/release/blinkora-server" "$RELEASE_DIR/blinkora-server"
+  docker rm -f "$container_id" >/dev/null 2>&1 || true
+  docker rmi "$image" >/dev/null 2>&1 || true
 }
 
 if [[ "${BLINKORA_RUST_DOCKER_BUILD:-0}" == "1" ]]; then
@@ -75,20 +78,24 @@ elif ! build_with_cargo; then
   build_with_docker
 fi
 
-if ! file "$RELEASE_DIR/blinkora-rust" | grep -q 'ELF .* executable'; then
-  file "$RELEASE_DIR/blinkora-rust" >&2
-  echo "error: release/rust/blinkora-rust must be a Linux ELF executable for Docker runtime" >&2
+if ! file "$RELEASE_DIR/blinkora-server" | grep -q 'ELF .* executable'; then
+  file "$RELEASE_DIR/blinkora-server" >&2
+  echo "error: release/rust/blinkora-server must be a Linux ELF executable for Docker runtime" >&2
   exit 1
 fi
 
 cp -R dist/public "$RELEASE_DIR/public"
-mkdir -p "$RELEASE_DIR/public/dist/js/lute"
-cp server/lute.min.js "$RELEASE_DIR/public/dist/js/lute/lute.min.js"
-cp -R server/vditor/js "$RELEASE_DIR/public/dist/js"
-mkdir -p "$RELEASE_DIR/public/dist/js/icons"
-cp "$RELEASE_DIR/public/dist/js/lute/lute.min.js" "$RELEASE_DIR/public/dist/js/icons/ant.js"
-mkdir -p "$RELEASE_DIR/public/vditor-assets/dist"
-cp -R "$RELEASE_DIR/public/dist/js" "$RELEASE_DIR/public/vditor-assets/dist/js"
 
-chmod +x "$RELEASE_DIR/blinkora-rust"
+mkdir -p "$RELEASE_DIR/db"
+cp db/schema.sql "$RELEASE_DIR/db/schema.sql"
+
+mkdir -p "$DOCKER_RELEASE_DIR"
+cp "$RELEASE_DIR/blinkora-server" "$DOCKER_RELEASE_DIR/blinkora-server"
+cp -R "$RELEASE_DIR/public" "$DOCKER_RELEASE_DIR/public"
+mkdir -p "$DOCKER_RELEASE_DIR/db"
+cp "$RELEASE_DIR/db/schema.sql" "$DOCKER_RELEASE_DIR/db/schema.sql"
+
+chmod +x "$RELEASE_DIR/blinkora-server"
+chmod +x "$DOCKER_RELEASE_DIR/blinkora-server"
 echo "Rust release artifacts are ready in $RELEASE_DIR"
+echo "Docker deployment artifacts are ready in $DOCKER_RELEASE_DIR"

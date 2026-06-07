@@ -9,6 +9,8 @@ lerna-debug.log*
 
 node_modules
 dist
+!public/vditor-assets/
+!public/vditor-assets/**
 dist-ssr
 *.local
 

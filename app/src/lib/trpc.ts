@@ -1,10 +1,18 @@
 import { createTRPCClient, httpBatchLink, httpLink, splitLink, httpBatchStreamLink } from '@trpc/client';
-import type { AppRouter } from '../../../server/routerTrpc/_app';
 import superjson from 'superjson';
 import { getBlinkoraEndpoint } from './blinkoraEndpoint';
 import { RootStore } from '@/store';
 import { UserStore } from '@/store/user';
 import { WorkspaceStore } from '@/store/workspace';
+
+type AppRouter = any;
+const fetchWithTimeout: typeof fetch = (url, options) => {
+  return fetch(url, {
+    ...options,
+    signal: AbortSignal.timeout(5 * 60 * 1000)
+  });
+};
+
 const headers = () => {
   const userStore = RootStore.Get(UserStore);
   const workspaceStore = RootStore.Get(WorkspaceStore);
@@ -30,13 +38,7 @@ const getLinks = (useStream = false) => {
         url: getBlinkoraEndpoint('/api/trpc'),
         transformer: superjson,
         headers,
-        // Increase timeout for large file uploads (5 minutes)
-        fetch(url, options) {
-          return fetch(url, {
-            ...options,
-            signal: AbortSignal.timeout(5 * 60 * 1000) // 5 minutes
-          });
-        }
+        fetch: fetchWithTimeout
       });
     }
 
@@ -48,26 +50,13 @@ const getLinks = (useStream = false) => {
         url: getBlinkoraEndpoint('/api/trpc'),
         transformer: superjson,
         headers,
-        // Increase timeout for large file uploads (5 minutes)
-        fetch(url, options) {
-          return fetch(url, {
-            ...options,
-            signal: AbortSignal.timeout(5 * 60 * 1000) // 5 minutes
-          });
-        }
+        fetch: fetchWithTimeout
       }),
-      // when condition is false, use batching
       false: httpBatchLink({
         url: getBlinkoraEndpoint('/api/trpc'),
         transformer: superjson,
         headers,
-        // Increase timeout for large file uploads (5 minutes)
-        fetch(url, options) {
-          return fetch(url, {
-            ...options,
-            signal: AbortSignal.timeout(5 * 60 * 1000) // 5 minutes
-          });
-        }
+        fetch: fetchWithTimeout
       }),
     });
   } catch (error) {
@@ -80,56 +69,34 @@ const getLinks = (useStream = false) => {
         url: ('/api/trpc'),
         transformer: superjson,
         headers,
-        // Increase timeout for large file uploads (5 minutes)
-        fetch(url, options) {
-          return fetch(url, {
-            ...options,
-            signal: AbortSignal.timeout(5 * 60 * 1000) // 5 minutes
-          });
-        }
+        fetch: fetchWithTimeout
       }),
-      // when condition is false, use batching
       false: httpBatchLink({
         url: ('/api/trpc'),
         transformer: superjson,
         headers,
-        // Increase timeout for large file uploads (5 minutes)
-        fetch(url, options) {
-          return fetch(url, {
-            ...options,
-            signal: AbortSignal.timeout(5 * 60 * 1000) // 5 minutes
-          });
-        }
+        fetch: fetchWithTimeout
       }),
-    });;
+    });
   }
 };
 
-//@ts-ignore
 export let api = createTRPCClient<AppRouter>({
   links: [getLinks(false)],
 });
 
-//@ts-ignore
 export let streamApi = createTRPCClient<AppRouter>({
   links: [getLinks(true)],
 });
 
-/**
- * refresh api
- * when need refresh auth status (login/logout)
- */
 export const reinitializeTrpcApi = () => {
-  //@ts-ignore
   api = createTRPCClient<AppRouter>({
     links: [getLinks(false)],
   });
 
-  //@ts-ignore
   streamApi = createTRPCClient<AppRouter>({
     links: [getLinks(true)],
   });
 
   return { api, streamApi };
 };
-

@@ -5,7 +5,6 @@ dist-ssr
 *.local
 .vscode
 out
-.next
 yarn-error.log
 .env
 .env.*
@@ -19,13 +18,12 @@ yarn.lock
 dump.sql
 seed.js
 dist
+!app/public/vditor-assets/
+!app/public/vditor-assets/**
 release
 .turbo
 !**/lute.min.js
 .blinkora
-.claudeconfig
-.claude/*
-.claude/settings.local.json
 target
 tmp/
 ~/
