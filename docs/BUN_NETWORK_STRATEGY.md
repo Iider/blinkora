@@ -6,7 +6,8 @@
 
 - 本地开发默认使用项目级 `bunfig.toml`，将 Bun registry 指向 `https://registry.npmmirror.com`。
 - Rust 默认 Docker 构建只复制 `docker/release/rust` 产物，不需要 `USE_MIRROR`、`NPM_REGISTRY`、`BUN_REGISTRY` 或 cargo registry。
-- Rust crate 下载只发生在开发机/CI 的 `bun run build:rust-release` 阶段，或 `docker/dockerfile.rust.fullbuild` 兜底路径。
+- 本机持久化部署会在 macOS 本机直接跑 Bun 和 Cargo，首次安装依赖或编译 Rust crate 时需要本机网络可用。
+- Rust crate 下载只发生在开发机/CI 的 `bun run build:rust-release`、本机持久化部署的 native cargo build，或 `docker/dockerfile.rust.fullbuild` 兜底路径。
 - `bun.lock` 继续作为 Bun 路径的锁文件提交；依赖变更必须刷新并验证。
 - `npmmirror` 只作为加速路径，不作为唯一可信路径；遇到 integrity、同步延迟或平台包异常时，回退官方源或内部缓存源。
 
@@ -89,6 +90,32 @@ docker build -f docker/dockerfile.rust.fullbuild -t blinkora-web:latest .
 
 兜底路径会访问 Rust crate 下载链路，应配置内部 cargo registry/cache 或放在网络条件稳定的 CI 中执行；不建议作为国内服务器默认部署路径。
 
+## 本机持久化部署
+
+个人 macOS 长期使用可以只把 PostgreSQL 放在 Docker，Rust Web 服务跑在本机：
+
+```bash
+bun run deploy:local install
+```
+
+这条路径会做两类本机构建：
+
+- `bun run build:web --force`：需要 Bun 和前端依赖。
+- `cargo build --release --locked --manifest-path server/Cargo.toml`：需要 Rust toolchain 和 Cargo crate 下载链路。
+
+如果网络不稳定，优先先把依赖装好：
+
+```bash
+bun install
+cargo fetch --manifest-path server/Cargo.toml
+```
+
+之后再跑：
+
+```bash
+bun run deploy:local install
+```
+
 ## 常见失败处理
 
 | 现象 | 优先检查 | 处理 |
@@ -96,6 +123,8 @@ docker build -f docker/dockerfile.rust.fullbuild -t blinkora-web:latest .
 | `bun install` 慢或超时 | registry 是否可达 | 切官方源或内部缓存源 |
 | npm/Bun integrity check failed | 公共镜像源同步是否异常 | 回退官方源，保留锁文件 |
 | Rust release 构建下载 crate 失败 | Cargo registry 网络 | 使用 CI、内部 cargo cache，或 `BLINKORA_RUST_DOCKER_BUILD=1` |
+| `deploy:local install` 首次构建失败 | Bun 或 Cargo 依赖是否没下载完 | 先跑 `bun install` 和 `cargo fetch --manifest-path server/Cargo.toml` |
+| 本机缺 `aarch64-linux-musl-gcc` 或其他 Linux musl 交叉编译器 | 是否在本机原生交叉编译 | 直接用 `BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release` 生成部署产物 |
 | Rust Docker build 访问 npm/Bun registry | 是否误用了 Rust fullbuild | 默认应使用 `docker/dockerfile.rust`，并先运行 `bun run build:rust-release` |
 
 ## 后续收敛

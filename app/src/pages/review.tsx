@@ -20,10 +20,11 @@ import { api } from '@/lib/trpc';
 import confetti from 'canvas-confetti';
 import { useMediaQuery } from 'usehooks-ts';
 import { FilesAttachmentRender } from '@/components/Common/AttachmentRender';
-import { DialogStandaloneStore } from '@/store/module/DialogStandalone';
-import { BlinkoraCard } from '@/components/BlinkoraCard';
 import { ScrollArea } from '@/components/Common/ScrollArea';
 import { confirmDeleteNotes } from '@/lib/noteDeletion';
+import { DialogStore } from '@/store/module/Dialog';
+import { BlinkoraEditor } from '@/components/BlinkoraEditor';
+import { FocusEditorFixMobile } from '@/components/Common/Editor/editorUtils';
 const App = observer(() => {
   const blinkora = RootStore.Get(BlinkoraStore)
   const swiperRef = useRef(null);
@@ -58,6 +59,44 @@ const App = observer(() => {
   const reviewNotes = store.isRandomReviewMode
     ? blinkora.randomReviewNoteList.value ?? []
     : blinkora.dailyReviewNoteList.value ?? []
+
+  const refreshReviewNotes = async () => {
+    if (store.isRandomReviewMode) {
+      await blinkora.randomReviewNoteList.call({ limit: 30 })
+    } else {
+      await blinkora.dailyReviewNoteList.call()
+    }
+  }
+
+  const openCurrentNoteEditor = () => {
+    if (!store.currentNote) return
+    const note = store.currentNote
+    blinkora.curSelectedNote = {
+      ...note,
+      attachments: note.attachments ? [...note.attachments] : [],
+      references: note.references ? [...note.references] : []
+    }
+    RootStore.Get(DialogStore).setData({
+      isOpen: true,
+      onlyContent: true,
+      isDismissable: false,
+      showOnlyContentCloseButton: true,
+      size: '5xl',
+      content: (
+        <BlinkoraEditor
+          isInDialog
+          mode="edit"
+          key={`review-editor-${note.id}`}
+          onSended={async () => {
+            RootStore.Get(DialogStore).close()
+            blinkora.isCreateMode = false
+            await refreshReviewNotes()
+          }}
+        />
+      )
+    })
+    FocusEditorFixMobile()
+  }
 
   return (
     <ScrollArea fixMobileTopBar className="App h-full overflow-hidden mt-2">
@@ -172,17 +211,7 @@ const App = observer(() => {
             </Tooltip>
 
             <Tooltip content={t('edit')} >
-              <Button onPress={async e => {
-                if (!store.currentNote) return
-                const note = await api.notes.detail.mutate({ id:  store.currentNote.id! })
-                RootStore.Get(DialogStandaloneStore).setData({
-                  isOpen: true,
-                  onlyContent: true,
-                  showOnlyContentCloseButton: true,
-                  size: '4xl',
-                  content: <BlinkoraCard blinkoraItem={note!} withoutHoverAnimation />
-                })
-              }} isIconOnly color='default' startContent={<Icon icon="tabler:edit" width="20" height="20" />}></Button>
+              <Button onPress={openCurrentNoteEditor} isIconOnly color='default' aria-label={t('edit')} startContent={<Icon icon="tabler:edit" width="20" height="20" />}></Button>
             </Tooltip>
 
 

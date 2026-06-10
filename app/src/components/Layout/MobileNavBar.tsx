@@ -20,10 +20,8 @@ export const MobileNavBar = observer(({ onItemClick }: MobileNavBarProps) => {
   const isVisible = useSwiper();
   const location = useLocation();
   const [searchParams] = useSearchParams();
-
-  if (blinkoraStore.config.value?.isHiddenMobileBar) {
-    return null;
-  }
+  const mobileNavBottomPadding = Math.max(0, Number(blinkoraStore.config.value?.mobileNavBottomPadding ?? 0) || 0);
+  const barHeight = 60 + mobileNavBottomPadding;
 
   const routerInfo = {
     pathname: location.pathname,
@@ -37,7 +35,7 @@ export const MobileNavBar = observer(({ onItemClick }: MobileNavBarProps) => {
   return (
     <motion.div
       className="blinkora-bottom-bar h-[60px] flex w-full px-3 py-2 gap-1 bg-background block md:hidden overflow-hidden fixed bottom-0 z-50"
-      animate={{ y: isVisible ? 0 : 100 }}
+      animate={{ y: isVisible ? 0 : barHeight + 40 }}
       transition={{
         type: "spring",
         damping: 25,
@@ -46,6 +44,8 @@ export const MobileNavBar = observer(({ onItemClick }: MobileNavBarProps) => {
         bounce: 0.3
       }}
       style={{
+        height: barHeight,
+        paddingBottom: 8 + mobileNavBottomPadding,
         background: getFixedHeaderBackground(),
         backdropFilter: 'blur(20px)',
         WebkitBackdropFilter: 'blur(20px)'

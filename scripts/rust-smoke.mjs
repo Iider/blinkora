@@ -285,7 +285,7 @@ function trpcData(payload) {
   return payload?.result?.data?.json;
 }
 
-async function trpc(path, input, token, method = 'POST', extraHeaders = {}) {
+async function trpcRaw(path, input, token, method = 'POST', extraHeaders = {}) {
   const headers = {};
   if (token) {
     headers.Authorization = `Bearer ${token}`;
@@ -301,7 +301,11 @@ async function trpc(path, input, token, method = 'POST', extraHeaders = {}) {
     options.body = JSON.stringify({ json: input ?? null });
   }
 
-  const result = await request(url, options);
+  return request(url, options);
+}
+
+async function trpc(path, input, token, method = 'POST', extraHeaders = {}) {
+  const result = await trpcRaw(path, input, token, method, extraHeaders);
   assert(result.response.ok, `${method} ${path} HTTP ${result.response.status}`, result.json || result.text);
   assert(!result.json?.error, `${method} ${path} tRPC error`, result.json);
   return trpcData(result.json);
@@ -376,6 +380,23 @@ function parseSseEvent(raw) {
     }
   }
   return event;
+}
+
+function flattenTagTree(tags) {
+  const out = [];
+  for (const tag of tags || []) {
+    out.push(tag);
+    out.push(...flattenTagTree(tag.children || []));
+  }
+  return out;
+}
+
+function redactAgentToken(value) {
+  if (!value || typeof value !== 'object') return value;
+  return {
+    ...value,
+    token: value.token ? '<redacted>' : value.token,
+  };
 }
 
 async function login() {
@@ -480,7 +501,17 @@ assert(initialize.result?.serverInfo?.name === 'blinkora-mcp-server', 'MCP initi
 const mcpTools = await mcp.rpc('tools/list', {});
 const mcpToolNames = mcpTools.result?.tools?.map((tool) => tool.name) || [];
 assert(
-  ['searchBlinkora', 'upsertBlinkora', 'updateBlinkora', 'deleteBlinkora'].every((name) => mcpToolNames.includes(name)),
+  [
+    'searchBlinkora',
+    'getBlinkora',
+    'upsertBlinkora',
+    'updateBlinkora',
+    'deleteBlinkora',
+    'listComments',
+    'createComment',
+    'updateComment',
+    'listTagTree',
+  ].every((name) => mcpToolNames.includes(name)),
   'MCP tools/list',
   mcpTools,
 );
@@ -623,6 +654,264 @@ assert(resetDefault === true || resetDefault?.success === true, 'workspaces.setD
 const workspaceDelete = await trpc('workspaces.delete', { id: smokeWorkspace.id }, token);
 assert(workspaceDelete === true || workspaceDelete?.success === true, 'workspaces.delete', workspaceDelete);
 
+const agentWorkspaceA = await trpc('workspaces.create', {
+  name: `Rust agent workspace A ${stamp}`,
+  description: 'temporary agent token smoke workspace A',
+  icon: 'tabler:robot',
+  color: '#0f766e',
+}, token);
+assert(agentWorkspaceA?.id, 'agent workspace A create', agentWorkspaceA);
+
+const agentWorkspaceB = await trpc('workspaces.create', {
+  name: `Rust agent workspace B ${stamp}`,
+  description: 'temporary agent token smoke workspace B',
+  icon: 'tabler:robot-off',
+  color: '#7f1d1d',
+}, token);
+assert(agentWorkspaceB?.id, 'agent workspace B create', agentWorkspaceB);
+
+const workspaceAHeaders = { 'x-workspace-id': String(agentWorkspaceA.id) };
+const workspaceBHeaders = { 'x-workspace-id': String(agentWorkspaceB.id) };
+const agentSeedA = await trpc('notes.upsert', {
+  content: `Rust agent workspace A seed ${stamp} #rust-agent-ws-smoke`,
+  type: 0,
+}, token, 'POST', workspaceAHeaders);
+assert(agentSeedA?.id && agentSeedA.workspaceId === agentWorkspaceA.id, 'agent workspace A seed note', agentSeedA);
+
+const agentSeedB = await trpc('notes.upsert', {
+  content: `Rust agent workspace B private ${stamp}`,
+  type: 0,
+}, token, 'POST', workspaceBHeaders);
+assert(agentSeedB?.id && agentSeedB.workspaceId === agentWorkspaceB.id, 'agent workspace B seed note', agentSeedB);
+
+const createdAgentToken = await trpc('agentTokens.create', {
+  workspaceId: agentWorkspaceA.id,
+  name: `Rust smoke agent token ${stamp}`,
+}, token);
+assert(
+  createdAgentToken?.id
+    && createdAgentToken.token?.startsWith('bkws_')
+    && createdAgentToken.workspaceId === agentWorkspaceA.id,
+  'agentTokens.create returns one-time workspace token',
+  redactAgentToken(createdAgentToken),
+);
+const workspaceAgentToken = createdAgentToken.token;
+
+const listedAgentTokens = await trpc('agentTokens.list', { workspaceId: agentWorkspaceA.id }, token);
+assert(
+  Array.isArray(listedAgentTokens)
+    && listedAgentTokens.some((item) => item.id === createdAgentToken.id)
+    && listedAgentTokens.some((item) => item.id === createdAgentToken.id && item.token === workspaceAgentToken)
+    && listedAgentTokens.every((item) => item.tokenHash === undefined),
+  'agentTokens.list returns display token but omits tokenHash',
+  listedAgentTokens.map(redactAgentToken),
+);
+
+const agentMcpGuide = await request('/api/agent/mcp-guide.md', {
+  headers: { Authorization: `Bearer ${workspaceAgentToken}` },
+});
+assert(
+  agentMcpGuide.response.ok
+    && agentMcpGuide.text.includes('Blinkora MCP / Skill')
+    && agentMcpGuide.text.includes('searchBlinkora'),
+  'workspace agent can read MCP guide resource',
+  { status: agentMcpGuide.response.status, body: agentMcpGuide.text.slice(0, 200) },
+);
+
+const agentSkillMd = await request('/api/agent/blinkora-workspace/SKILL.md', {
+  headers: { Authorization: `Bearer ${workspaceAgentToken}` },
+});
+assert(
+  agentSkillMd.response.ok
+    && agentSkillMd.text.includes('name: blinkora-workspace')
+    && agentSkillMd.text.includes('BLINKORA_AGENT_TOKEN'),
+  'workspace agent can download skill markdown',
+  { status: agentSkillMd.response.status, body: agentSkillMd.text.slice(0, 200) },
+);
+
+const agentSkillZip = await request('/api/agent/blinkora-workspace.zip', {
+  headers: { Authorization: `Bearer ${workspaceAgentToken}` },
+});
+assert(
+  agentSkillZip.response.ok
+    && (agentSkillZip.response.headers.get('content-type') || '').includes('application/zip'),
+  'workspace agent can download skill zip',
+  {
+    status: agentSkillZip.response.status,
+    contentType: agentSkillZip.response.headers.get('content-type'),
+  },
+);
+
+const wrongWorkspaceHeader = await trpcRaw('notes.list', { page: 1, size: 10 }, workspaceAgentToken, 'GET', workspaceBHeaders);
+assert(wrongWorkspaceHeader.response.status === 401, 'workspace agent rejects mismatched x-workspace-id', {
+  status: wrongWorkspaceHeader.response.status,
+  body: wrongWorkspaceHeader.json || wrongWorkspaceHeader.text,
+});
+
+const scopedWorkspacesList = await trpcRaw('workspaces.list', {}, workspaceAgentToken);
+assert(
+  scopedWorkspacesList.json?.error?.json?.data?.httpStatus === 403,
+  'workspace agent cannot call workspaces.list',
+  scopedWorkspacesList.json || scopedWorkspacesList.text,
+);
+
+const scopedConfigList = await trpcRaw('config.list', {}, workspaceAgentToken, 'GET');
+assert(
+  scopedConfigList.json?.error?.json?.data?.httpStatus === 403,
+  'workspace agent cannot call config.list',
+  scopedConfigList.json || scopedConfigList.text,
+);
+
+const scopedAgentTokenList = await trpcRaw('agentTokens.list', { workspaceId: agentWorkspaceA.id }, workspaceAgentToken);
+assert(
+  scopedAgentTokenList.json?.error?.json?.data?.httpStatus === 403,
+  'workspace agent cannot manage agent tokens',
+  scopedAgentTokenList.json || scopedAgentTokenList.text,
+);
+
+const agentMcp = await openMcpSession(workspaceAgentToken);
+const agentTools = await agentMcp.rpc('tools/list', {});
+const agentToolNames = agentTools.result?.tools?.map((tool) => tool.name) || [];
+assert(
+  [
+    'searchBlinkora',
+    'getBlinkora',
+    'upsertBlinkora',
+    'updateBlinkora',
+    'deleteBlinkora',
+    'listComments',
+    'createComment',
+    'updateComment',
+    'listTagTree',
+  ].every((name) => agentToolNames.includes(name))
+    && !agentToolNames.includes('workspaces.list'),
+  'workspace agent MCP tools/list scoped tools',
+  agentTools,
+);
+
+const agentFlash = await agentMcp.rpc('tools/call', {
+  name: 'upsertBlinkora',
+  arguments: { content: `Agent flash ${stamp} #rust-agent-ws-smoke`, type: 'blinkora' },
+});
+const agentFlashNote = agentFlash.result?.structuredContent;
+assert(agentFlashNote?.id && agentFlashNote.type === 0 && agentFlashNote.workspaceId === agentWorkspaceA.id, 'workspace agent upsert blinkora', agentFlash);
+
+const agentNote = await agentMcp.rpc('tools/call', {
+  name: 'upsertBlinkora',
+  arguments: { content: `Agent note ${stamp} #rust-agent-ws-smoke`, type: 'note' },
+});
+const agentNoteValue = agentNote.result?.structuredContent;
+assert(agentNoteValue?.id && agentNoteValue.type === 1 && agentNoteValue.workspaceId === agentWorkspaceA.id, 'workspace agent upsert note', agentNote);
+
+const agentTodo = await agentMcp.rpc('tools/call', {
+  name: 'upsertBlinkora',
+  arguments: { content: `Agent todo ${stamp}`, type: 'todo' },
+});
+const agentTodoValue = agentTodo.result?.structuredContent;
+assert(agentTodoValue?.id && agentTodoValue.type === 2 && agentTodoValue.workspaceId === agentWorkspaceA.id, 'workspace agent upsert todo', agentTodo);
+
+const agentGet = await agentMcp.rpc('tools/call', {
+  name: 'getBlinkora',
+  arguments: { id: agentNoteValue.id },
+});
+assert(agentGet.result?.structuredContent?.id === agentNoteValue.id, 'workspace agent getBlinkora', agentGet);
+
+const agentNoteUpdated = await agentMcp.rpc('tools/call', {
+  name: 'updateBlinkora',
+  arguments: { id: agentNoteValue.id, content: `Agent note updated ${stamp} #rust-agent-ws-smoke`, type: 1 },
+});
+assert(
+  agentNoteUpdated.result?.structuredContent?.id === agentNoteValue.id
+    && agentNoteUpdated.result.structuredContent.content.includes('updated'),
+  'workspace agent updateBlinkora',
+  agentNoteUpdated,
+);
+
+const agentComment = await agentMcp.rpc('tools/call', {
+  name: 'createComment',
+  arguments: { noteId: agentNoteValue.id, content: `Agent comment ${stamp}`, kind: 'annotation' },
+});
+const agentCommentValue = agentComment.result?.structuredContent;
+assert(agentCommentValue?.id && agentCommentValue.noteId === agentNoteValue.id, 'workspace agent createComment', agentComment);
+
+const agentCommentUpdated = await agentMcp.rpc('tools/call', {
+  name: 'updateComment',
+  arguments: { id: agentCommentValue.id, content: `Agent comment updated ${stamp}`, status: 'open' },
+});
+assert(
+  agentCommentUpdated.result?.structuredContent?.id === agentCommentValue.id
+    && agentCommentUpdated.result.structuredContent.content.includes('updated'),
+  'workspace agent updateComment',
+  agentCommentUpdated,
+);
+
+const agentComments = await agentMcp.rpc('tools/call', {
+  name: 'listComments',
+  arguments: { noteId: agentNoteValue.id },
+});
+assert(
+  Array.isArray(agentComments.result?.structuredContent)
+    && agentComments.result.structuredContent.some((item) => item.id === agentCommentValue.id),
+  'workspace agent listComments',
+  agentComments,
+);
+
+const agentTagTree = await agentMcp.rpc('tools/call', {
+  name: 'listTagTree',
+  arguments: {},
+});
+const agentTags = flattenTagTree(agentTagTree.result?.structuredContent?.tags || []);
+assert(
+  agentTagTree.result?.structuredContent?.success === true
+    && agentTags.some((tag) => tag.name === 'rust-agent-ws-smoke'),
+  'workspace agent listTagTree',
+  agentTagTree,
+);
+
+const agentWorkspaceASearch = await agentMcp.rpc('tools/call', {
+  name: 'searchBlinkora',
+  arguments: { searchText: `Rust agent workspace A seed ${stamp}`, page: 1, size: 20 },
+});
+assert(
+  agentWorkspaceASearch.result?.structuredContent?.notes?.some((item) => item.id === agentSeedA.id),
+  'workspace agent can search bound workspace',
+  agentWorkspaceASearch,
+);
+
+const agentWorkspaceBSearch = await agentMcp.rpc('tools/call', {
+  name: 'searchBlinkora',
+  arguments: { searchText: `Rust agent workspace B private ${stamp}`, page: 1, size: 20 },
+});
+assert(
+  !agentWorkspaceBSearch.result?.structuredContent?.notes?.some((item) => item.id === agentSeedB.id),
+  'workspace agent cannot search other workspace',
+  agentWorkspaceBSearch,
+);
+agentMcp.close();
+
+const revokedAgentToken = await trpc('agentTokens.revoke', { id: createdAgentToken.id }, token);
+assert(revokedAgentToken?.id === createdAgentToken.id && revokedAgentToken.revokedAt, 'agentTokens.revoke', revokedAgentToken);
+
+const revokedAgentSse = await request('/sse', {
+  headers: { Authorization: `Bearer ${workspaceAgentToken}` },
+});
+assert(revokedAgentSse.response.status === 401, 'revoked workspace agent token rejects MCP SSE', {
+  status: revokedAgentSse.response.status,
+  body: revokedAgentSse.json || revokedAgentSse.text,
+});
+
+const revokedAgentTrpc = await trpcRaw('notes.list', { page: 1, size: 10 }, workspaceAgentToken, 'GET');
+assert(revokedAgentTrpc.response.status === 401, 'revoked workspace agent token rejects tRPC', {
+  status: revokedAgentTrpc.response.status,
+  body: revokedAgentTrpc.json || revokedAgentTrpc.text,
+});
+
+const deleteAgentWorkspaceA = await trpc('workspaces.delete', { id: agentWorkspaceA.id }, token);
+assert(deleteAgentWorkspaceA === true || deleteAgentWorkspaceA?.success === true, 'agent workspace A delete', deleteAgentWorkspaceA);
+
+const deleteAgentWorkspaceB = await trpc('workspaces.delete', { id: agentWorkspaceB.id }, token);
+assert(deleteAgentWorkspaceB === true || deleteAgentWorkspaceB?.success === true, 'agent workspace B delete', deleteAgentWorkspaceB);
+
 const configUpdate = await trpc('config.update', { key: 'theme', value: 'light' }, token);
 assert(configUpdate === true, 'config.update', configUpdate);
 
@@ -684,6 +973,20 @@ assert(Array.isArray(listByIds) && listByIds.some((item) => item.id === note.id)
 
 const editedNote = await trpc('notes.upsert', { id: note.id, content: `Rust smoke note edited ${stamp} #rust-smoke`, type: 0 }, token);
 assert(editedNote?.id === note.id && editedNote.content.includes('edited'), 'notes.upsert edit', editedNote);
+
+const convertedNote = await trpc('notes.upsert', { id: note.id, content: null, type: 1 }, token);
+assert(
+  convertedNote?.id === note.id && convertedNote.type === 1 && convertedNote.content === editedNote.content,
+  'notes.upsert type-only update keeps content',
+  convertedNote,
+);
+
+const restoredTypeNote = await trpc('notes.upsert', { id: note.id, type: 0 }, token);
+assert(
+  restoredTypeNote?.id === note.id && restoredTypeNote.type === 0 && restoredTypeNote.content === editedNote.content,
+  'notes.upsert omitted-content type update keeps content',
+  restoredTypeNote,
+);
 
 const history = await trpc('notes.getNoteHistory', { noteId: note.id }, token, 'GET');
 assert(Array.isArray(history) && history.length >= 1, 'notes.getNoteHistory', history);

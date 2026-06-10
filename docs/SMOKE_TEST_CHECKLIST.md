@@ -5,13 +5,15 @@
 ## 使用规则
 
 - 当前统一入口：`http://localhost:6676`。
-- 当前主运行栈：Rust，入口为 `cd docker && docker compose ...`，容器为 `blinkora-web` / `blinkora-db`，默认宿主机端口为 `6676`。
-- Rust 后端固定 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_SMOKE_USER=<test-user> BLINKORA_SMOKE_PASSWORD=<test-password> bun run smoke:rust`，覆盖健康检查、静态资源、登录/注册、用户详情、Public、字体、Workspace、配置、笔记编辑/历史版本/引用/排序、标签、评论/回复/更新/删除/转 TODO、附件资源页文件夹创建/列表/重命名/移动/删除、文件上传、错误 workspace 文件读/删拒绝、同前缀兄弟文件夹不误删、导出、备份导入为新 Workspace、导入后附件路径替换与恢复文件读取、回收站、批量删除、MCP SSE 未鉴权拒绝、握手、工具清单和四个核心工具调用主路径。设置 `BLINKORA_S3_SMOKE_*` 环境变量后，还会验证真实 S3 配置、`/api/s3file/*` 上传读取、资源移动和对象删除。
+- 当前主运行栈：Rust，统一入口为 `6676`。完整 Docker 部署使用 `blinkora-web` / `blinkora-db`；本机持久化部署只保留 Docker `blinkora-db`，Rust Web 服务由 macOS `launchd` 运行。
+- Rust 后端固定 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_SMOKE_USER=<test-user> BLINKORA_SMOKE_PASSWORD=<test-password> bun run smoke:rust`，覆盖健康检查、静态资源、登录/注册、用户详情、Public、字体、Workspace、配置、笔记编辑、只改类型不丢正文、历史版本/引用/排序、标签、评论/回复/更新/删除/转 TODO、附件资源页文件夹创建/列表/重命名/移动/删除、文件上传、错误 workspace 文件读/删拒绝、同前缀兄弟文件夹不误删、导出、备份导入为新 Workspace、导入后附件路径替换与恢复文件读取、回收站、批量删除、MCP SSE 未鉴权拒绝、握手、工具清单、note/comment/tag tree 工具调用主路径、Workspace Agent token 创建/列表回显/资源下载/越权拒绝/撤销失效。设置 `BLINKORA_S3_SMOKE_*` 环境变量后，还会验证真实 S3 配置、`/api/s3file/*` 上传读取、资源移动和对象删除。
+- Workspace Agent 专项 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_ACCOUNT_TOKEN=<account_jwt> bun run smoke:agent`，只覆盖工作区令牌、MCP 工具、Skill/指南下载、Workspace 隔离、越权拒绝和刷新失效。
 - Web 端口固定使用 `6676`，避免 Chromium / Edge 的 unsafe port 限制。
 - 优先使用浏览器真实交互验证，必要时再补充容器日志和接口检查。
 - 使用明确测试前缀，例如 `烟测 2026-05-19`，便于清理。
 - 烟测过程中创建的测试笔记、评论、附件和临时 Workspace 应在结束前清理，清理不了的内容必须记录。
 - 不为自动化方便读取或暴露真实访问令牌。若需要验证 API token，请使用用户明确授权的测试 token。
+- 工作区令牌、MCP 和 Skill 资源的完整使用方式见 `docs/WORKSPACE_AGENT_ACCESS.md`。
 
 ## 结果记录
 
@@ -23,6 +25,7 @@
 入口：
 构建版本 / 提交：
 Docker compose 文件：
+运行模式：完整 Docker / 本机持久化
 容器状态：
 通过项：
 失败项：
@@ -35,10 +38,11 @@ Docker compose 文件：
 
 | 状态 | 检查项 | 操作 | 预期结果 |
 | --- | --- | --- | --- |
-| [ ] | Docker 服务健康 | Rust 主栈在 `docker/` 执行 `docker compose ps` | Web 和 DB 容器均为 healthy |
+| [ ] | 完整 Docker 服务健康 | 完整 Docker 模式下，在 `docker/` 执行 `docker compose ps` | Web 和 DB 容器均为 healthy |
+| [ ] | 本机持久化服务健康 | 本机持久化模式下，执行 `bun run deploy:local status` | `com.blinkora.local` 为 running，`blinkora-db` 为 healthy，不需要 `blinkora-web` |
 | [ ] | Web 端口正确 | 打开 Rust 主栈 `http://localhost:6676` | 页面可打开，不出现 `ERR_UNSAFE_PORT` |
 | [ ] | Web 端口统一 | 搜索当前文档或配置中的 Web 入口 | 运行入口使用 `6676` |
-| [ ] | 启动日志无新错误 | 对当前目标 compose 执行 `logs --tail=80 web` | 除未登录请求外，无新增服务端异常 |
+| [ ] | 启动日志无新错误 | Docker 模式看 `docker compose logs --tail=80 web`；本机持久化模式看 `tail -n 80 ~/.blinkora/local/logs/blinkora.out.log ~/.blinkora/local/logs/blinkora.err.log` | 除未登录请求外，无新增服务端异常 |
 | [ ] | 前端控制台无错误 | 浏览器打开首页并查看 console | 无白屏错误、chunk 加载错误、i18n key 直出 |
 | [ ] | Vditor / Lute 资源 | 打开首页编辑器并查看 network / console；或请求 `/vditor-assets/dist/js/lute/lute.min.js` | 编辑器出现 `.vditor`，Lute 资源返回 JS，不出现 `Unexpected token '<'` 或 `Lute is not defined` |
 | [ ] | 静态资源 fallback | 请求一个不存在的 `.js`，如 `/vditor-assets/dist/js/missing-smoke.js` | 返回 `404`，不返回 `index.html` |
@@ -73,6 +77,7 @@ Docker compose 文件：
 | [ ] | 创建长笔记 | 进入 `笔记`，输入 `烟测笔记 YYYY-MM-DD` 并发送 | 卡片出现在笔记列表 |
 | [ ] | 创建待办 | 进入 `待办`，输入 `烟测待办 YYYY-MM-DD` 并发送 | 待办出现在时间线或待办列表 |
 | [ ] | 编辑卡片 | 打开卡片编辑，修改内容并保存 | 卡片内容更新，无重复卡片 |
+| [ ] | 类型转换不丢正文 | 点击卡片左下角类型标识，在闪念和笔记之间转换 | 卡片移动到目标类型列表，原正文、标签和附件仍保留 |
 | [ ] | 复制入口 | 点击卡片复制按钮 | 显示成功提示，内容可复制 |
 | [ ] | 归档 | 对测试卡片执行归档 | 从当前列表消失，归档页可见 |
 | [ ] | 恢复归档 | 在归档页恢复测试卡片 | 回到原类型列表 |
@@ -113,7 +118,7 @@ Docker compose 文件：
 | [ ] | S3 / OSS 上传 | 在 S3 存储模式下上传测试图片 | 对象存入配置的 Bucket / Custom Path，上传响应同时包含 `filePath` / `path`，卡片图片预览不出现 404 |
 | [ ] | S3 / OSS 编辑删除 | 编辑卡片删除 S3 图片附件 | 前端立即移除，OSS 中对应对象被删除 |
 | [ ] | S3 / OSS 删卡同步删资源 | 带 S3 图片的卡片进回收站后彻底删除并选择同步删除资源 | 卡片和仅被当前卡片引用的 S3 对象都被删除 |
-| [ ] | 本地存储映射 | 切换或验证本地存储模式后上传测试附件 | 文件落在 `docker/data/blinkora/files` 对应映射目录中 |
+| [ ] | 本地存储映射 | 切换或验证本地存储模式后上传测试附件 | Docker 模式文件落在 `docker/data/blinkora/files`；本机持久化模式文件落在 `~/.blinkora/local/data/files` |
 | [ ] | 本地资源删除 | 删除本地附件或同步删除带附件卡片 | 数据库记录和映射目录中的测试文件一起清理 |
 
 ### 5.1 存储配置专项
@@ -141,7 +146,9 @@ Docker compose 文件：
 
 | 状态 | 检查项 | 操作 | 预期结果 |
 | --- | --- | --- | --- |
-| [ ] | 基本信息 | 打开 `/settings` 基本信息 | 名称、访问令牌、隐藏 PC 编辑器、双因素验证区域加载正常 |
+| [ ] | 基本信息 | 打开 `/settings` 基本信息 | 名称、工作区令牌、隐藏 PC 编辑器、双因素验证区域加载正常 |
+| [ ] | 工作区令牌 | 在基本信息里选择测试 Workspace，点击刷新并复制“给 AI 的调用指南” | 指南回显 `BLINKORA_AGENT_TOKEN` 明文，包含 `BLINKORA_BASE_URL`、绑定 Workspace、权限边界、MCP endpoint、Skill 下载命令；刷新只影响下拉框选中的 Workspace |
+| [ ] | 令牌更新失效 | 再次刷新同一测试 Workspace 的工作区令牌 | 新 token 可用，旧 token 不能再连 MCP 或调用白名单 tRPC |
 | [ ] | 偏好 | 打开偏好页 | 不显示已移除的 Hub 开关，语言显示为简体中文 |
 | [ ] | 存储 | 打开存储页 | 本地 / S3 配置项加载正常，无空白 |
 | [ ] | 导出 | 打开导出页 | 当前工作区导出 / 全量备份导出、JSON / Markdown 和导入入口可见 |
@@ -154,7 +161,11 @@ Docker compose 文件：
 | --- | --- | --- | --- |
 | [ ] | 未鉴权拒绝 | 不携带 token 请求 `GET /sse` | 返回 `401`，不会建立 SSE 连接 |
 | [ ] | SSE 握手 | 使用经授权的测试 token 通过 `@modelcontextprotocol/sdk` 的 `SSEClientTransport` 连接 `/sse` | 客户端完成 `connect()`，服务端建立对应 session |
-| [ ] | 工具清单 | 在已连接客户端调用 `tools/list` | 返回 `searchBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora` |
+| [ ] | 工具清单 | 在已连接客户端调用 `tools/list` | 返回 note、comment 和 tag tree 相关工具：`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listComments`、`createComment`、`updateComment`、`listTagTree` |
+| [ ] | Workspace Agent 工具清单 | 使用 Workspace Agent token 连接 `/sse` 后调用 `tools/list` | 返回 `searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listComments`、`createComment`、`updateComment`、`listTagTree` |
+| [ ] | Workspace Agent 越权拒绝 | 用 Workspace A 的 Agent token 携带 Workspace B 的 `x-workspace-id` 或调用 `workspaces.list` / `config.list` | 错误 workspace 被 `401` 拒绝；非白名单 tRPC 返回 `403` |
+| [ ] | Workspace Agent 数据隔离 | Workspace A/B 各写一条测试笔记，用 Workspace A 的 Agent token 搜索 | 可读写 A 的闪念、笔记、待办和评论，可读 A 标签树，不能读到 B 的内容 |
+| [ ] | Workspace Agent 资源下载 | 使用任意有效 Workspace Agent token 读取 `/api/agent/mcp-guide.md`、`/api/agent/blinkora-workspace/SKILL.md`、`/api/agent/blinkora-workspace.zip` | 返回只读安装资源，包含 MCP/Skill 使用说明，不暴露其他 Workspace 数据 |
 | [ ] | 只读工具回路 | 调用小页查询的 `searchBlinkora` | 返回 `success=true`，GET SSE 与 POST `/messages` 回到同一连接 |
 | [ ] | 连接关闭日志 | 关闭 MCP 客户端后复查 web 日志 | 无新增 MCP 错误，transport 能正常关闭 |
 
@@ -167,7 +178,7 @@ Docker compose 文件：
 | [ ] | 删除测试资源 | 对仅测试使用的附件选择连同资源删除 | 资源页无测试文件残留 |
 | [ ] | 删除测试标签 | 若创建了测试标签，清理标签 | 标签面板无测试标签残留 |
 | [ ] | 删除测试 Workspace | 若创建了临时 Workspace 且 UI 支持删除，删除它 | 默认 Workspace 保留，临时 Workspace 不再出现在下拉 |
-| [ ] | 复查日志 | 在 `docker/` 执行 `docker compose logs --tail=80 web` | 无烟测期间新增服务端异常 |
+| [ ] | 复查日志 | Docker 模式看 `docker compose logs --tail=80 web`；本机持久化模式看 `~/.blinkora/local/logs` | 无烟测期间新增服务端异常 |
 
 ## 通过标准
 

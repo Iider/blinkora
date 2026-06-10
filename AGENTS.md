@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Blinkora is a Docker-deployed Web-only private note and memory base. The target product is a clean single-user foundation for long-term notes, wiki-style memory, tags, attachments, references, review, search/RAG, export, and private annotations.
+Blinkora is a Docker-first Web-only private note and memory base. The target product is a clean single-user foundation for long-term notes, wiki-style memory, tags, attachments, references, review, search/RAG, export, and private annotations.
 
-Blinkora is shipped as a browser app served by the Rust backend. Native clients, offline install/runtime shells, public sharing, social features, and conversational AI features are outside the product scope.
+Blinkora is shipped as a browser app served by the Rust backend. Default deployment is full Docker. Personal macOS machines may use the local persistent mode: Docker only runs PostgreSQL, while the Rust Web service runs locally through `launchd`. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
 
 ## Tech Stack
 
@@ -24,7 +24,7 @@ blinkora/
 ├── server/          # Primary Rust backend
 ├── db/              # First-release PostgreSQL schema
 ├── shared/          # Shared utilities and types
-├── docker/          # Rust Docker deployment entry
+├── docker/          # Rust Docker deployment and PostgreSQL compose entry
 └── docs/            # Architecture notes, tasks, and records
 ```
 
@@ -48,6 +48,7 @@ bun run dev:frontend  # Vite dev server, default http://localhost:5173 and proxi
 ```bash
 bun run build:web --force  # use before release packaging when validating frontend changes
 bun run build:rust-release
+bun run deploy:local install
 bun run verify:rust
 ```
 
@@ -64,7 +65,7 @@ bun run verify:rust
 
 ## Development Boundaries
 
-- Keep the product Web-only and Docker-first.
+- Keep the product Web-only and Docker-first. Local persistent deployment is allowed for personal macOS use, but should stay small and reuse the same Rust backend.
 - Keep AI work limited to embedding/RAG configuration and indexing.
 - Prefer hard deletion over feature flags for features outside the current product scope.
 - Keep export as a data-safety baseline.
@@ -79,11 +80,11 @@ DATABASE_URL=postgresql://postgres:mysecretpassword@localhost:55433/postgres
 BLINKORA_SECRET=your-secret-key
 ```
 
-Docker deployment runs from `docker/`; `docker/compose.yml` has local defaults and can optionally read `docker/.env` for production secrets. Storage credentials and embedding provider API keys are configured in the app settings and stored in application config, not required root `.env` keys.
+Docker deployment runs from `docker/`; `docker/compose.yml` has local defaults and can optionally read `docker/.env` for production secrets. Local persistent deployment stores its generated runtime env in `~/.blinkora/local/blinkora.env`. Storage credentials and embedding provider API keys are configured in the app settings and stored in application config, not required root `.env` keys.
 
 ## Deployment
 
-Primary Rust deployment:
+Primary full Docker deployment:
 
 ```bash
 bun run build:rust-release
@@ -91,16 +92,25 @@ cd docker
 docker compose up -d
 ```
 
-The default local Rust runtime identity is:
+The default full Docker runtime identity is:
 
 - web container: `blinkora-web`
 - database container: `blinkora-db`
 - database data path: `docker/data/postgres` on the host, mounted to `/var/lib/postgresql/data`
 - local URL: `http://localhost:6676`
 
+Personal macOS local persistent deployment:
+
+```bash
+bun run deploy:local install
+```
+
+This mode keeps only `blinkora-db` in Docker, runs the Rust Web service through `launchd` as `com.blinkora.local`, stores app data in `~/.blinkora/local/data`, and still serves `http://localhost:6676`.
+
 ## Ports
 
 - Rust Docker Web app and API: `6676`
+- Rust local persistent Web app and API: `6676`
 - Rust local dev API default: `6677`
 - Frontend Vite dev server default: `5173`
 
@@ -109,4 +119,4 @@ The default local Rust runtime identity is:
 - Bun >= 1.0.0
 - Rust toolchain for `build:rust-release`, or Docker builder fallback
 - PostgreSQL
-- Docker for local runtime
+- Docker for full runtime or local PostgreSQL

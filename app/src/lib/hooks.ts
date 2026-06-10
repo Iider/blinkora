@@ -35,6 +35,7 @@ export const useConfigSetting = (configKey: keyof BlinkoraStore['config']['value
 export const useSwiper = (threshold = 50) => {
   const [isVisible, setIsVisible] = useState(true);
   const touchStartY = useRef(0);
+  const wheelDeltaY = useRef(0);
   const lastDirection = useRef<'up' | 'down'>();
 
   useEffect(() => {
@@ -58,12 +59,29 @@ export const useSwiper = (threshold = 50) => {
       }
     };
 
+    const handleWheel = (e: WheelEvent) => {
+      wheelDeltaY.current += e.deltaY;
+
+      if (Math.abs(wheelDeltaY.current) > threshold) {
+        if (wheelDeltaY.current < 0) {
+          lastDirection.current = 'down';
+          setIsVisible(true);
+        } else {
+          lastDirection.current = 'up';
+          setIsVisible(false);
+        }
+        wheelDeltaY.current = 0;
+      }
+    };
+
     window.addEventListener('touchstart', handleTouchStart);
     window.addEventListener('touchmove', handleTouchMove);
+    window.addEventListener('wheel', handleWheel, { passive: true });
 
     return () => {
       window.removeEventListener('touchstart', handleTouchStart);
       window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('wheel', handleWheel);
     };
   }, [threshold]);
 

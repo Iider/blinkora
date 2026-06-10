@@ -27,7 +27,8 @@ pub struct MessageQuery {
     session_id: Option<String>,
 }
 
-static SESSIONS: Lazy<RwLock<HashMap<String, McpSession>>> = Lazy::new(|| RwLock::new(HashMap::new()));
+static SESSIONS: Lazy<RwLock<HashMap<String, McpSession>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
 
 pub async fn sse(
     State(_state): State<AppState>,
@@ -78,7 +79,7 @@ pub async fn messages(
         return (StatusCode::BAD_REQUEST, "No transport found for sessionId").into_response();
     };
 
-    if session.user.id != user.id {
+    if session.user.auth_session_key() != user.auth_session_key() {
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
 
@@ -86,7 +87,12 @@ pub async fn messages(
     if let Some(response) = response {
         let _ = session
             .sender
-            .send(Event::default().event("message").json_data(response).unwrap_or_else(|_| Event::default().event("message").data("{}")))
+            .send(
+                Event::default()
+                    .event("message")
+                    .json_data(response)
+                    .unwrap_or_else(|_| Event::default().event("message").data("{}")),
+            )
             .await;
     }
 
@@ -97,7 +103,9 @@ async fn handle_json_rpc(state: AppState, user: CurrentUser, payload: Value) -> 
     if let Some(items) = payload.as_array() {
         let mut responses = Vec::new();
         for item in items {
-            if let Some(response) = handle_single_json_rpc(state.clone(), user.clone(), item.clone()).await {
+            if let Some(response) =
+                handle_single_json_rpc(state.clone(), user.clone(), item.clone()).await
+            {
                 responses.push(response);
             }
         }
@@ -106,94 +114,228 @@ async fn handle_json_rpc(state: AppState, user: CurrentUser, payload: Value) -> 
     handle_single_json_rpc(state, user, payload).await
 }
 
-async fn handle_single_json_rpc(state: AppState, user: CurrentUser, payload: Value) -> Option<Value> {
+async fn handle_single_json_rpc(
+    state: AppState,
+    user: CurrentUser,
+    payload: Value,
+) -> Option<Value> {
     let id = payload.get("id").cloned();
-    let method = payload.get("method").and_then(Value::as_str).unwrap_or_default();
+    let method = payload
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let params = payload.get("params").cloned().unwrap_or(Value::Null);
 
     match method {
-        "initialize" => Some(json_rpc_result(id, json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "blinkora-mcp-server", "version": "1.0.0-rust" }
-        }))),
+        "initialize" => Some(json_rpc_result(
+            id,
+            json!({
+                "protocolVersion": "2024-11-05",
+                "capabilities": { "tools": {} },
+                "serverInfo": { "name": "blinkora-mcp-server", "version": "1.0.0-rust" }
+            }),
+        )),
         "notifications/initialized" => None,
         "ping" => Some(json_rpc_result(id, json!({}))),
-        "tools/list" => Some(json_rpc_result(id, json!({ "tools": tool_list() }))),
+        "tools/list" => Some(json_rpc_result(id, json!({ "tools": tool_list(&user) }))),
         "tools/call" => {
-            let tool_name = params.get("name").and_then(Value::as_str).unwrap_or_default();
-            let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-            Some(json_rpc_result(id, call_tool(state, user, tool_name, arguments).await))
+            let tool_name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let arguments = params
+                .get("arguments")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            Some(json_rpc_result(
+                id,
+                call_tool(state, user, tool_name, arguments).await,
+            ))
         }
-        _ => Some(json_rpc_error(id, -32601, &format!("Method not found: {method}"))),
+        _ => Some(json_rpc_error(
+            id,
+            -32601,
+            &format!("Method not found: {method}"),
+        )),
     }
 }
 
-fn tool_list() -> Value {
-    json!([
+fn tool_list(user: &CurrentUser) -> Value {
+    let tools = vec![
         {
-            "name": "searchBlinkora",
-            "description": "Search Blinkora notes.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "searchText": { "type": "string" },
-                    "page": { "type": "number", "default": 1 },
-                    "size": { "type": "number", "default": 30 },
-                    "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": -1 },
-                    "isArchived": { "type": ["boolean", "null"], "default": false },
-                    "isRecycle": { "type": "boolean", "default": false }
+            json!({
+                "name": "searchBlinkora",
+                "description": "Search Blinkora notes.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "searchText": { "type": "string" },
+                        "page": { "type": "number", "default": 1 },
+                        "size": { "type": "number", "default": 30 },
+                        "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": -1 },
+                        "isArchived": { "type": ["boolean", "null"], "default": false },
+                        "isRecycle": { "type": "boolean", "default": false }
+                    }
                 }
-            }
+            })
         },
         {
-            "name": "upsertBlinkora",
-            "description": "Create a Blinkora, note, or todo entry.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "content": { "type": "string" },
-                    "type": { "type": "string", "default": "blinkora" }
-                },
-                "required": ["content"]
-            }
+            json!({
+                "name": "getBlinkora",
+                "description": "Get one Blinkora note by id.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "number" }
+                    },
+                    "required": ["id"]
+                }
+            })
         },
         {
-            "name": "updateBlinkora",
-            "description": "Update a Blinkora note by id.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "id": { "type": "number" },
-                    "content": { "type": "string" },
-                    "type": { "type": "string", "default": "blinkora" }
-                },
-                "required": ["id", "content"]
-            }
+            json!({
+                "name": "upsertBlinkora",
+                "description": "Create a Blinkora, note, or todo entry.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "content": { "type": "string" },
+                        "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": "blinkora" }
+                    },
+                    "required": ["content"]
+                }
+            })
         },
         {
-            "name": "deleteBlinkora",
-            "description": "Move Blinkora notes to recycle bin.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "ids": { "type": "array", "items": { "type": "number" } }
-                },
-                "required": ["ids"]
-            }
-        }
-    ])
+            json!({
+                "name": "updateBlinkora",
+                "description": "Update a Blinkora note by id.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "number" },
+                        "content": { "type": "string" },
+                        "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": "blinkora" }
+                    },
+                    "required": ["id"]
+                }
+            })
+        },
+        {
+            json!({
+                "name": "deleteBlinkora",
+                "description": "Move Blinkora notes to recycle bin.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "ids": { "type": "array", "items": { "type": "number" } }
+                    },
+                    "required": ["ids"]
+                }
+            })
+        },
+        {
+            json!({
+                "name": "listComments",
+                "description": "List comments for one Blinkora note.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "noteId": { "type": "number" }
+                    },
+                    "required": ["noteId"]
+                }
+            })
+        },
+        {
+            json!({
+                "name": "createComment",
+                "description": "Create a comment for one Blinkora note.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "noteId": { "type": "number" },
+                        "content": { "type": "string" },
+                        "kind": { "type": "string", "default": "annotation" },
+                        "parentId": { "type": ["number", "null"] },
+                        "metadata": { "type": ["object", "null"] }
+                    },
+                    "required": ["noteId", "content"]
+                }
+            })
+        },
+        {
+            json!({
+                "name": "updateComment",
+                "description": "Update a Blinkora comment.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "number" },
+                        "content": { "type": "string" },
+                        "kind": { "type": "string" },
+                        "status": { "type": "string" },
+                        "metadata": { "type": ["object", "null"] }
+                    },
+                    "required": ["id"]
+                }
+            })
+        },
+        {
+            json!({
+                "name": "listTagTree",
+                "description": "List the tag tree for the current workspace.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            })
+        },
+    ];
+
+    Value::Array(
+        tools
+            .into_iter()
+            .filter(|tool| {
+                tool.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| user.can_call_mcp_tool(name))
+            })
+            .collect(),
+    )
 }
 
 async fn call_tool(state: AppState, user: CurrentUser, tool_name: &str, arguments: Value) -> Value {
+    if !user.can_call_mcp_tool(tool_name) {
+        return tool_error_response("Forbidden".to_string());
+    }
+
     let result = match tool_name {
         "searchBlinkora" => search_blinkora(state, user, arguments).await,
+        "getBlinkora" => {
+            crate::trpc::execute_procedure(state, user, "notes.detail", arguments).await
+        }
         "upsertBlinkora" => upsert_blinkora(state, user, arguments, None).await,
         "updateBlinkora" => {
-            let id = arguments.get("id").and_then(Value::as_i64).map(|value| value as i32);
+            let id = arguments
+                .get("id")
+                .and_then(Value::as_i64)
+                .map(|value| value as i32);
             upsert_blinkora(state, user, arguments, id).await
         }
-        "deleteBlinkora" => crate::trpc::execute_procedure(state, user, "notes.trashMany", arguments).await,
+        "deleteBlinkora" => {
+            crate::trpc::execute_procedure(state, user, "notes.trashMany", arguments).await
+        }
+        "listComments" => {
+            crate::trpc::execute_procedure(state, user, "comments.list", arguments).await
+        }
+        "createComment" => {
+            crate::trpc::execute_procedure(state, user, "comments.create", arguments).await
+        }
+        "updateComment" => {
+            crate::trpc::execute_procedure(state, user, "comments.update", arguments).await
+        }
+        "listTagTree" => list_tag_tree(state, user).await,
         _ => Err(anyhow::anyhow!("Unknown tool: {tool_name}")),
     };
 
@@ -203,8 +345,12 @@ async fn call_tool(state: AppState, user: CurrentUser, tool_name: &str, argument
     }
 }
 
-async fn search_blinkora(state: AppState, user: CurrentUser, mut arguments: Value) -> anyhow::Result<Value> {
-    normalize_note_type(&mut arguments);
+async fn search_blinkora(
+    state: AppState,
+    user: CurrentUser,
+    mut arguments: Value,
+) -> anyhow::Result<Value> {
+    normalize_note_type(&mut arguments, -1);
     let result = crate::trpc::execute_procedure(state, user, "notes.list", arguments).await?;
     let notes = if result.is_array() {
         result
@@ -214,7 +360,10 @@ async fn search_blinkora(state: AppState, user: CurrentUser, mut arguments: Valu
             .cloned()
             .unwrap_or_else(|| Value::Array(Vec::new()))
     };
-    let count = notes.as_array().map(|items| items.len()).unwrap_or_default();
+    let count = notes
+        .as_array()
+        .map(|items| items.len())
+        .unwrap_or_default();
     Ok(json!({
         "success": true,
         "notes": notes,
@@ -228,23 +377,52 @@ async fn upsert_blinkora(
     mut arguments: Value,
     id: Option<i32>,
 ) -> anyhow::Result<Value> {
-    normalize_note_type(&mut arguments);
+    normalize_note_type(&mut arguments, 0);
     if let Some(id) = id {
         arguments["id"] = json!(id);
     }
     crate::trpc::execute_procedure(state, user, "notes.upsert", arguments).await
 }
 
-fn normalize_note_type(arguments: &mut Value) {
-    let type_value = arguments.get("type").cloned().unwrap_or_else(|| json!(0));
+async fn list_tag_tree(state: AppState, user: CurrentUser) -> anyhow::Result<Value> {
+    let tags = crate::trpc::execute_procedure(state, user, "tags.list", json!({})).await?;
+    let tree = match tags.as_array() {
+        Some(items) => build_tag_tree(items, 0),
+        None => Vec::new(),
+    };
+    Ok(json!({
+        "success": true,
+        "tags": tree
+    }))
+}
+
+fn build_tag_tree(tags: &[Value], parent: i64) -> Vec<Value> {
+    tags.iter()
+        .filter(|tag| tag.get("parent").and_then(Value::as_i64).unwrap_or(0) == parent)
+        .map(|tag| {
+            let mut node = tag.clone();
+            let id = node.get("id").and_then(Value::as_i64).unwrap_or_default();
+            node["children"] = Value::Array(build_tag_tree(tags, id));
+            node
+        })
+        .collect()
+}
+
+fn normalize_note_type(arguments: &mut Value, default_type: i32) {
+    let type_value = arguments
+        .get("type")
+        .cloned()
+        .unwrap_or_else(|| json!(default_type));
     let normalized = match type_value {
         Value::String(value) => match value.to_lowercase().as_str() {
+            "all" | "-1" => -1,
             "note" | "1" => 1,
             "todo" | "2" => 2,
-            _ => 0,
+            "blinkora" | "0" => 0,
+            _ => default_type,
         },
         Value::Number(value) => value.as_i64().unwrap_or(0) as i32,
-        _ => 0,
+        _ => default_type,
     };
     arguments["type"] = json!(normalized);
 }

@@ -24,6 +24,7 @@ export const PerferSetting = observer(() => {
   const base = RootStore.Get(BaseStore)
   const [textLength, setTextLength] = useState(blinkora.config.value?.textFoldLength?.toString() || '500');
   const [maxHomePageWidth, setMaxHomePageWidth] = useState(blinkora.config.value?.maxHomePageWidth?.toString() || '0');
+  const [mobileNavBottomPadding, setMobileNavBottomPadding] = useState(blinkora.config.value?.mobileNavBottomPadding?.toString() || '0');
   const [customBackgroundUrl, setCustomBackgroundUrl] = useState(blinkora.config.value?.customBackgroundUrl || '');
   const [signinFooterText, setSigninFooterText] = useState(blinkora.config.value?.signinFooterText || '');
   const [customTitle, setCustomTitle] = useState(blinkora.config.value?.customTitle || '');
@@ -33,10 +34,11 @@ export const PerferSetting = observer(() => {
     blinkora.config.call();
     setTextLength(blinkora.config.value?.textFoldLength?.toString() || '500');
     setMaxHomePageWidth(blinkora.config.value?.maxHomePageWidth?.toString() || '0');
+    setMobileNavBottomPadding(blinkora.config.value?.mobileNavBottomPadding?.toString() || '0');
     setCustomBackgroundUrl(blinkora.config.value?.customBackgroundUrl || '');
     setSigninFooterText(blinkora.config.value?.signinFooterText || '');
     setCustomTitle(blinkora.config.value?.customTitle || '');
-  }, [blinkora.config.value?.textFoldLength, blinkora.config.value?.maxHomePageWidth, blinkora.config.value?.customBackgroundUrl, blinkora.config.value?.signinFooterText, blinkora.config.value?.customTitle]);
+  }, [blinkora.config.value?.textFoldLength, blinkora.config.value?.maxHomePageWidth, blinkora.config.value?.mobileNavBottomPadding, blinkora.config.value?.customBackgroundUrl, blinkora.config.value?.signinFooterText, blinkora.config.value?.customTitle]);
 
 
   return <CollapsibleCard
@@ -113,16 +115,34 @@ export const PerferSetting = observer(() => {
       } />
 
     <Item
-      leftContent={<>{t('show-navigation-bar-on-mobile')}</>}
-      rightContent={<Switch
-        isSelected={blinkora.config.value?.isHiddenMobileBar}
-        onChange={e => {
-          PromiseCall(api.config.update.mutate({
-            key: 'isHiddenMobileBar',
-            value: e.target.checked
-          }))
-        }}
-      />} />
+      leftContent={<div className="flex flex-col">
+        <div>{t('mobile-nav-bottom-padding')}</div>
+        <div className="text-xs text-default-400">{t('mobile-nav-bottom-padding-tip')}</div>
+      </div>}
+      rightContent={
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            size='sm'
+            className='w-20'
+            aria-label={t('mobile-nav-bottom-padding')}
+            value={mobileNavBottomPadding}
+            onChange={e => setMobileNavBottomPadding(e.target.value)}
+            onBlur={async e => {
+              const value = Math.max(0, Math.min(120, parseInt(e.target.value) || 0));
+              setMobileNavBottomPadding(value.toString());
+              await PromiseCall(api.config.update.mutate({
+                key: 'mobileNavBottomPadding',
+                value
+              }));
+              blinkora.config.call();
+            }}
+            min={0}
+            max={120}
+          />
+          <span className="text-sm text-default-400">px</span>
+        </div>
+      } />
 
     <Item
       leftContent={<>{t('order-by-create-time')}</>}
@@ -332,7 +352,10 @@ export const PerferSetting = observer(() => {
       }
     />
     <Item
-      leftContent={<>{t('toolbar-visibility')}</>}
+      leftContent={<div className="flex flex-col">
+        <div>{t('toolbar-visibility')}</div>
+        <div className="text-xs text-default-400">{t('toolbar-visibility-tip')}</div>
+      </div>}
       rightContent={
         <SelectDropdown
           value={blinkora.config.value?.toolbarVisibility}

@@ -61,6 +61,46 @@ ALTER SEQUENCE public.accounts_id_seq OWNED BY public.accounts.id;
 
 
 --
+-- Name: agentAccessTokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."agentAccessTokens" (
+    id integer NOT NULL,
+    name character varying DEFAULT ''::character varying NOT NULL,
+    "tokenHash" character varying(64) NOT NULL,
+    token text,
+    "accountId" integer NOT NULL,
+    "workspaceId" integer NOT NULL,
+    permissions json DEFAULT '{"notes":["read","write"],"comments":["read","write"],"tags":["read"]}'::json NOT NULL,
+    "expiresAt" timestamp(6) with time zone,
+    "revokedAt" timestamp(6) with time zone,
+    "lastUsedAt" timestamp(6) with time zone,
+    "createdAt" timestamp(6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" timestamp(6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: agentAccessTokens_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."agentAccessTokens_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: agentAccessTokens_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."agentAccessTokens_id_seq" OWNED BY public."agentAccessTokens".id;
+
+
+--
 -- Name: aiModels; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -543,6 +583,13 @@ ALTER TABLE ONLY public.accounts ALTER COLUMN id SET DEFAULT nextval('public.acc
 
 
 --
+-- Name: agentAccessTokens id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."agentAccessTokens" ALTER COLUMN id SET DEFAULT nextval('public."agentAccessTokens_id_seq"'::regclass);
+
+
+--
 -- Name: aiModels id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -639,6 +686,14 @@ ALTER TABLE ONLY public.workspaces ALTER COLUMN id SET DEFAULT nextval('public.w
 
 ALTER TABLE ONLY public.accounts
     ADD CONSTRAINT accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agentAccessTokens agentAccessTokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."agentAccessTokens"
+    ADD CONSTRAINT "agentAccessTokens_pkey" PRIMARY KEY (id);
 
 
 --
@@ -743,6 +798,34 @@ ALTER TABLE ONLY public."tagsToNote"
 
 ALTER TABLE ONLY public.workspaces
     ADD CONSTRAINT workspaces_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agentAccessTokens_accountId_workspaceId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "agentAccessTokens_accountId_workspaceId_idx" ON public."agentAccessTokens" USING btree ("accountId", "workspaceId");
+
+
+--
+-- Name: agentAccessTokens_revokedAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "agentAccessTokens_revokedAt_idx" ON public."agentAccessTokens" USING btree ("revokedAt");
+
+
+--
+-- Name: agentAccessTokens_tokenHash_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX "agentAccessTokens_tokenHash_key" ON public."agentAccessTokens" USING btree ("tokenHash");
+
+
+--
+-- Name: agentAccessTokens_workspaceId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "agentAccessTokens_workspaceId_idx" ON public."agentAccessTokens" USING btree ("workspaceId");
 
 
 --
@@ -904,6 +987,22 @@ CREATE INDEX "workspaces_accountId_idx" ON public.workspaces USING btree ("accou
 --
 
 CREATE INDEX "workspaces_isDefault_idx" ON public.workspaces USING btree ("isDefault");
+
+
+--
+-- Name: agentAccessTokens agentAccessTokens_accountId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."agentAccessTokens"
+    ADD CONSTRAINT "agentAccessTokens_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES public.accounts(id) ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+--
+-- Name: agentAccessTokens agentAccessTokens_workspaceId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."agentAccessTokens"
+    ADD CONSTRAINT "agentAccessTokens_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES public.workspaces(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --

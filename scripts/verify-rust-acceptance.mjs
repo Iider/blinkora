@@ -20,4 +20,5 @@ function run(name, command, args, env = {}) {
 }
 
 run('rust smoke script syntax', 'node', ['--check', 'scripts/rust-smoke.mjs']);
+run('workspace agent smoke script syntax', 'node', ['--check', 'scripts/workspace-agent-smoke.mjs']);
 run('rust unit tests', 'cargo', ['test', '--manifest-path', 'server/Cargo.toml']);

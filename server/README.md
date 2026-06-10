@@ -22,6 +22,25 @@ docker compose up -d
 
 如果本机无法交叉编译 Linux Rust 二进制，`bun run build:rust-release` 会回退到 Docker binary builder。`docker/dockerfile.rust.fullbuild` 仅用于排障或构建机。
 
+## 本机持久化部署
+
+PostgreSQL 可以继续使用 Docker，Rust 服务跑在 macOS 本机：
+
+```bash
+bun run deploy:local install
+```
+
+脚本会启动 Docker `db` 服务，停掉旧的 `web` 容器，构建本机二进制，并安装 `launchd` 服务。细节见 `docs/LOCAL_PERSISTENT_DEPLOYMENT.md`。
+
+常用检查：
+
+```bash
+bun run deploy:local status
+curl -I http://127.0.0.1:6676/
+```
+
+本机持久化部署只需要 `blinkora-db` 容器。`blinkora-web` 不运行是正常的。
+
 ## 数据库初始化
 
 Rust 后端启动时会检查 `accounts` 表是否存在。空库会执行 `SCHEMA_PATH` 指向的 `db/schema.sql`；已有库会跳过初始化。当前只维护单份首版 schema。

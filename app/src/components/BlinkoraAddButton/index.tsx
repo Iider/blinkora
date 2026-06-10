@@ -5,6 +5,7 @@ import { observer } from 'mobx-react-lite';
 import { ShowEditBlinkoraModel } from '../BlinkoraRightClickMenu';
 import { FocusEditorFixMobile } from "@/components/Common/Editor/editorUtils";
 import { eventBus } from '@/lib/event';
+import { useSwiper } from '@/lib/hooks';
 
 export const BlinkoraAddButton = observer(() => {
   const ICON_SIZE = {
@@ -18,6 +19,7 @@ export const BlinkoraAddButton = observer(() => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLongPressing, setIsLongPressing] = useState(false);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const isVisible = useSwiper();
 
   const handleWriteAction = () => {
     ShowEditBlinkoraModel('2xl', 'create')
@@ -63,14 +65,27 @@ export const BlinkoraAddButton = observer(() => {
     setIsLongPressing(false);
   };
 
-  return (<div style={{
-    width: BUTTON_SIZE.CENTER,
-    height: BUTTON_SIZE.CENTER,
-    position: 'fixed',
-    right: 40,
-    bottom: 110,
-    zIndex: 50
-  }}>
+  return (<motion.div
+    animate={{
+      y: isVisible ? 0 : 90,
+      opacity: isVisible ? 1 : 0,
+    }}
+    transition={{
+      type: "spring",
+      damping: 25,
+      stiffness: 300,
+      mass: 0.8,
+      bounce: 0.3
+    }}
+    style={{
+      width: BUTTON_SIZE.CENTER,
+      height: BUTTON_SIZE.CENTER,
+      position: 'fixed',
+      right: 40,
+      bottom: 110,
+      zIndex: 50,
+      pointerEvents: isVisible ? 'auto' : 'none'
+    }}>
     <motion.div
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
@@ -124,6 +139,6 @@ export const BlinkoraAddButton = observer(() => {
         />
       </motion.div>
     </motion.div>
-  </div>
+  </motion.div>
   );
 });

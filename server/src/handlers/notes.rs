@@ -240,7 +240,12 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     .boxed()
 }
 
-async fn bool_config(ctx: &ProcedureContext, user_id: i32, workspace_id: i32, key: &str) -> anyhow::Result<bool> {
+async fn bool_config(
+    ctx: &ProcedureContext,
+    user_id: i32,
+    workspace_id: i32,
+    key: &str,
+) -> anyhow::Result<bool> {
     let row = sqlx::query(
         r#"SELECT config FROM config
            WHERE key=$1 AND ("userId" IS NULL OR ("userId"=$2 AND "workspaceId"=$3))
@@ -299,11 +304,13 @@ fn daily_review(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
     async move {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
-        let rows = sqlx::query(&note_select_sql(r#""isReviewed"=false AND "isArchived"=false AND "isRecycle"=false LIMIT 20"#))
-            .bind(user.id)
-            .bind(ws)
-            .fetch_all(ctx.state.pool())
-            .await?;
+        let rows = sqlx::query(&note_select_sql(
+            r#""isReviewed"=false AND "isArchived"=false AND "isRecycle"=false LIMIT 20"#,
+        ))
+        .bind(user.id)
+        .bind(ws)
+        .fetch_all(ctx.state.pool())
+        .await?;
         let mut items = Vec::new();
         for row in rows {
             items.push(note_json(&ctx, row).await?);
@@ -354,55 +361,65 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
+        if user.is_workspace_agent() && input.get("attachments").is_some() {
+            bail!("Agent token cannot modify attachments");
+        }
         let id = input.get("id").and_then(Value::as_i64).map(|v| v as i32);
-        let content = input.get("content").and_then(Value::as_str).unwrap_or("");
-        let note_type = input.get("type").and_then(Value::as_i64).unwrap_or(0) as i32;
+        let content = input.get("content").and_then(Value::as_str).map(str::to_owned);
+        let note_type = input.get("type").and_then(Value::as_i64).map(|value| value as i32);
         let metadata = input.get("metadata").cloned();
         let mut tx = ctx.state.pool().begin().await?;
-        let note_id = if let Some(id) = id {
-            let old: Option<(String, Option<Value>)> = sqlx::query_as(r#"SELECT content, metadata FROM notes WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
+        let (note_id, synced_content) = if let Some(id) = id {
+            let old: Option<(String, i32, Option<Value>)> = sqlx::query_as(r#"SELECT content, type, metadata FROM notes WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
                 .bind(id)
                 .bind(user.id)
                 .bind(ws)
                 .fetch_optional(&mut *tx)
                 .await?;
-            if let Some((old_content, old_metadata)) = old {
+            if let Some((old_content, old_note_type, old_metadata)) = old {
                 let version: i32 = sqlx::query_scalar(r#"SELECT COALESCE(MAX(version),0)+1 FROM "noteHistory" WHERE "noteId"=$1"#)
                     .bind(id)
                     .fetch_one(&mut *tx)
                     .await?;
                 sqlx::query(r#"INSERT INTO "noteHistory" ("noteId", content, metadata, version, "accountId", "workspaceId") VALUES ($1,$2,$3,$4,$5,$6)"#)
                     .bind(id)
-                    .bind(old_content)
+                    .bind(&old_content)
                     .bind(old_metadata)
                     .bind(version)
                     .bind(user.id)
                     .bind(ws)
                     .execute(&mut *tx)
                     .await?;
+                let next_content = content.unwrap_or(old_content);
+                let next_note_type = note_type.unwrap_or(old_note_type);
+                sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3::json, metadata), "updatedAt"=NOW() WHERE id=$4 AND "accountId"=$5 AND "workspaceId"=$6"#)
+                    .bind(&next_content)
+                    .bind(next_note_type)
+                    .bind(metadata)
+                    .bind(id)
+                    .bind(user.id)
+                    .bind(ws)
+                    .execute(&mut *tx)
+                    .await?;
+                (id, next_content)
+            } else {
+                bail!("Note not found");
             }
-            sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3::json, metadata), "updatedAt"=NOW() WHERE id=$4 AND "accountId"=$5 AND "workspaceId"=$6"#)
-                .bind(content)
-                .bind(note_type)
-                .bind(metadata)
-                .bind(id)
-                .bind(user.id)
-                .bind(ws)
-                .execute(&mut *tx)
-                .await?;
-            id
         } else {
+            let content = content.unwrap_or_default();
+            let note_type = note_type.unwrap_or(0);
             sqlx::query_scalar(r#"INSERT INTO notes (content, type, metadata, "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING id"#)
-                .bind(content)
+                .bind(&content)
                 .bind(note_type)
                 .bind(metadata)
                 .bind(user.id)
                 .bind(ws)
                 .fetch_one(&mut *tx)
-                .await?
+                .await
+                .map(|id| (id, content))?
         };
-        sync_tags(&ctx, &mut tx, note_id, user.id, ws, content).await?;
-        sync_attachments(&mut tx, note_id, user.id, ws, content, input.get("attachments")).await?;
+        sync_tags(&ctx, &mut tx, note_id, user.id, ws, &synced_content).await?;
+        sync_attachments(&mut tx, note_id, user.id, ws, &synced_content, input.get("attachments")).await?;
         tx.commit().await?;
         let row = sqlx::query(&note_select_sql("id=$3"))
             .bind(user.id)
@@ -520,30 +537,54 @@ fn clear_recycle_bin(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
 
 fn update_attachments_order(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
-        if let Some(items) = input.get("attachments").or_else(|| input.get("items")).and_then(Value::as_array) {
+        if let Some(items) = input
+            .get("attachments")
+            .or_else(|| input.get("items"))
+            .and_then(Value::as_array)
+        {
             for item in items {
                 let id = item.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
-                let sort_order = item.get("sortOrder").and_then(Value::as_i64).unwrap_or_default() as i32;
-                sqlx::query(r#"UPDATE attachments SET "sortOrder"=$1, "updatedAt"=NOW() WHERE id=$2"#)
-                    .bind(sort_order).bind(id).execute(ctx.state.pool()).await?;
+                let sort_order = item
+                    .get("sortOrder")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default() as i32;
+                sqlx::query(
+                    r#"UPDATE attachments SET "sortOrder"=$1, "updatedAt"=NOW() WHERE id=$2"#,
+                )
+                .bind(sort_order)
+                .bind(id)
+                .execute(ctx.state.pool())
+                .await?;
             }
         }
         Ok(json!(true))
-    }.boxed()
+    }
+    .boxed()
 }
 
 fn update_notes_order(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
-        if let Some(items) = input.get("notes").or_else(|| input.get("items")).and_then(Value::as_array) {
+        if let Some(items) = input
+            .get("notes")
+            .or_else(|| input.get("items"))
+            .and_then(Value::as_array)
+        {
             for item in items {
                 let id = item.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
-                let sort_order = item.get("sortOrder").and_then(Value::as_i64).unwrap_or_default() as i32;
+                let sort_order = item
+                    .get("sortOrder")
+                    .and_then(Value::as_i64)
+                    .unwrap_or_default() as i32;
                 sqlx::query(r#"UPDATE notes SET "sortOrder"=$1, "updatedAt"=NOW() WHERE id=$2"#)
-                    .bind(sort_order).bind(id).execute(ctx.state.pool()).await?;
+                    .bind(sort_order)
+                    .bind(id)
+                    .execute(ctx.state.pool())
+                    .await?;
             }
         }
         Ok(json!(true))
-    }.boxed()
+    }
+    .boxed()
 }
 
 fn get_history(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
@@ -583,7 +624,12 @@ fn get_version(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     }.boxed()
 }
 
-fn update_flag(ctx: ProcedureContext, input: Value, field: &'static str, value: bool) -> ProcedureFuture {
+fn update_flag(
+    ctx: ProcedureContext,
+    input: Value,
+    field: &'static str,
+    value: bool,
+) -> ProcedureFuture {
     async move {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
@@ -598,9 +644,16 @@ fn update_flag(ctx: ProcedureContext, input: Value, field: &'static str, value: 
 
 fn ids_from_input(input: &Value) -> Vec<i32> {
     if let Some(items) = input.get("ids").and_then(Value::as_array) {
-        return items.iter().filter_map(|v| v.as_i64().map(|n| n as i32)).collect();
+        return items
+            .iter()
+            .filter_map(|v| v.as_i64().map(|n| n as i32))
+            .collect();
     }
-    input.get("id").and_then(Value::as_i64).map(|id| vec![id as i32]).unwrap_or_default()
+    input
+        .get("id")
+        .and_then(Value::as_i64)
+        .map(|id| vec![id as i32])
+        .unwrap_or_default()
 }
 
 pub(crate) fn note_select_sql(extra: &str) -> String {
@@ -618,10 +671,11 @@ async fn sync_tags<'a>(
     workspace_id: i32,
     content: &str,
 ) -> anyhow::Result<()> {
-    let previous_tag_ids: Vec<i32> = sqlx::query_scalar(r#"SELECT "tagId" FROM "tagsToNote" WHERE "noteId"=$1"#)
-        .bind(note_id)
-        .fetch_all(&mut **tx)
-        .await?;
+    let previous_tag_ids: Vec<i32> =
+        sqlx::query_scalar(r#"SELECT "tagId" FROM "tagsToNote" WHERE "noteId"=$1"#)
+            .bind(note_id)
+            .fetch_all(&mut **tx)
+            .await?;
     let tags = extract_hashtags(content);
     let mut current_ids = HashSet::new();
     for tag in tags {
@@ -644,11 +698,17 @@ async fn sync_tags<'a>(
         }
     }
     if current_ids.is_empty() {
-        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=$1"#).bind(note_id).execute(&mut **tx).await?;
+        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=$1"#)
+            .bind(note_id)
+            .execute(&mut **tx)
+            .await?;
     } else {
         let ids: Vec<i32> = current_ids.into_iter().collect();
         sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=$1 AND NOT ("tagId"=ANY($2))"#)
-            .bind(note_id).bind(&ids).execute(&mut **tx).await?;
+            .bind(note_id)
+            .bind(&ids)
+            .execute(&mut **tx)
+            .await?;
     }
     cleanup_unused_tags(tx, &previous_tag_ids, account_id, workspace_id).await?;
     Ok(())
@@ -692,7 +752,11 @@ async fn sync_attachments<'a>(
     let mut paths = extract_attachment_paths(content);
     if let Some(items) = attachments_input.and_then(Value::as_array) {
         for item in items {
-            if let Some(path) = item.get("path").and_then(Value::as_str).filter(|value| !value.is_empty()) {
+            if let Some(path) = item
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+            {
                 paths.insert(normalize_attachment_path(path));
             }
         }
@@ -740,13 +804,35 @@ fn extract_attachment_paths(content: &str) -> HashSet<String> {
 }
 
 fn normalize_ai_query(query: &str) -> String {
-    query.replace('@', " ").split_whitespace().collect::<Vec<_>>().join(" ")
+    query
+        .replace('@', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn ai_query_terms(query: &str) -> Vec<String> {
     let mut seen = HashSet::new();
     query
-        .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '.' | ';' | ':' | '!' | '?' | '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}'))
+        .split(|ch: char| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    ',' | '.'
+                        | ';'
+                        | ':'
+                        | '!'
+                        | '?'
+                        | '"'
+                        | '\''
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                )
+        })
         .map(str::trim)
         .filter(|term| term.chars().count() >= 2)
         .map(str::to_lowercase)
@@ -822,7 +908,10 @@ fn unique_ids(ids: &[i32]) -> Vec<i32> {
     ids.iter().copied().filter(|id| seen.insert(*id)).collect()
 }
 
-async fn notes_for_delete(ctx: &ProcedureContext, ids: &[i32]) -> anyhow::Result<(Vec<NoteForDelete>, i32, i32)> {
+async fn notes_for_delete(
+    ctx: &ProcedureContext,
+    ids: &[i32],
+) -> anyhow::Result<(Vec<NoteForDelete>, i32, i32)> {
     let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
     let ws = workspace_id(&ctx).await?;
     let note_ids = unique_ids(ids);
@@ -830,12 +919,14 @@ async fn notes_for_delete(ctx: &ProcedureContext, ids: &[i32]) -> anyhow::Result
         return Ok((Vec::new(), user.id, ws));
     }
 
-    let rows = sqlx::query(r#"SELECT id, content FROM notes WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
-        .bind(&note_ids)
-        .bind(user.id)
-        .bind(ws)
-        .fetch_all(ctx.state.pool())
-        .await?;
+    let rows = sqlx::query(
+        r#"SELECT id, content FROM notes WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#,
+    )
+    .bind(&note_ids)
+    .bind(user.id)
+    .bind(ws)
+    .fetch_all(ctx.state.pool())
+    .await?;
 
     if rows.len() != note_ids.len() {
         bail!("Some notes cannot be deleted as you are not the owner");
@@ -863,10 +954,11 @@ async fn attachment_delete_candidates(
     }
 
     let mut by_id = HashMap::<i32, AttachmentForDelete>::new();
-    let direct_rows = sqlx::query(r#"SELECT id, name, path, type FROM attachments WHERE "noteId"=ANY($1)"#)
-        .bind(&note_ids)
-        .fetch_all(ctx.state.pool())
-        .await?;
+    let direct_rows =
+        sqlx::query(r#"SELECT id, name, path, type FROM attachments WHERE "noteId"=ANY($1)"#)
+            .bind(&note_ids)
+            .fetch_all(ctx.state.pool())
+            .await?;
 
     for row in direct_rows {
         let attachment = AttachmentForDelete {
@@ -960,7 +1052,11 @@ async fn get_delete_impact(ctx: &ProcedureContext, ids: &[i32]) -> anyhow::Resul
     })
 }
 
-async fn delete_note_ids(ctx: ProcedureContext, ids: Vec<i32>, delete_orphan_attachments: bool) -> anyhow::Result<Value> {
+async fn delete_note_ids(
+    ctx: ProcedureContext,
+    ids: Vec<i32>,
+    delete_orphan_attachments: bool,
+) -> anyhow::Result<Value> {
     let (notes, account_id, workspace_id) = notes_for_delete(&ctx, &ids).await?;
     let ids = notes.iter().map(|note| note.id).collect::<Vec<_>>();
     if ids.is_empty() {
@@ -986,12 +1082,16 @@ async fn delete_note_ids(ctx: ProcedureContext, ids: Vec<i32>, delete_orphan_att
         }
     }
 
-    let attachment_ids_to_delete = attachments_to_delete.iter().map(|attachment| attachment.id).collect::<Vec<_>>();
+    let attachment_ids_to_delete = attachments_to_delete
+        .iter()
+        .map(|attachment| attachment.id)
+        .collect::<Vec<_>>();
     let mut tx = ctx.state.pool().begin().await?;
-    let tag_ids_to_cleanup: Vec<i32> = sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId"=ANY($1)"#)
-        .bind(&ids)
-        .fetch_all(&mut *tx)
-        .await?;
+    let tag_ids_to_cleanup: Vec<i32> =
+        sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId"=ANY($1)"#)
+            .bind(&ids)
+            .fetch_all(&mut *tx)
+            .await?;
     for sql in [
         r#"DELETE FROM "tagsToNote" WHERE "noteId"=ANY($1)"#,
         r#"DELETE FROM "noteReference" WHERE "fromNoteId"=ANY($1) OR "toNoteId"=ANY($1)"#,
@@ -1003,10 +1103,12 @@ async fn delete_note_ids(ctx: ProcedureContext, ids: Vec<i32>, delete_orphan_att
     cleanup_unused_tags(&mut tx, &tag_ids_to_cleanup, account_id, workspace_id).await?;
 
     if attachment_ids_to_delete.is_empty() {
-        sqlx::query(r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=NOW() WHERE "noteId"=ANY($1)"#)
-            .bind(&ids)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=NOW() WHERE "noteId"=ANY($1)"#,
+        )
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
     } else {
         sqlx::query(r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=NOW() WHERE "noteId"=ANY($1) AND NOT (id=ANY($2))"#)
             .bind(&ids)
@@ -1040,8 +1142,11 @@ async fn delete_physical_attachment(ctx: &ProcedureContext, api_path: &str) -> a
         return Ok(());
     }
 
-    let relative_path = api_file_relative_path(api_path).ok_or_else(|| anyhow!("Invalid file path"))?;
-    let path = Path::new(&ctx.state.config.data_dir).join("files").join(relative_path);
+    let relative_path =
+        api_file_relative_path(api_path).ok_or_else(|| anyhow!("Invalid file path"))?;
+    let path = Path::new(&ctx.state.config.data_dir)
+        .join("files")
+        .join(relative_path);
     match fs::remove_file(path).await {
         Ok(()) => Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -1051,7 +1156,11 @@ async fn delete_physical_attachment(ctx: &ProcedureContext, api_path: &str) -> a
 
 fn api_file_relative_path(path: &str) -> Option<PathBuf> {
     let relative = path.strip_prefix("/api/file/")?;
-    if relative.contains('\0') || relative.contains('\\') || relative.starts_with('/') || relative.split('/').any(|part| part == "..") {
+    if relative.contains('\0')
+        || relative.contains('\\')
+        || relative.starts_with('/')
+        || relative.split('/').any(|part| part == "..")
+    {
         return None;
     }
     Some(PathBuf::from(relative))
@@ -1059,7 +1168,11 @@ fn api_file_relative_path(path: &str) -> Option<PathBuf> {
 
 fn s3_key_from_api_path(path: &str) -> Option<String> {
     let key = path.strip_prefix("/api/s3file/")?;
-    if key.contains('\0') || key.contains('\\') || key.starts_with('/') || key.split('/').any(|part| part == "..") {
+    if key.contains('\0')
+        || key.contains('\\')
+        || key.starts_with('/')
+        || key.split('/').any(|part| part == "..")
+    {
         return None;
     }
     Some(key.to_string())

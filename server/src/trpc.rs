@@ -38,8 +38,9 @@ pub async fn trpc_get(
     Query(query): Query<TrpcQuery>,
     request: Request<Body>,
 ) -> Response {
+    let has_agent_token = has_agent_token(&request);
     let user = optional_user_for_path(&state, &path, request).await;
-    if requires_auth(&path) && user.is_none() {
+    if (requires_auth(&path) || has_agent_token) && user.is_none() {
         return auth_error_response(&path, query.batch.as_deref() == Some("1"));
     }
 
@@ -51,7 +52,16 @@ pub async fn trpc_get(
         let inputs = parse_batch_inputs(input);
         let mut responses = Vec::new();
         for (idx, item_path) in path.split(',').enumerate() {
-            responses.push(execute_path(state.clone(), user.clone(), item_path, inputs.get(&idx).cloned().unwrap_or(Value::Null), None).await);
+            responses.push(
+                execute_path(
+                    state.clone(),
+                    user.clone(),
+                    item_path,
+                    inputs.get(&idx).cloned().unwrap_or(Value::Null),
+                    None,
+                )
+                .await,
+            );
         }
         return Json(Value::Array(responses)).into_response();
     }
@@ -70,8 +80,9 @@ pub async fn trpc_post(
         Err(_) => return Json(trpc_error("Failed to read body", -32700, None)).into_response(),
     };
     let request = Request::from_parts(parts, Body::empty());
+    let has_agent_token = has_agent_token(&request);
     let user = optional_user_for_path(&state, &path, request).await;
-    if requires_auth(&path) && user.is_none() {
+    if (requires_auth(&path) || has_agent_token) && user.is_none() {
         return auth_error_response(&path, query.batch.as_deref() == Some("1"));
     }
 
@@ -85,7 +96,16 @@ pub async fn trpc_post(
         let inputs = parse_batch_inputs(body_value);
         let mut responses = Vec::new();
         for (idx, item_path) in path.split(',').enumerate() {
-            responses.push(execute_path(state.clone(), user.clone(), item_path, inputs.get(&idx).cloned().unwrap_or(Value::Null), None).await);
+            responses.push(
+                execute_path(
+                    state.clone(),
+                    user.clone(),
+                    item_path,
+                    inputs.get(&idx).cloned().unwrap_or(Value::Null),
+                    None,
+                )
+                .await,
+            );
         }
         return Json(Value::Array(responses)).into_response();
     }
@@ -93,12 +113,63 @@ pub async fn trpc_post(
     Json(execute_path(state, user, &path, body_value, None).await).into_response()
 }
 
-async fn optional_user_for_path(state: &AppState, path: &str, request: Request<Body>) -> Option<CurrentUser> {
-    if !requires_auth(path) {
+async fn optional_user_for_path(
+    state: &AppState,
+    path: &str,
+    request: Request<Body>,
+) -> Option<CurrentUser> {
+    if !requires_auth(path) && !has_auth_token(&request) {
         return None;
     }
     let (mut parts, _) = request.into_parts();
     optional_user(&mut parts, state).await
+}
+
+fn has_auth_token(request: &Request<Body>) -> bool {
+    if request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|auth| auth.strip_prefix("Bearer "))
+        .is_some_and(|token| !token.trim().is_empty())
+    {
+        return true;
+    }
+    request
+        .uri()
+        .query()
+        .and_then(|query| {
+            query.split('&').find_map(|part| {
+                let (key, value) = part.split_once('=')?;
+                (key == "token" && !value.trim().is_empty()).then_some(true)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn has_agent_token(request: &Request<Body>) -> bool {
+    if let Some(auth) = request
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+    {
+        if auth
+            .strip_prefix("Bearer ")
+            .is_some_and(|token| token.starts_with("bkws_"))
+        {
+            return true;
+        }
+    }
+    request
+        .uri()
+        .query()
+        .and_then(|query| {
+            query.split('&').find_map(|part| {
+                let (key, value) = part.split_once('=')?;
+                (key == "token").then_some(value.starts_with("bkws_"))
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn requires_auth(path: &str) -> bool {
@@ -158,7 +229,19 @@ fn parse_batch_inputs(value: Value) -> HashMap<usize, Value> {
     out
 }
 
-async fn execute_path(state: AppState, user: Option<CurrentUser>, path: &str, input: Value, id: Option<Value>) -> Value {
+async fn execute_path(
+    state: AppState,
+    user: Option<CurrentUser>,
+    path: &str,
+    input: Value,
+    id: Option<Value>,
+) -> Value {
+    if let Some(user) = user.as_ref() {
+        if !user.can_call_procedure(path) {
+            return trpc_forbidden(path, id);
+        }
+    }
+
     let Some(handler) = PROCEDURES.get(path) else {
         return trpc_error(&format!("Not found: {path}"), -32601, id);
     };
@@ -181,6 +264,10 @@ pub async fn execute_procedure(
     path: &str,
     input: Value,
 ) -> anyhow::Result<Value> {
+    if !user.can_call_procedure(path) {
+        anyhow::bail!("Forbidden");
+    }
+
     let Some(handler) = PROCEDURES.get(path) else {
         anyhow::bail!("Not found: {path}");
     };
@@ -218,4 +305,66 @@ fn trpc_error(message: &str, code: i32, id: Option<Value>) -> Value {
         value["id"] = id;
     }
     value
+}
+
+fn trpc_forbidden(path: &str, id: Option<Value>) -> Value {
+    let mut value = json!({
+        "error": {
+            "json": {
+                "message": "Forbidden",
+                "code": -32003,
+                "data": {
+                    "code": "FORBIDDEN",
+                    "httpStatus": 403,
+                    "path": path
+                }
+            }
+        }
+    });
+    if let Some(id) = id {
+        value["id"] = id;
+    }
+    value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn has_auth_token_detects_regular_bearer_token() {
+        let request = Request::builder()
+            .uri("/api/trpc/config.list")
+            .header("authorization", "Bearer account-token")
+            .body(Body::empty())
+            .unwrap();
+
+        assert!(has_auth_token(&request));
+        assert!(!has_agent_token(&request));
+    }
+
+    #[test]
+    fn has_auth_token_detects_query_token() {
+        let request = Request::builder()
+            .uri("/api/trpc/config.list?token=account-token")
+            .body(Body::empty())
+            .unwrap();
+
+        assert!(has_auth_token(&request));
+    }
+
+    #[test]
+    fn has_auth_token_ignores_missing_or_empty_token() {
+        let missing = Request::builder()
+            .uri("/api/trpc/config.list")
+            .body(Body::empty())
+            .unwrap();
+        let empty = Request::builder()
+            .uri("/api/trpc/config.list?token=")
+            .body(Body::empty())
+            .unwrap();
+
+        assert!(!has_auth_token(&missing));
+        assert!(!has_auth_token(&empty));
+    }
 }
