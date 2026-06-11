@@ -72,11 +72,14 @@ export const helper = {
     }
     return root;
   },
-  buildHashTagTreeFromDb(tags: Tag[]) {
+  buildHashTagTreeFromDb(tags: Array<Tag | null | undefined> = []) {
     const map: Record<number, TagTreeDBNode> = {};
     const roots: TagTreeDBNode[] = [];
-    tags.forEach(tag => {
-      map[tag.id] = { ...tag, children: [], metadata: { icon: tag.icon, path: '' } };
+    const validTags = tags.filter((tag): tag is Tag => {
+      return !!tag && typeof tag.id === 'number' && typeof tag.name === 'string' && tag.name.length > 0;
+    });
+    validTags.forEach(tag => {
+      map[tag.id] = { ...tag, children: [], metadata: { icon: tag.icon ?? '', path: '' } };
     });
     function buildPath(tagId: number): string {
       const tag = map[tagId];
@@ -87,21 +90,20 @@ export const helper = {
       }
       return tag.name;
     }
-    tags.forEach(tag => {
+    validTags.forEach(tag => {
       const currentNode = map[tag.id];
-      currentNode!.metadata.path = buildPath(tag.id);
-      if (tag.parent === 0) {
-        roots.push(currentNode!);
+      if (!currentNode) return;
+      currentNode.metadata.path = buildPath(tag.id);
+      if (!tag.parent || tag.parent === 0 || !map[tag.parent]) {
+        roots.push(currentNode);
       } else {
-        if (map[tag.parent]) {
-          map[tag.parent]?.children?.push(currentNode!);
-        }
+        map[tag.parent]?.children?.push(currentNode);
       }
     });
-    roots.sort((a, b) => a.sortOrder - b.sortOrder);
+    roots.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     const sortChildren = (node: TagTreeDBNode) => {
       if (node.children && node.children.length > 0) {
-        node.children.sort((a, b) => a.sortOrder - b.sortOrder);
+        node.children.sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
         node.children.forEach(sortChildren);
       }
     };

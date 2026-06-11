@@ -72,7 +72,9 @@ export const CardBlogBox = ({ blinkoraItem, isExpanded }: BlogContentProps) => {
           !!blinkoraItem?.tags?.length && blinkoraItem?.tags?.length > 0 && (
             <div className='flex flex-nowrap gap-1 overflow-x-scroll mt-1 hide-scrollbar'>
               {(() => {
-                const tagTree = helper.buildHashTagTreeFromDb(blinkoraItem.tags.map(t => t.tag));
+                const tagTree = helper.buildHashTagTreeFromDb(
+                  blinkoraItem.tags.map(tagItem => tagItem?.tag ?? tagItem)
+                );
                 const tagPaths = tagTree.flatMap(node => helper.generateTagPaths(node));
                 const uniquePaths = tagPaths.filter(path => {
                   return !tagPaths.some(otherPath =>
