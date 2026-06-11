@@ -160,6 +160,16 @@ pub async fn delete_note_vectors(pool: &PgPool, note_ids: &[i32], account_id: i3
     Ok(())
 }
 
+pub async fn delete_workspace_vectors(pool: &PgPool, account_id: i32, workspace_id: i32) -> anyhow::Result<()> {
+    ensure_vector_table(pool).await?;
+    sqlx::query(r#"DELETE FROM "_blinkora_rust_vectors" WHERE "accountId"=$1 AND "workspaceId"=$2"#)
+        .bind(account_id)
+        .bind(workspace_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn query_note_ids(pool: &PgPool, query: &str, account_id: i32, workspace_id: i32, limit: i64) -> anyhow::Result<Vec<VectorMatch>> {
     ensure_vector_table(pool).await?;
     let embedding_config = load_embedding_config(pool, account_id, workspace_id).await?;

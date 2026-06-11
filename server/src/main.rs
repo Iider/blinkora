@@ -1,4 +1,5 @@
 mod app;
+mod attachment_files;
 mod auth;
 mod config;
 mod db;

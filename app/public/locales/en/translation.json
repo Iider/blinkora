@@ -686,7 +686,7 @@
   "rename-workspace": "Rename Workspace",
   "switch-workspace": "Switch Workspace",
   "delete-workspace": "Delete Workspace",
-  "delete-workspace-confirm": "This will permanently delete the \"{{name}}\" workspace and all data in it. This cannot be undone. Please confirm.",
+  "delete-workspace-confirm": "This will permanently delete the \"{{name}}\" workspace, including notes, tags, comments, history, settings, resource records, linked local/S3 files, and RAG indexes. This cannot be undone. Please confirm.",
   "cannot-delete-default-workspace": "The default workspace cannot be deleted.",
   "set-default-workspace": "Set as Default",
   "workspace-renamed": "Workspace renamed",

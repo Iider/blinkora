@@ -1,5 +1,4 @@
 use super::common::{note_json, workspace_id};
-use crate::s3;
 use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
 use crate::util::unwrap_config_value;
 use anyhow::{anyhow, bail};
@@ -8,8 +7,6 @@ use regex::Regex;
 use serde_json::{json, Value};
 use sqlx::{Postgres, QueryBuilder, Row};
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use tokio::fs;
 
 pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
     registry.insert("notes.list", list);
@@ -1342,7 +1339,7 @@ async fn delete_note_ids(
     let mut unique_paths = HashSet::new();
     for attachment in &attachments_to_delete {
         if unique_paths.insert(attachment.path.clone()) {
-            delete_physical_attachment(&ctx, &attachment.path).await?;
+            crate::attachment_files::delete_physical_attachment(&ctx, &attachment.path).await?;
         }
     }
 
@@ -1394,50 +1391,4 @@ async fn delete_note_ids(
     tx.commit().await?;
     crate::rag::delete_note_vectors(ctx.state.pool(), &ids, account_id, workspace_id).await?;
     Ok(json!(true))
-}
-
-async fn delete_physical_attachment(ctx: &ProcedureContext, api_path: &str) -> anyhow::Result<()> {
-    if api_path.starts_with("/api/s3file/") {
-        let config = s3::load_s3_config(&ctx.state)
-            .await?
-            .ok_or_else(|| anyhow!("S3 config not found"))?;
-        let key = s3_key_from_api_path(api_path).ok_or_else(|| anyhow!("Invalid S3 path"))?;
-        s3::delete_object(&config, &key).await?;
-        return Ok(());
-    }
-
-    let relative_path =
-        api_file_relative_path(api_path).ok_or_else(|| anyhow!("Invalid file path"))?;
-    let path = Path::new(&ctx.state.config.data_dir)
-        .join("files")
-        .join(relative_path);
-    match fs::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(err.into()),
-    }
-}
-
-fn api_file_relative_path(path: &str) -> Option<PathBuf> {
-    let relative = path.strip_prefix("/api/file/")?;
-    if relative.contains('\0')
-        || relative.contains('\\')
-        || relative.starts_with('/')
-        || relative.split('/').any(|part| part == "..")
-    {
-        return None;
-    }
-    Some(PathBuf::from(relative))
-}
-
-fn s3_key_from_api_path(path: &str) -> Option<String> {
-    let key = path.strip_prefix("/api/s3file/")?;
-    if key.contains('\0')
-        || key.contains('\\')
-        || key.starts_with('/')
-        || key.split('/').any(|part| part == "..")
-    {
-        return None;
-    }
-    Some(key.to_string())
 }

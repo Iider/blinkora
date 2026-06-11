@@ -66,7 +66,7 @@ Docker compose 文件：
 | [ ] | 管理弹窗内创建 | 打开 `管理工作区` 后点击 `创建工作区`，输入 `烟测工作区 YYYY-MM-DD` 并创建 | 创建弹窗关闭，管理弹窗仍保留，新工作区自动成为当前工作区 |
 | [ ] | Workspace 切换 | 在下拉或管理弹窗中切换测试 Workspace / 默认 Workspace | 页面数据按 Workspace 刷新，无串数据 |
 | [ ] | 删除非当前 Workspace | 在管理弹窗删除一个非默认、非当前 Workspace | 二次确认关闭，Workspace 从列表消失，当前 Workspace 不变 |
-| [ ] | 删除当前 Workspace | 切到临时 Workspace 后在管理弹窗删除它 | 二次确认关闭，自动回到默认 Workspace，请求不再携带已删除的 `x-workspace-id` |
+| [ ] | 删除当前 Workspace | 切到带测试附件的临时 Workspace 后在管理弹窗删除它 | 二次确认明确提示会删除关联本地/S3 文件和 RAG 索引；删除后自动回到默认 Workspace，请求不再携带已删除的 `x-workspace-id`，测试附件对象和索引无残留 |
 | [ ] | 默认 Workspace 保护 | 尝试删除默认 Workspace | 删除入口禁用或拒绝，不删除默认 Workspace |
 
 ## 3. 笔记核心路径

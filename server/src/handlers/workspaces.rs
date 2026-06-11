@@ -1,5 +1,5 @@
 use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use futures::FutureExt;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -99,7 +99,7 @@ fn update(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
 fn delete(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
-        let user = ctx.user.ok_or_else(|| anyhow!("Unauthorized"))?;
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
         let is_default: Option<bool> = sqlx::query_scalar(r#"SELECT "isDefault" FROM workspaces WHERE id=$1 AND "accountId"=$2"#)
             .bind(id)
@@ -110,6 +110,18 @@ fn delete(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             Some(true) => bail!("cannot delete default workspace"),
             Some(false) => {}
             None => bail!("workspace not found"),
+        }
+        let attachment_paths: Vec<String> = sqlx::query_scalar(
+            r#"SELECT DISTINCT path FROM attachments WHERE "workspaceId"=$1 AND COALESCE(path, '') != ''"#,
+        )
+        .bind(id)
+        .fetch_all(ctx.state.pool())
+        .await?;
+        crate::rag::delete_workspace_vectors(ctx.state.pool(), user.id, id).await?;
+        for path in &attachment_paths {
+            crate::attachment_files::delete_physical_attachment(&ctx, path)
+                .await
+                .with_context(|| format!("delete workspace attachment {path}"))?;
         }
         let mut tx = ctx.state.pool().begin().await?;
         for sql in [
@@ -130,7 +142,7 @@ fn delete(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        Ok(json!({ "success": true }))
+        Ok(json!({ "success": true, "deletedAttachmentFiles": attachment_paths.len() }))
     }
     .boxed()
 }

@@ -699,7 +699,7 @@
   "rename-workspace": "重命名工作区",
   "switch-workspace": "切换工作区",
   "delete-workspace": "删除工作区",
-  "delete-workspace-confirm": "将永久删除「{{name}}」工作区及其中所有数据，无法恢复，请确认。",
+  "delete-workspace-confirm": "将永久删除「{{name}}」工作区的笔记、标签、评论、历史、配置、资源记录、关联的本地文件/S3 对象和 RAG 索引，无法恢复，请确认。",
   "cannot-delete-default-workspace": "不能删除默认工作区",
   "set-default-workspace": "设为默认",
   "workspace-renamed": "工作区已重命名",
