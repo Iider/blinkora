@@ -150,7 +150,12 @@ impl AgentPermissions {
             | "notes.noteReferenceList"
             | "notes.getNoteHistory"
             | "notes.getNoteVersion" => self.notes_read,
-            "notes.upsert" | "notes.updateMany" | "notes.trashMany" => self.notes_write,
+            "notes.upsert"
+            | "notes.updateMany"
+            | "notes.trashMany"
+            | "notes.addReference"
+            | "notes.removeReference"
+            | "notes.setReferences" => self.notes_write,
             "comments.list" => self.comments_read,
             "comments.create" | "comments.update" => self.comments_write,
             "tags.list" | "tags.fullTagNameById" => self.tags_read,
@@ -160,8 +165,10 @@ impl AgentPermissions {
 
     pub fn allows_mcp_tool(&self, tool_name: &str) -> bool {
         match tool_name {
-            "searchBlinkora" | "getBlinkora" => self.notes_read,
+            "getWorkspaceContext" => self.notes_read || self.tags_read || self.comments_read,
+            "searchBlinkora" | "getBlinkora" | "listReferences" => self.notes_read,
             "upsertBlinkora" | "updateBlinkora" | "deleteBlinkora" => self.notes_write,
+            "addReference" | "removeReference" | "setReferences" => self.notes_write,
             "listComments" => self.comments_read,
             "createComment" | "updateComment" => self.comments_write,
             "listTagTree" => self.tags_read,
@@ -553,6 +560,8 @@ mod tests {
     fn workspace_agent_permissions_whitelist_expected_procedures() {
         let permissions = AgentPermissions::workspace_default();
         assert!(permissions.allows_procedure("notes.list"));
+        assert!(permissions.allows_procedure("notes.addReference"));
+        assert!(permissions.allows_procedure("notes.setReferences"));
         assert!(permissions.allows_procedure("comments.create"));
         assert!(permissions.allows_procedure("tags.list"));
         assert!(!permissions.allows_procedure("workspaces.list"));

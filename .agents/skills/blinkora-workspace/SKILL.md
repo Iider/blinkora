@@ -50,15 +50,25 @@ Available note types:
 
 Prefer these MCP tools:
 
+- `getWorkspaceContext`: confirm the account and workspace bound to the token before large writes.
 - `searchBlinkora`: read notes with `page` and `size`; always paginate for broad reads.
 - `getBlinkora`: read one note by `id`.
 - `upsertBlinkora`: create a flash thought, note, or todo.
 - `updateBlinkora`: update a note by `id`.
 - `deleteBlinkora`: move notes to recycle bin.
+- `listReferences`: read outgoing and incoming note references.
+- `addReference`: create one note-to-note reference.
+- `removeReference`: remove one note-to-note reference.
+- `setReferences`: replace all outgoing references for one note.
 - `listComments`: read comments for a note.
 - `createComment`: create a comment for a note.
 - `updateComment`: update a comment by `id`.
 - `listTagTree`: read the current workspace tag tree.
+
+`upsertBlinkora` and `updateBlinkora` accept optional `metadata` and `references`.
+Use `metadata` for machine-readable maintenance fields such as `importSourceKey`, `sourcePath`, `sha256`, or `schema`.
+Use `references` as an array of target note ids when the complete outgoing reference set is known.
+Use `searchBlinkora` with `metadata` or `metadataContains` for top-level exact metadata matching.
 
 ## Write Rules
 
@@ -68,6 +78,8 @@ Before writing:
 - Confirm note ids and comment ids by reading them first when the user did not provide exact ids.
 - For large edits, read the current object first and preserve fields not being changed.
 - Do not try to read or write attachment files; only use attachment metadata already returned with notes.
-- Do not modify the tag tree directly. Tags are read-only for this skill.
+- Do not modify the tag tree directly. To assign tags, write hashtags in content, for example `#自媒体成长/类型/概念`; Blinkora will create and sync the tag tree.
+- For idempotent imports, write a stable marker in content and a stable `metadata.importSourceKey`, then search by that metadata before creating a new note.
+- For wiki-style migrations, create notes first, then run a second pass to call `setReferences` after all target ids are known.
 
 When reading all content, use pages until the result page is empty or shorter than requested. Keep page size reasonable, normally 50 to 200.

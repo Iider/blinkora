@@ -9,6 +9,7 @@ use futures::Stream;
 use once_cell::sync::Lazy;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sqlx::Row;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::time::Duration;
@@ -164,6 +165,16 @@ fn tool_list(user: &CurrentUser) -> Value {
     let tools = vec![
         {
             json!({
+                "name": "getWorkspaceContext",
+                "description": "Get the current account and workspace bound to this token.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
+            })
+        },
+        {
+            json!({
                 "name": "searchBlinkora",
                 "description": "Search Blinkora notes.",
                 "inputSchema": {
@@ -174,7 +185,9 @@ fn tool_list(user: &CurrentUser) -> Value {
                         "size": { "type": "number", "default": 30 },
                         "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": -1 },
                         "isArchived": { "type": ["boolean", "null"], "default": false },
-                        "isRecycle": { "type": "boolean", "default": false }
+                        "isRecycle": { "type": "boolean", "default": false },
+                        "metadata": { "type": ["object", "null"], "description": "Top-level metadata subset to match exactly." },
+                        "metadataContains": { "type": ["object", "null"], "description": "Alias for metadata." }
                     }
                 }
             })
@@ -200,7 +213,9 @@ fn tool_list(user: &CurrentUser) -> Value {
                     "type": "object",
                     "properties": {
                         "content": { "type": "string" },
-                        "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": "blinkora" }
+                        "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": "blinkora" },
+                        "metadata": { "type": ["object", "null"] },
+                        "references": { "type": ["array", "null"], "items": { "oneOf": [{ "type": "number" }, { "type": "object" }] } }
                     },
                     "required": ["content"]
                 }
@@ -215,9 +230,67 @@ fn tool_list(user: &CurrentUser) -> Value {
                     "properties": {
                         "id": { "type": "number" },
                         "content": { "type": "string" },
-                        "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": "blinkora" }
+                        "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": "blinkora" },
+                        "metadata": { "type": ["object", "null"] },
+                        "references": { "type": ["array", "null"], "items": { "oneOf": [{ "type": "number" }, { "type": "object" }] } }
                     },
                     "required": ["id"]
+                }
+            })
+        },
+        {
+            json!({
+                "name": "listReferences",
+                "description": "List outgoing and incoming references for one note.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "noteId": { "type": "number" },
+                        "id": { "type": "number" }
+                    }
+                }
+            })
+        },
+        {
+            json!({
+                "name": "addReference",
+                "description": "Create an outgoing reference from one note to another note in the same workspace.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "fromNoteId": { "type": "number" },
+                        "toNoteId": { "type": "number" }
+                    },
+                    "required": ["fromNoteId", "toNoteId"]
+                }
+            })
+        },
+        {
+            json!({
+                "name": "removeReference",
+                "description": "Remove one note reference by id or by fromNoteId/toNoteId.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "number" },
+                        "fromNoteId": { "type": "number" },
+                        "toNoteId": { "type": "number" }
+                    }
+                }
+            })
+        },
+        {
+            json!({
+                "name": "setReferences",
+                "description": "Replace all outgoing references for one note.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "fromNoteId": { "type": "number" },
+                        "toNoteIds": { "type": "array", "items": { "type": "number" } },
+                        "references": { "type": "array", "items": { "oneOf": [{ "type": "number" }, { "type": "object" }] } }
+                    },
+                    "required": ["fromNoteId"]
                 }
             })
         },
@@ -311,6 +384,7 @@ async fn call_tool(state: AppState, user: CurrentUser, tool_name: &str, argument
     }
 
     let result = match tool_name {
+        "getWorkspaceContext" => get_workspace_context(state, user).await,
         "searchBlinkora" => search_blinkora(state, user, arguments).await,
         "getBlinkora" => {
             crate::trpc::execute_procedure(state, user, "notes.detail", arguments).await
@@ -322,6 +396,18 @@ async fn call_tool(state: AppState, user: CurrentUser, tool_name: &str, argument
                 .and_then(Value::as_i64)
                 .map(|value| value as i32);
             upsert_blinkora(state, user, arguments, id).await
+        }
+        "listReferences" => {
+            crate::trpc::execute_procedure(state, user, "notes.noteReferenceList", arguments).await
+        }
+        "addReference" => {
+            crate::trpc::execute_procedure(state, user, "notes.addReference", arguments).await
+        }
+        "removeReference" => {
+            crate::trpc::execute_procedure(state, user, "notes.removeReference", arguments).await
+        }
+        "setReferences" => {
+            crate::trpc::execute_procedure(state, user, "notes.setReferences", arguments).await
         }
         "deleteBlinkora" => {
             crate::trpc::execute_procedure(state, user, "notes.trashMany", arguments).await
@@ -343,6 +429,61 @@ async fn call_tool(state: AppState, user: CurrentUser, tool_name: &str, argument
         Ok(value) => tool_response(value),
         Err(error) => tool_error_response(error.to_string()),
     }
+}
+
+async fn get_workspace_context(state: AppState, user: CurrentUser) -> anyhow::Result<Value> {
+    let workspace_id = match user.workspace_id {
+        Some(id) => id,
+        None => {
+            if let Some(id) = sqlx::query_scalar::<_, i32>(
+                r#"SELECT id FROM workspaces WHERE "accountId"=$1 AND "isDefault"=true LIMIT 1"#,
+            )
+            .bind(user.id)
+            .fetch_optional(state.pool())
+            .await?
+            {
+                id
+            } else {
+                sqlx::query_scalar::<_, i32>(
+                    r#"SELECT id FROM workspaces WHERE "accountId"=$1 ORDER BY id ASC LIMIT 1"#,
+                )
+                .bind(user.id)
+                .fetch_optional(state.pool())
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("workspace not found"))?
+            }
+        }
+    };
+    let row = sqlx::query(
+        r#"SELECT id, name, description, icon, color, "accountId", "isDefault", "createdAt", "updatedAt"
+           FROM workspaces WHERE id=$1 AND "accountId"=$2"#,
+    )
+    .bind(workspace_id)
+    .bind(user.id)
+    .fetch_one(state.pool())
+    .await?;
+    Ok(json!({
+        "success": true,
+        "account": {
+            "id": user.id,
+            "name": user.name,
+            "nickname": user.nickname,
+            "role": user.role,
+            "authKind": if user.is_workspace_agent() { "workspaceAgent" } else { "account" },
+            "agentTokenId": user.agent_token_id
+        },
+        "workspace": {
+            "id": row.get::<i32, _>("id"),
+            "name": row.get::<String, _>("name"),
+            "description": row.get::<String, _>("description"),
+            "icon": row.get::<String, _>("icon"),
+            "color": row.get::<String, _>("color"),
+            "accountId": row.get::<i32, _>("accountId"),
+            "isDefault": row.get::<bool, _>("isDefault"),
+            "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("createdAt"),
+            "updatedAt": row.get::<chrono::DateTime<chrono::Utc>, _>("updatedAt")
+        }
+    }))
 }
 
 async fn search_blinkora(

@@ -24,6 +24,8 @@ pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
     registry.insert("notes.deleteMany", delete_many);
     registry.insert("notes.deleteImpact", delete_impact);
     registry.insert("notes.addReference", add_reference);
+    registry.insert("notes.removeReference", remove_reference);
+    registry.insert("notes.setReferences", set_references);
     registry.insert("notes.noteReferenceList", reference_list);
     registry.insert("notes.clearRecycleBin", clear_recycle_bin);
     registry.insert("notes.updateAttachmentsOrder", update_attachments_order);
@@ -41,6 +43,11 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let note_type = input.get("type").and_then(Value::as_i64).unwrap_or(-1);
         let is_recycle = input.get("isRecycle").and_then(Value::as_bool).unwrap_or(false);
         let raw_search = input.get("searchText").and_then(Value::as_str).unwrap_or("");
+        let metadata_filter = input
+            .get("metadata")
+            .or_else(|| input.get("metadataContains"))
+            .filter(|value| value.is_object())
+            .cloned();
         let is_archived = input.get("isArchived");
         let tag_id = input.get("tagId").and_then(Value::as_i64).map(|value| value as i32);
         let with_file = input.get("withFile").and_then(Value::as_bool).unwrap_or(false);
@@ -111,6 +118,11 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         }
         if without_tag {
             query.push(r#" AND NOT EXISTS (SELECT 1 FROM "tagsToNote" ttn3 WHERE ttn3."noteId"=n.id)"#);
+        }
+        if let Some(metadata_filter) = metadata_filter {
+            query.push(r#" AND COALESCE(n.metadata::jsonb, '{}'::jsonb) @> "#);
+            query.push_bind(metadata_filter);
+            query.push("::jsonb");
         }
         if is_use_ai_query && (!ai_terms.is_empty() || !vector_ids.is_empty()) {
             query.push(" AND (");
@@ -419,6 +431,7 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 .map(|id| (id, content))?
         };
         sync_tags(&ctx, &mut tx, note_id, user.id, ws, &synced_content).await?;
+        sync_references(&mut tx, note_id, user.id, ws, input.get("references")).await?;
         sync_attachments(&mut tx, note_id, user.id, ws, &synced_content, input.get("attachments")).await?;
         tx.commit().await?;
         let row = sqlx::query(&note_select_sql("id=$3"))
@@ -498,28 +511,279 @@ fn delete_impact(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
 fn add_reference(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
-        let from = input.get("fromNoteId").or_else(|| input.get("fromId")).and_then(Value::as_i64).unwrap_or_default() as i32;
-        let to = input.get("toNoteId").or_else(|| input.get("toId")).and_then(Value::as_i64).unwrap_or_default() as i32;
-        if from > 0 && to > 0 && from != to {
-            sqlx::query(r#"INSERT INTO "noteReference" ("fromNoteId","toNoteId") VALUES ($1,$2) ON CONFLICT DO NOTHING"#)
-                .bind(from).bind(to).execute(ctx.state.pool()).await?;
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        let ws = workspace_id(&ctx).await?;
+        let from = note_id_arg(&input, &["fromNoteId", "fromId"]);
+        let to = note_id_arg(&input, &["toNoteId", "toId"]);
+        if from <= 0 || to <= 0 || from == to {
+            bail!("invalid reference");
         }
-        Ok(json!(true))
+        ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws).await?;
+        sqlx::query(r#"INSERT INTO "noteReference" ("fromNoteId","toNoteId") VALUES ($1,$2) ON CONFLICT DO NOTHING"#)
+            .bind(from).bind(to).execute(ctx.state.pool()).await?;
+        Ok(json!({ "success": true, "fromNoteId": from, "toNoteId": to }))
     }
     .boxed()
 }
 
+fn remove_reference(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
+    async move {
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        let ws = workspace_id(&ctx).await?;
+        let id = input
+            .get("id")
+            .and_then(Value::as_i64)
+            .map(|value| value as i32);
+        let from = note_id_arg(&input, &["fromNoteId", "fromId"]);
+        let to = note_id_arg(&input, &["toNoteId", "toId"]);
+        let deleted = if let Some(id) = id {
+            sqlx::query(
+                r#"DELETE FROM "noteReference" nr
+                   USING notes nf, notes nt
+                   WHERE nr.id=$1
+                     AND nf.id=nr."fromNoteId"
+                     AND nt.id=nr."toNoteId"
+                     AND nf."accountId"=$2 AND nf."workspaceId"=$3
+                     AND nt."accountId"=$2 AND nt."workspaceId"=$3"#,
+            )
+            .bind(id)
+            .bind(user.id)
+            .bind(ws)
+            .execute(ctx.state.pool())
+            .await?
+            .rows_affected()
+        } else {
+            if from <= 0 || to <= 0 {
+                bail!("id or fromNoteId/toNoteId is required");
+            }
+            ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws).await?;
+            sqlx::query(r#"DELETE FROM "noteReference" WHERE "fromNoteId"=$1 AND "toNoteId"=$2"#)
+                .bind(from)
+                .bind(to)
+                .execute(ctx.state.pool())
+                .await?
+                .rows_affected()
+        };
+        Ok(json!({ "success": true, "deleted": deleted }))
+    }
+    .boxed()
+}
+
+fn set_references(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
+    async move {
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        let ws = workspace_id(&ctx).await?;
+        let from = note_id_arg(&input, &["fromNoteId", "fromId", "noteId", "id"]);
+        if from <= 0 {
+            bail!("fromNoteId is required");
+        }
+        ensure_notes_in_workspace(&ctx, &[from], user.id, ws).await?;
+        let references = reference_ids_from_value(
+            input
+                .get("toNoteIds")
+                .or_else(|| input.get("toIds"))
+                .or_else(|| input.get("references"))
+                .unwrap_or(&Value::Null),
+        )
+        .into_iter()
+        .filter(|id| *id > 0 && *id != from)
+        .collect::<Vec<_>>();
+        let mut tx = ctx.state.pool().begin().await?;
+        sync_references(
+            &mut tx,
+            from,
+            user.id,
+            ws,
+            Some(&Value::Array(
+                references.iter().map(|id| json!(id)).collect(),
+            )),
+        )
+        .await?;
+        tx.commit().await?;
+        let result = reference_list_for_note(&ctx, from, user.id, ws).await?;
+        Ok(json!({ "success": true, "references": result }))
+    }
+    .boxed()
+}
+
+async fn sync_references<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    from_note_id: i32,
+    account_id: i32,
+    workspace_id: i32,
+    references_input: Option<&Value>,
+) -> anyhow::Result<()> {
+    let Some(value) = references_input else {
+        return Ok(());
+    };
+    let references = reference_ids_from_value(value)
+        .into_iter()
+        .filter(|id| *id > 0 && *id != from_note_id)
+        .collect::<Vec<_>>();
+
+    sqlx::query(r#"DELETE FROM "noteReference" WHERE "fromNoteId"=$1"#)
+        .bind(from_note_id)
+        .execute(&mut **tx)
+        .await?;
+
+    if references.is_empty() {
+        return Ok(());
+    }
+
+    let valid_targets: Vec<i32> = sqlx::query_scalar(
+        r#"SELECT id FROM notes
+           WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3 AND "isRecycle"=false"#,
+    )
+    .bind(&references)
+    .bind(account_id)
+    .bind(workspace_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let valid_targets = unique_ids(&valid_targets);
+    if valid_targets.len() != unique_ids(&references).len() {
+        bail!("one or more referenced notes were not found in this workspace");
+    }
+
+    for to_note_id in valid_targets {
+        sqlx::query(r#"INSERT INTO "noteReference" ("fromNoteId","toNoteId") VALUES ($1,$2) ON CONFLICT DO NOTHING"#)
+            .bind(from_note_id)
+            .bind(to_note_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
+fn note_id_arg(input: &Value, keys: &[&str]) -> i32 {
+    keys.iter()
+        .find_map(|key| input.get(*key).and_then(Value::as_i64))
+        .unwrap_or_default() as i32
+}
+
+fn reference_ids_from_value(value: &Value) -> Vec<i32> {
+    let mut seen = HashSet::new();
+    match value {
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                item.as_i64()
+                    .or_else(|| item.get("id").and_then(Value::as_i64))
+                    .or_else(|| item.get("toNoteId").and_then(Value::as_i64))
+                    .or_else(|| item.get("toId").and_then(Value::as_i64))
+            })
+            .map(|id| id as i32)
+            .filter(|id| seen.insert(*id))
+            .collect(),
+        Value::Number(value) => value.as_i64().map(|id| vec![id as i32]).unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+async fn ensure_notes_in_workspace(
+    ctx: &ProcedureContext,
+    ids: &[i32],
+    account_id: i32,
+    workspace_id: i32,
+) -> anyhow::Result<()> {
+    let ids = unique_ids(ids);
+    if ids.is_empty() {
+        bail!("note id is required");
+    }
+    let count: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(DISTINCT id) FROM notes
+           WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3 AND "isRecycle"=false"#,
+    )
+    .bind(&ids)
+    .bind(account_id)
+    .bind(workspace_id)
+    .fetch_one(ctx.state.pool())
+    .await?;
+    if count as usize != ids.len() {
+        bail!("one or more notes were not found in this workspace");
+    }
+    Ok(())
+}
+
+async fn reference_list_for_note(
+    ctx: &ProcedureContext,
+    id: i32,
+    account_id: i32,
+    workspace_id: i32,
+) -> anyhow::Result<Value> {
+    ensure_notes_in_workspace(ctx, &[id], account_id, workspace_id).await?;
+    let rows = sqlx::query(
+        r#"SELECT nr.id, nr."fromNoteId", nr."toNoteId", nr."createdAt",
+                  fn.content AS "fromContent", fn."createdAt" AS "fromCreatedAt", fn."updatedAt" AS "fromUpdatedAt",
+                  tn.content AS "toContent", tn."createdAt" AS "toCreatedAt", tn."updatedAt" AS "toUpdatedAt"
+           FROM "noteReference" nr
+           JOIN notes fn ON fn.id=nr."fromNoteId"
+           JOIN notes tn ON tn.id=nr."toNoteId"
+           WHERE (nr."fromNoteId"=$1 OR nr."toNoteId"=$1)
+             AND fn."accountId"=$2 AND fn."workspaceId"=$3
+             AND tn."accountId"=$2 AND tn."workspaceId"=$3
+           ORDER BY nr."createdAt" DESC"#,
+    )
+    .bind(id)
+    .bind(account_id)
+    .bind(workspace_id)
+    .fetch_all(ctx.state.pool())
+    .await?;
+    Ok(Value::Array(
+        rows.into_iter()
+            .map(|row| {
+                json!({
+                    "id": row.get::<i32, _>("id"),
+                    "fromNoteId": row.get::<i32, _>("fromNoteId"),
+                    "toNoteId": row.get::<i32, _>("toNoteId"),
+                    "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("createdAt"),
+                    "fromNote": {
+                        "id": row.get::<i32, _>("fromNoteId"),
+                        "content": row.get::<String, _>("fromContent"),
+                        "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("fromCreatedAt"),
+                        "updatedAt": row.get::<chrono::DateTime<chrono::Utc>, _>("fromUpdatedAt")
+                    },
+                    "toNote": {
+                        "id": row.get::<i32, _>("toNoteId"),
+                        "content": row.get::<String, _>("toContent"),
+                        "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("toCreatedAt"),
+                        "updatedAt": row.get::<chrono::DateTime<chrono::Utc>, _>("toUpdatedAt")
+                    }
+                })
+            })
+            .collect(),
+    ))
+}
+
+pub(crate) async fn note_references_json(
+    ctx: &ProcedureContext,
+    id: i32,
+    account_id: i32,
+    workspace_id: i32,
+) -> anyhow::Result<(Value, Value)> {
+    let all = reference_list_for_note(ctx, id, account_id, workspace_id).await?;
+    let items = all.as_array().cloned().unwrap_or_default();
+    let references = items
+        .iter()
+        .filter(|item| item.get("fromNoteId").and_then(Value::as_i64) == Some(id as i64))
+        .cloned()
+        .collect::<Vec<_>>();
+    let referenced_by = items
+        .into_iter()
+        .filter(|item| item.get("toNoteId").and_then(Value::as_i64) == Some(id as i64))
+        .collect::<Vec<_>>();
+    Ok((Value::Array(references), Value::Array(referenced_by)))
+}
+
 fn reference_list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
-        let id = input.get("id").or_else(|| input.get("noteId")).and_then(Value::as_i64).unwrap_or_default() as i32;
-        let rows = sqlx::query(r#"SELECT id, "fromNoteId", "toNoteId", "createdAt" FROM "noteReference" WHERE "fromNoteId"=$1 OR "toNoteId"=$1 ORDER BY "createdAt" DESC"#)
-            .bind(id).fetch_all(ctx.state.pool()).await?;
-        Ok(Value::Array(rows.into_iter().map(|row| json!({
-            "id": row.get::<i32, _>("id"),
-            "fromNoteId": row.get::<i32, _>("fromNoteId"),
-            "toNoteId": row.get::<i32, _>("toNoteId"),
-            "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("createdAt")
-        })).collect()))
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        let ws = workspace_id(&ctx).await?;
+        let id = input
+            .get("id")
+            .or_else(|| input.get("noteId"))
+            .and_then(Value::as_i64)
+            .unwrap_or_default() as i32;
+        reference_list_for_note(&ctx, id, user.id, ws).await
     }
     .boxed()
 }

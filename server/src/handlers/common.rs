@@ -8,18 +8,22 @@ pub async fn workspace_id(ctx: &ProcedureContext) -> anyhow::Result<i32> {
     if let Some(id) = user.workspace_id {
         return Ok(id);
     }
-    if let Some(id) = sqlx::query_scalar::<_, i32>(r#"SELECT id FROM workspaces WHERE "accountId"=$1 AND "isDefault"=true"#)
-        .bind(user.id)
-        .fetch_optional(ctx.state.pool())
-        .await?
+    if let Some(id) = sqlx::query_scalar::<_, i32>(
+        r#"SELECT id FROM workspaces WHERE "accountId"=$1 AND "isDefault"=true"#,
+    )
+    .bind(user.id)
+    .fetch_optional(ctx.state.pool())
+    .await?
     {
         return Ok(id);
     }
-    sqlx::query_scalar::<_, i32>(r#"SELECT id FROM workspaces WHERE "accountId"=$1 ORDER BY id ASC LIMIT 1"#)
-        .bind(user.id)
-        .fetch_optional(ctx.state.pool())
-        .await?
-        .ok_or_else(|| anyhow!("workspace not found"))
+    sqlx::query_scalar::<_, i32>(
+        r#"SELECT id FROM workspaces WHERE "accountId"=$1 ORDER BY id ASC LIMIT 1"#,
+    )
+    .bind(user.id)
+    .fetch_optional(ctx.state.pool())
+    .await?
+    .ok_or_else(|| anyhow!("workspace not found"))
 }
 
 pub fn tag_json(row: sqlx::postgres::PgRow) -> Value {
@@ -82,7 +86,10 @@ pub async fn load_note_tags(ctx: &ProcedureContext, note_id: i32) -> anyhow::Res
     Ok(rows.into_iter().map(tag_json).collect())
 }
 
-pub async fn load_note_attachments(ctx: &ProcedureContext, note_id: i32) -> anyhow::Result<Vec<Value>> {
+pub async fn load_note_attachments(
+    ctx: &ProcedureContext,
+    note_id: i32,
+) -> anyhow::Result<Vec<Value>> {
     let rows = sqlx::query(
         r#"SELECT id, name, path, size::text AS size, type, "noteId", "accountId", "workspaceId", "sortOrder", "perfixPath", depth, metadata, "createdAt", "updatedAt"
            FROM attachments WHERE "noteId"=$1 ORDER BY "sortOrder" ASC, id ASC"#,
@@ -93,9 +100,15 @@ pub async fn load_note_attachments(ctx: &ProcedureContext, note_id: i32) -> anyh
     Ok(rows.into_iter().map(attachment_json).collect())
 }
 
-pub async fn note_json(ctx: &ProcedureContext, row: sqlx::postgres::PgRow) -> anyhow::Result<Value> {
+pub async fn note_json(
+    ctx: &ProcedureContext,
+    row: sqlx::postgres::PgRow,
+) -> anyhow::Result<Value> {
     let id = row.get::<i32, _>("id");
     let account_id = row.get::<Option<i32>, _>("accountId").unwrap_or_default();
+    let workspace_id = row.get::<Option<i32>, _>("workspaceId").unwrap_or_default();
+    let (references, referenced_by) =
+        crate::handlers::notes::note_references_json(ctx, id, account_id, workspace_id).await?;
     Ok(json!({
         "id": id,
         "type": row.get::<i32, _>("type"),
@@ -112,6 +125,8 @@ pub async fn note_json(ctx: &ProcedureContext, row: sqlx::postgres::PgRow) -> an
         "updatedAt": row.get::<chrono::DateTime<chrono::Utc>, _>("updatedAt"),
         "tags": load_note_tags(ctx, id).await?,
         "attachments": load_note_attachments(ctx, id).await?,
+        "references": references,
+        "referencedBy": referenced_by,
         "account": account_brief(ctx, account_id).await
     }))
 }

@@ -21,7 +21,7 @@ Blinkora 的工作区令牌用于把单个 Workspace 授权给外部 Agent，例
 - 数据库备份要按敏感数据处理。
 - 不要把 token 写进仓库、脚本、提交记录、公开日志或 Skill 文件。
 - 工作区令牌只能访问绑定的单个 Workspace。
-- 允许：闪念、笔记、待办、评论读写；标签树只读。
+- 允许：闪念、笔记、待办、评论和笔记引用读写；标签树可读，标签通过正文 hashtag 自动同步。
 - 禁止：其他 Workspace、文件、备份、配置、工作区管理和 admin 类接口。
 
 ## MCP 使用
@@ -49,15 +49,28 @@ Authorization: Bearer ${BLINKORA_AGENT_TOKEN}
 
 可用 MCP 工具：
 
+- `getWorkspaceContext`
 - `searchBlinkora`
 - `getBlinkora`
 - `upsertBlinkora`
 - `updateBlinkora`
 - `deleteBlinkora`
+- `listReferences`
+- `addReference`
+- `removeReference`
+- `setReferences`
 - `listComments`
 - `createComment`
 - `updateComment`
 - `listTagTree`
+
+Agent 批量导入时建议：
+
+- 先调用 `getWorkspaceContext` 确认 token 绑定的 Workspace。
+- 用 `metadata.importSourceKey`、`metadata.sha256` 和正文稳定标记做幂等导入。
+- 用 `searchBlinkora` 的 `metadata` / `metadataContains` 做顶层 metadata 精确匹配，避免靠全文搜索猜记录。
+- 先创建全部笔记，再用 `setReferences` 第二轮写入笔记间引用。
+- 通过正文写 `#父/子` 形式的标签，不直接写标签树。
 
 ## Skill 和文档资源
 
@@ -109,9 +122,10 @@ bun run smoke:agent
 - 未鉴权访问 `/api/agent/*` 返回 `401`。
 - 创建工作区令牌后，`agentTokens.list` 能回显 token，且不返回 `tokenHash`。
 - 刷新同一 Workspace 后，旧 token 失效，新 token 可用。
+- 用 Workspace A token 调用 `getWorkspaceContext` 返回 Workspace A。
 - 用 Workspace A token 搜索不到 Workspace B 内容。
 - 用 Workspace A token 携带 Workspace B 的 `x-workspace-id` 返回 `401`。
 - 用工作区令牌调用 `workspaces.list` / `config.list` 返回 `403`。
-- 用工作区令牌连接 MCP 后，工具列表只包含 note/comment/tag tree 相关工具。
-- `searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`listComments`、`createComment`、`updateComment`、`listTagTree` 主路径可用。
+- 用工作区令牌连接 MCP 后，工具列表只包含 workspace context、note、reference、comment、tag tree 相关工具。
+- `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree` 主路径可用。
 - `/api/agent/mcp-guide.md`、`/api/agent/blinkora-workspace/SKILL.md`、`/api/agent/blinkora-workspace.zip` 能被任意有效工作区令牌读取或下载。
