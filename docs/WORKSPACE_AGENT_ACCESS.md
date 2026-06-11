@@ -64,13 +64,14 @@ Authorization: Bearer ${BLINKORA_AGENT_TOKEN}
 - `updateComment`
 - `listTagTree`
 
-Agent 批量导入时建议：
+Agent 批量导入或维护时建议：
 
 - 先调用 `getWorkspaceContext` 确认 token 绑定的 Workspace。
-- 用 `metadata.importSourceKey`、`metadata.sha256` 和正文稳定标记做幂等导入。
+- 用 `metadata.importSourceKey`、`metadata.sha256` 或其他稳定 workflow key 做幂等导入。
 - 用 `searchBlinkora` 的 `metadata` / `metadataContains` 做顶层 metadata 精确匹配，避免靠全文搜索猜记录。
 - 先创建全部笔记，再用 `setReferences` 第二轮写入笔记间引用。
 - 通过正文写 `#父/子` 形式的标签，不直接写标签树。
+- 具体工作区的内容保留策略、标签语义、metadata 字段语义、卡片或 wiki 写法，放到该工作区或项目的 `AGENTS.md`。
 
 ## Skill 和文档资源
 

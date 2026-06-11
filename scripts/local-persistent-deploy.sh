@@ -9,6 +9,8 @@ ENV_FILE="$APP_HOME/blinkora.env"
 RUNNER="$APP_HOME/run-blinkora.sh"
 LOG_DIR="$APP_HOME/logs"
 DATA_DIR="$APP_HOME/data"
+LOCAL_BIN_DIR="$APP_HOME/bin"
+LOCAL_BIN="$LOCAL_BIN_DIR/blinkora-server"
 LABEL="${BLINKORA_LAUNCHD_LABEL:-com.blinkora.local}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 PORT="${PORT:-6676}"
@@ -59,7 +61,7 @@ ensure_node_deps() {
 }
 
 ensure_dirs() {
-  mkdir -p "$APP_HOME" "$LOG_DIR" "$DATA_DIR" "$RELEASE_DIR" "$HOME/Library/LaunchAgents"
+  mkdir -p "$APP_HOME" "$LOG_DIR" "$DATA_DIR" "$LOCAL_BIN_DIR" "$RELEASE_DIR" "$HOME/Library/LaunchAgents"
 }
 
 generate_secret() {
@@ -96,11 +98,13 @@ build_native() {
   bun run build:web --force
   CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build --release --locked --manifest-path server/Cargo.toml
   cp "$CARGO_TARGET_DIR/release/blinkora-server" "$RELEASE_DIR/blinkora-server"
+  cp "$CARGO_TARGET_DIR/release/blinkora-server" "$LOCAL_BIN"
   rm -rf "$RELEASE_DIR/public"
   cp -R dist/public "$RELEASE_DIR/public"
   mkdir -p "$RELEASE_DIR/db"
   cp db/schema.sql "$RELEASE_DIR/db/schema.sql"
   chmod +x "$RELEASE_DIR/blinkora-server"
+  chmod +x "$LOCAL_BIN"
   echo "native release artifacts are ready in $RELEASE_DIR"
 }
 
@@ -122,14 +126,20 @@ stop_web_container() {
 
 write_runner() {
   ensure_env_file
+  if [[ ! -x "$LOCAL_BIN" && -x "$RELEASE_DIR/blinkora-server" ]]; then
+    mkdir -p "$LOCAL_BIN_DIR"
+    cp "$RELEASE_DIR/blinkora-server" "$LOCAL_BIN"
+    chmod +x "$LOCAL_BIN"
+  fi
   cat > "$RUNNER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+cd "$APP_HOME"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:\$PATH"
 set -a
 source "$ENV_FILE"
 set +a
-exec "$RELEASE_DIR/blinkora-server"
+exec "$LOCAL_BIN"
 EOF
   chmod +x "$RUNNER"
 }

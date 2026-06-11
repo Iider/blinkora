@@ -101,6 +101,12 @@ export BLINKORA_AGENT_TOKEN="bkws_xxx"
 - `updateComment`
 - `listTagTree`
 
+## 使用边界
+
+- MCP 和 Skill 只描述 Blinkora 的通用读写能力、安全边界和数据字段。
+- 具体工作区怎么写、怎么分类、保留什么内容、如何使用标签和引用，应写在该工作区或项目自己的 `AGENTS.md`。
+- `metadata` 可保存导入键、外部 ID、来源路径、哈希、schema 或工作流状态；具体字段语义由对应 `AGENTS.md` 约定。
+
 ## 下载 Skill
 
 ```bash
@@ -205,7 +211,7 @@ Prefer these MCP tools:
 - `listTagTree`: read the current workspace tag tree.
 
 `upsertBlinkora` and `updateBlinkora` accept optional `metadata` and `references`.
-Use `metadata` for machine-readable maintenance fields such as `importSourceKey`, `sourcePath`, `sha256`, or `schema`.
+Use `metadata` for machine-readable maintenance fields such as `importSourceKey`, `sourcePath`, `sourceUrl`, `sha256`, `originalType`, `originalTitle`, `externalId`, `schema`, or workflow-specific state.
 Use `references` as an array of target note ids when the complete outgoing reference set is known.
 Use `searchBlinkora` with `metadata` or `metadataContains` for top-level exact metadata matching.
 
@@ -217,9 +223,10 @@ Before writing:
 - Confirm note ids and comment ids by reading them first when the user did not provide exact ids.
 - For large edits, read the current object first and preserve fields not being changed.
 - Do not try to read or write attachment files; only use attachment metadata already returned with notes.
-- Do not modify the tag tree directly. To assign tags, write hashtags in content, for example `#自媒体成长/类型/概念`; Blinkora will create and sync the tag tree.
-- For idempotent imports, write a stable marker in content and a stable `metadata.importSourceKey`, then search by that metadata before creating a new note.
-- For wiki-style migrations, create notes first, then run a second pass to call `setReferences` after all target ids are known.
+- Do not modify the tag tree directly. To assign tags, write hashtags in content, for example `#项目/类型/概念`; Blinkora will create and sync the tag tree.
+- For idempotent imports, use a stable `metadata.importSourceKey` or another stable workflow key, then search by that metadata before creating a new note.
+- For migrations or graph-style writes, create or update notes first, then run a second pass to call `setReferences` after all target ids are known.
+- Domain-specific writing rules, taxonomy, content retention policy, and card/wiki conventions belong in the target workspace or project `AGENTS.md`, not in this generic Blinkora skill.
 
 When reading all content, use pages until the result page is empty or shorter than requested. Keep page size reasonable, normally 50 to 200.
 "#;
