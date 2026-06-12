@@ -21,6 +21,7 @@ import {
   ARTICLE_PREVIEW_LINE_LIMIT_MIN,
   normalizeArticlePreviewLineLimit,
 } from "@/lib/articlePreviewConfig";
+import { applyThemeAccent } from "@/lib/themeAccent";
 
 export const PerferSetting = observer(() => {
   const { t } = useTranslation()
@@ -74,21 +75,7 @@ export const PerferSetting = observer(() => {
             value: foreground
           }))
 
-          const darkElement = document.querySelector('.dark')
-          if (darkElement) {
-            //@ts-ignore
-            darkElement.style.setProperty('--primary', background || "#f9f9f9")
-            //@ts-ignore
-            darkElement.style.setProperty('--primary-foreground', foreground || "#000000")
-          }
-
-          const lightElement = document.querySelector('.light')
-          if (lightElement) {
-            //@ts-ignore
-            lightElement.style.setProperty('--primary', background || "black")
-            //@ts-ignore
-            lightElement.style.setProperty('--primary-foreground', foreground || "hsl(210 40% 98%)")
-          }
+          applyThemeAccent(background, foreground);
         }}
       />} />
     <Item

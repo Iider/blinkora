@@ -17,6 +17,7 @@ import { ToastPlugin } from './module/Toast/Toast';
 import { StorageState } from './standard/StorageState';
 import { FontManager } from '@/lib/fontManager';
 import { WorkspaceStore } from './workspace';
+import { applyThemeAccent } from '@/lib/themeAccent';
 
 export class UserStore implements Store {
   sid = 'user';
@@ -202,6 +203,7 @@ export class UserStore implements Store {
   applyThemePreference(theme: string, setTheme: (theme: string) => void) {
     localStorage.setItem('userTheme', theme);
     const resolvedTheme = this.resolveTheme(theme);
+    applyThemeAccent(this.blinkora.config.value?.themeColor, this.blinkora.config.value?.themeForegroundColor);
     setTheme(resolvedTheme);
     this.updateBrowserThemeColor(resolvedTheme);
   }
@@ -229,36 +231,7 @@ export class UserStore implements Store {
     }
 
 
-    const darkElement = document.querySelector('.dark')
-    const lightElement = document.querySelector('.light')
-
-    if (config?.themeColor && config?.themeForegroundColor) {
-      if (darkElement) {
-        //@ts-ignore
-        darkElement.style.setProperty('--primary', config.themeColor)
-        //@ts-ignore
-        darkElement.style.setProperty('--primary-foreground', config.themeForegroundColor)
-      }
-      if (lightElement) {
-        //@ts-ignore
-        lightElement.style.setProperty('--primary', config.themeColor)
-        //@ts-ignore
-        lightElement.style.setProperty('--primary-foreground', config.themeForegroundColor)
-      }
-    } else {
-      if (darkElement) {
-        //@ts-ignore
-        darkElement.style.setProperty('--primary', '#f9f9f9')
-        //@ts-ignore
-        darkElement.style.setProperty('--primary-foreground', '#000000')
-      }
-      if (lightElement) {
-        //@ts-ignore
-        lightElement.style.setProperty('--primary', '#000000')
-        //@ts-ignore
-        lightElement.style.setProperty('--primary-foreground', 'hsl(210 40% 98%)')
-      }
-    }
+    applyThemeAccent(config?.themeColor, config?.themeForegroundColor);
 
     // Apply saved font using FontManager
     if (config?.fontStyle) {
