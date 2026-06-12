@@ -18,6 +18,7 @@ import { StorageState } from './standard/StorageState';
 import { FontManager } from '@/lib/fontManager';
 import { WorkspaceStore } from './workspace';
 import { applyThemeAccent } from '@/lib/themeAccent';
+import i18n from '@/lib/i18n';
 
 export class UserStore implements Store {
   sid = 'user';
@@ -307,7 +308,7 @@ export class UserStore implements Store {
         try {
           await this.handleTwoFactorAuth(code, userId);
         } catch (error) {
-          RootStore.Get(ToastPlugin).error('verification-failed');
+          RootStore.Get(ToastPlugin).error(i18n.t('verification-failed'));
         }
       }, false);
     }
@@ -370,7 +371,7 @@ export class UserStore implements Store {
             navigate('/');
           }
         } else {
-          RootStore.Get(ToastPlugin).error('verification-failed');
+          RootStore.Get(ToastPlugin).error(i18n.t('verification-failed'));
         }
       });
 

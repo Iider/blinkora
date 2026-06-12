@@ -11,6 +11,7 @@ import { t } from "i18next";
 import { ToastPlugin } from "./module/Toast/Toast";
 import { DialogStore } from "./module/Dialog";
 import { Button, Input } from "@heroui/react";
+import { localizeErrorMessage } from "@/lib/errorMessage";
 
 export class ResourceStore implements Store {
   sid = 'resourceStore';
@@ -202,7 +203,7 @@ export class ResourceStore implements Store {
             this.refreshTicker++;
             RootStore.Get(DialogStore).close();
           } catch (error) {
-            setError(error.message || t('failed-to-create-folder'));
+            setError(localizeErrorMessage(error, 'failed-to-create-folder'));
           }
         };
 

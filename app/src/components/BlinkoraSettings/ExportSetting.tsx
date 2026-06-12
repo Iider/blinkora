@@ -16,6 +16,7 @@ import { getBlinkoraEndpoint } from "@/lib/blinkoraEndpoint";
 import { downloadFromLink } from "@/lib/browserRuntime";
 import { UserStore } from "@/store/user";
 import { WorkspaceStore } from "@/store/workspace";
+import { localizeErrorMessage } from "@/lib/errorMessage";
 
 export const ExportSetting = observer(() => {
   const { t } = useTranslation();
@@ -71,7 +72,7 @@ export const ExportSetting = observer(() => {
       }
     } catch (error: any) {
       RootStore.Get(ToastPlugin).dismiss('exporting')
-      RootStore.Get(ToastPlugin).error(error.message)
+      RootStore.Get(ToastPlugin).error(localizeErrorMessage(error))
     }
   };
 
@@ -103,7 +104,7 @@ export const ExportSetting = observer(() => {
       RootStore.Get(ToastPlugin).success(t('import-done'));
       await workspaceStore.list.call();
     } catch (error: any) {
-      RootStore.Get(ToastPlugin).error(error.message || t('operation-failed'));
+      RootStore.Get(ToastPlugin).error(localizeErrorMessage(error));
     } finally {
       RootStore.Get(ToastPlugin).dismiss('importing');
       setIsImporting(false);

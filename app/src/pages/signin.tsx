@@ -14,6 +14,7 @@ import { Link } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { BlinkoraStore } from "@/store/blinkoraStore";
+import { localizeErrorMessage } from "@/lib/errorMessage";
 
 export default function Component() {
   const [isVisible, setIsVisible] = React.useState(false);
@@ -47,13 +48,13 @@ export default function Component() {
         }
 
         if (res?.error) {
-          RootStore.Get(ToastPlugin).error(res.error);
+          RootStore.Get(ToastPlugin).error(localizeErrorMessage(res.error, 'login-failed'));
         }
 
         return res;
       } catch (error) {
         console.error('SignIn error:', error);
-        return { ok: false, error: 'Login failed' };
+        return { ok: false, error: localizeErrorMessage(error, 'login-failed') };
       }
     }
   });

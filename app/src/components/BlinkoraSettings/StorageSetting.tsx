@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { PasswordInput } from "@/components/Common/PasswordInput";
 import { CollapsibleCard } from "@/components/Common/CollapsibleCard";
 import { ToastPlugin } from "@/store/module/Toast/Toast";
+import { localizeErrorMessage } from "@/lib/errorMessage";
 
 
 export const StorageSetting = observer(() => {
@@ -76,12 +77,12 @@ export const StorageSetting = observer(() => {
         toast.success(t('s3-validation-success'))
       } else {
         setSelectedObjectStorage('s3')
-        toast.error(`${t('s3-validation-failed-switch-local')}${result.message ? `: ${result.message}` : ''}`)
+        toast.error(`${t('s3-validation-failed-switch-local')}${result.message ? `: ${localizeErrorMessage(result.message)}` : ''}`)
       }
     } catch (error) {
       await blinkora.config.call()
       setSelectedObjectStorage('s3')
-      toast.error(error instanceof Error ? error.message : t('operation-failed'))
+      toast.error(localizeErrorMessage(error))
     } finally {
       setIsValidatingS3(false)
     }

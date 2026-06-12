@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "@/lib/trpc";
 import { GradientBackground } from "@/components/Common/GradientBackground";
 import { Link, useNavigate } from "react-router-dom";
+import { localizeErrorMessage } from "@/lib/errorMessage";
 export default function Component() {
   const [isVisible, setIsVisible] = React.useState(false);
   const [isConfirmVisible, setIsConfirmVisible] = React.useState(false);
@@ -107,7 +108,7 @@ export default function Component() {
                   navigate('/signin')
                 }, 1000)
               } catch (error) {
-                return RootStore.Get(ToastPlugin).error(error.message)
+                return RootStore.Get(ToastPlugin).error(localizeErrorMessage(error))
               }
             }}>
               {t('sign-up')}

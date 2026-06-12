@@ -13,6 +13,7 @@ import { ScrollArea } from '../Common/ScrollArea';
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { DialogStore } from '@/store/module/Dialog';
 import { LoadingAndEmpty } from '../Common/LoadingAndEmpty';
+import { localizeErrorMessage } from '@/lib/errorMessage';
 
 interface HistoryItem {
   id: number;
@@ -69,7 +70,7 @@ const NoteHistoryModal = observer(({ noteId }: NoteHistoryModalProps) => {
           setSliderValue(0);
           Store.currentHistoryIndex = 0;
         } catch (error) {
-          toast.error(error.message);
+          toast.error(localizeErrorMessage(error));
         } finally {
           Store.loading = false;
         }
@@ -92,7 +93,7 @@ const NoteHistoryModal = observer(({ noteId }: NoteHistoryModalProps) => {
           content: historyItem.content,
         });
       } catch (error) {
-        toast.error(error.message);
+        toast.error(localizeErrorMessage(error));
       } finally {
         Store.restoring = false;
         RootStore.Get(BlinkoraStore).updateTicker++;

@@ -7,6 +7,7 @@ import { BlinkoraStore } from "../blinkoraStore";
 import i18n from "@/lib/i18n";
 import { StorageState } from "./StorageState";
 import { BaseStore } from "../baseStore";
+import { isUnauthorizedError, localizeErrorMessage } from "@/lib/errorMessage";
 
 export interface Events {
   data: (data: any) => void;
@@ -29,7 +30,7 @@ export const PromiseCall = async (f: Promise<any>, { autoAlert = true }: { autoA
     RootStore.Get(BlinkoraStore).updateTicker++
     return r
   } catch (error) {
-    RootStore.Get(ToastPlugin).error(error.message);
+    RootStore.Get(ToastPlugin).error(localizeErrorMessage(error));
   }
 }
 
@@ -124,13 +125,13 @@ export class PromiseState<T extends (...args: any[]) => Promise<any>, U = Return
       return res;
     } catch (error) {
       if (this.autoAlert && base.isOnline) {
-        const message = error.message;
-        if (message.includes("Unauthorized")) {
+        if (isUnauthorizedError(error)) {
           toast.dismiss();
           if (this.autoAuthRedirect) {
             eventBus.emit('user:signout')
           }
         } else {
+          const message = localizeErrorMessage(error);
           this.errMsg = message;
           toast.error(message);
         }
@@ -261,13 +262,13 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
       return this.value;
     } catch (error) {
       if (this.autoAlert && base.isOnline) {
-        const message = error.message;
-        if (message.includes("Unauthorized")) {
+        if (isUnauthorizedError(error)) {
           toast.dismiss();
           if (this.autoAuthRedirect) {
             eventBus.emit('user:signout')
           }
         } else {
+          const message = localizeErrorMessage(error);
           this.errMsg = message;
           toast.error(message);
         }

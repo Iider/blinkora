@@ -6,6 +6,7 @@ import { DialogStandaloneStore } from '@/store/module/DialogStandalone';
 import { ToastPlugin } from '@/store/module/Toast/Toast';
 import { showTipsDialog } from '@/components/Common/TipsDialog';
 import i18n from '@/lib/i18n';
+import { localizeErrorMessage } from '@/lib/errorMessage';
 
 type DeleteNoteOptions = {
   ids: number[];
@@ -25,7 +26,7 @@ export const confirmDeleteNotes = async ({ ids, onDeleted }: DeleteNoteOptions) 
       {
         loading: i18n.t('in-progress'),
         success: <b>{i18n.t('your-changes-have-been-saved')}</b>,
-        error: (error: any) => <b>{error?.message || i18n.t('operation-failed')}</b>,
+        error: (error: any) => <b>{localizeErrorMessage(error)}</b>,
       }
     );
     RootStore.Get(DialogStandaloneStore).close();
