@@ -17,6 +17,17 @@ import { useLocation } from "react-router-dom";
 import { FocusEditorFixMobile } from "@/components/Common/Editor/editorUtils";
 import { confirmDeleteNotes } from "@/lib/noteDeletion";
 
+const toIsoString = (value?: string | Date | null) => {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+};
+
+const toLocalDateValue = (value?: string | Date | null) => {
+  const isoString = toIsoString(value);
+  return isoString ? parseAbsoluteToLocal(isoString) : null;
+};
 
 export const ShowEditTimeModel = (showExpired: boolean = false) => {
   const blinkora = RootStore.Get(BlinkoraStore)
@@ -28,13 +39,13 @@ export const ShowEditTimeModel = (showExpired: boolean = false) => {
     showOnlyContentCloseButton: true,
     content: () => {
       const [createdAt, setCreatedAt] = useState(blinkora.curSelectedNote?.createdAt ?
-        parseAbsoluteToLocal(blinkora.curSelectedNote.createdAt.toISOString()) : null);
+        toLocalDateValue(blinkora.curSelectedNote.createdAt) : null);
 
       const [updatedAt, setUpdatedAt] = useState(blinkora.curSelectedNote?.updatedAt ?
-        parseAbsoluteToLocal(blinkora.curSelectedNote.updatedAt.toISOString()) : null);
+        toLocalDateValue(blinkora.curSelectedNote.updatedAt) : null);
 
       const [expireAt, setExpireAt] = useState(blinkora.curSelectedNote?.metadata?.expireAt ?
-        parseAbsoluteToLocal(new Date(blinkora.curSelectedNote.metadata.expireAt).toISOString()) : null);
+        toLocalDateValue(blinkora.curSelectedNote.metadata.expireAt) : null);
 
       const handleSave = () => {
         if (showExpired) {
