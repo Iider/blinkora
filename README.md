@@ -114,4 +114,6 @@ S3 settings are global configuration and require a superadmin account. Endpoint,
 
 The “Save and validate” action uploads, reads, and deletes a temporary validation object. S3 is enabled only after validation succeeds. If validation fails, active storage stays local while the S3 form remains open for correction.
 
+Deleting a non-default Workspace also deletes its note data, resource records, linked local/S3 attachment files, and RAG vectors. See `docs/WORKSPACE_DATA_LIFECYCLE.md` for the cleanup contract and residual checks.
+
 Keep export and backup paths working before schema or storage changes.

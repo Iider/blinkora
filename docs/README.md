@@ -7,6 +7,7 @@
 - [Smoke test checklist](./SMOKE_TEST_CHECKLIST.md)：Rust 运行栈手动烟测清单。
 - [Local persistent deployment](./LOCAL_PERSISTENT_DEPLOYMENT.md)：PostgreSQL 用 Docker，Rust Web 服务用 macOS `launchd` 常驻。
 - [Workspace agent access](./WORKSPACE_AGENT_ACCESS.md)：工作区令牌、MCP、Skill 的使用和安全边界。
+- [Workspace data lifecycle](./WORKSPACE_DATA_LIFECYCLE.md)：Workspace 删除清理范围、S3 注意事项和残留检查命令。
 - [Bun network strategy](./BUN_NETWORK_STRATEGY.md)：国内网络、镜像源和构建链路说明。
 
 ## 运行方式

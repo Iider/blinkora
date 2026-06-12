@@ -14,6 +14,7 @@
 - 烟测过程中创建的测试笔记、评论、附件和临时 Workspace 应在结束前清理，清理不了的内容必须记录。
 - 不为自动化方便读取或暴露真实访问令牌。若需要验证 API token，请使用用户明确授权的测试 token。
 - 工作区令牌、MCP 和 Skill 资源的完整使用方式见 `docs/WORKSPACE_AGENT_ACCESS.md`。
+- Workspace 删除的清理范围和 SQL 残留检查见 `docs/WORKSPACE_DATA_LIFECYCLE.md`。
 
 ## 结果记录
 
@@ -178,6 +179,7 @@ Docker compose 文件：
 | [ ] | 删除测试资源 | 对仅测试使用的附件选择连同资源删除 | 资源页无测试文件残留 |
 | [ ] | 删除测试标签 | 若创建了测试标签，清理标签 | 标签面板无测试标签残留 |
 | [ ] | 删除测试 Workspace | 若创建了临时 Workspace 且 UI 支持删除，删除它 | 默认 Workspace 保留，临时 Workspace 不再出现在下拉 |
+| [ ] | 复查 Workspace 残留 | 按 `docs/WORKSPACE_DATA_LIFECYCLE.md` 执行关键词、orphan 和 RAG 检查 | 临时 Workspace 关键词命中为 0，关系表和向量表无 orphan |
 | [ ] | 复查日志 | Docker 模式看 `docker compose logs --tail=80 web`；本机持久化模式看 `~/.blinkora/local/logs` | 无烟测期间新增服务端异常 |
 
 ## 通过标准
