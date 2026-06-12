@@ -527,7 +527,7 @@ fn add_reference(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         if from <= 0 || to <= 0 || from == to {
             bail!("invalid reference");
         }
-        ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws).await?;
+        ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws, false).await?;
         sqlx::query(r#"INSERT INTO "noteReference" ("fromNoteId","toNoteId") VALUES ($1,$2) ON CONFLICT DO NOTHING"#)
             .bind(from).bind(to).execute(ctx.state.pool()).await?;
         Ok(json!({ "success": true, "fromNoteId": from, "toNoteId": to }))
@@ -565,7 +565,7 @@ fn remove_reference(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             if from <= 0 || to <= 0 {
                 bail!("id or fromNoteId/toNoteId is required");
             }
-            ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws).await?;
+            ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws, false).await?;
             sqlx::query(r#"DELETE FROM "noteReference" WHERE "fromNoteId"=$1 AND "toNoteId"=$2"#)
                 .bind(from)
                 .bind(to)
@@ -586,7 +586,7 @@ fn set_references(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         if from <= 0 {
             bail!("fromNoteId is required");
         }
-        ensure_notes_in_workspace(&ctx, &[from], user.id, ws).await?;
+        ensure_notes_in_workspace(&ctx, &[from], user.id, ws, false).await?;
         let references = reference_ids_from_value(
             input
                 .get("toNoteIds")
@@ -609,7 +609,7 @@ fn set_references(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         )
         .await?;
         tx.commit().await?;
-        let result = reference_list_for_note(&ctx, from, user.id, ws).await?;
+        let result = reference_list_for_note(&ctx, from, user.id, ws, false).await?;
         Ok(json!({ "success": true, "references": result }))
     }
     .boxed()
@@ -693,20 +693,27 @@ async fn ensure_notes_in_workspace(
     ids: &[i32],
     account_id: i32,
     workspace_id: i32,
+    include_recycled: bool,
 ) -> anyhow::Result<()> {
     let ids = unique_ids(ids);
     if ids.is_empty() {
         bail!("note id is required");
     }
-    let count: i64 = sqlx::query_scalar(
-        r#"SELECT COUNT(DISTINCT id) FROM notes
-           WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3 AND "isRecycle"=false"#,
-    )
-    .bind(&ids)
-    .bind(account_id)
-    .bind(workspace_id)
-    .fetch_one(ctx.state.pool())
-    .await?;
+    let mut query =
+        QueryBuilder::<Postgres>::new(r#"SELECT COUNT(DISTINCT id) FROM notes WHERE id=ANY("#);
+    query.push_bind(&ids);
+    query
+        .push(r#") AND "accountId"="#)
+        .push_bind(account_id)
+        .push(r#" AND "workspaceId"="#)
+        .push_bind(workspace_id);
+    if !include_recycled {
+        query.push(r#" AND "isRecycle"=false"#);
+    }
+    let count: i64 = query
+        .build_query_scalar()
+        .fetch_one(ctx.state.pool())
+        .await?;
     if count as usize != ids.len() {
         bail!("one or more notes were not found in this workspace");
     }
@@ -718,8 +725,9 @@ async fn reference_list_for_note(
     id: i32,
     account_id: i32,
     workspace_id: i32,
+    include_recycled_note: bool,
 ) -> anyhow::Result<Value> {
-    ensure_notes_in_workspace(ctx, &[id], account_id, workspace_id).await?;
+    ensure_notes_in_workspace(ctx, &[id], account_id, workspace_id, include_recycled_note).await?;
     let rows = sqlx::query(
         r#"SELECT nr.id, nr."fromNoteId", nr."toNoteId", nr."createdAt",
                   fn.content AS "fromContent", fn."createdAt" AS "fromCreatedAt", fn."updatedAt" AS "fromUpdatedAt",
@@ -768,8 +776,10 @@ pub(crate) async fn note_references_json(
     id: i32,
     account_id: i32,
     workspace_id: i32,
+    include_recycled_note: bool,
 ) -> anyhow::Result<(Value, Value)> {
-    let all = reference_list_for_note(ctx, id, account_id, workspace_id).await?;
+    let all =
+        reference_list_for_note(ctx, id, account_id, workspace_id, include_recycled_note).await?;
     let items = all.as_array().cloned().unwrap_or_default();
     let references = items
         .iter()
@@ -792,7 +802,7 @@ fn reference_list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .or_else(|| input.get("noteId"))
             .and_then(Value::as_i64)
             .unwrap_or_default() as i32;
-        reference_list_for_note(&ctx, id, user.id, ws).await
+        reference_list_for_note(&ctx, id, user.id, ws, false).await
     }
     .boxed()
 }

@@ -107,14 +107,16 @@ pub async fn note_json(
     let id = row.get::<i32, _>("id");
     let account_id = row.get::<Option<i32>, _>("accountId").unwrap_or_default();
     let workspace_id = row.get::<Option<i32>, _>("workspaceId").unwrap_or_default();
+    let is_recycle = row.get::<bool, _>("isRecycle");
     let (references, referenced_by) =
-        crate::handlers::notes::note_references_json(ctx, id, account_id, workspace_id).await?;
+        crate::handlers::notes::note_references_json(ctx, id, account_id, workspace_id, is_recycle)
+            .await?;
     Ok(json!({
         "id": id,
         "type": row.get::<i32, _>("type"),
         "content": row.get::<String, _>("content"),
         "isArchived": row.get::<bool, _>("isArchived"),
-        "isRecycle": row.get::<bool, _>("isRecycle"),
+        "isRecycle": is_recycle,
         "isTop": row.get::<bool, _>("isTop"),
         "isReviewed": row.get::<bool, _>("isReviewed"),
         "metadata": row.get::<Option<Value>, _>("metadata"),
