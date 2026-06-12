@@ -123,7 +123,11 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
 
                 {blinkoraItem.isBlog && (
                   <div data-drag-ignore="true">
-                    <CardBlogBox blinkoraItem={blinkoraItem} isExpanded={defaultExpanded} />
+                    <CardBlogBox
+                      blinkoraItem={blinkoraItem}
+                      isExpanded={defaultExpanded}
+                      previewLineLimit={blinkora.config.value?.articlePreviewLineLimit}
+                    />
                   </div>
                 )}
 

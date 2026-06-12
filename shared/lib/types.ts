@@ -100,6 +100,7 @@ export function toNoteTypeEnum(v?: number, fallback: NoteType = NoteType.BLINKOR
 
 export const ZUserPerferConfigKey = z.union([
   z.literal('textFoldLength'),
+  z.literal('articlePreviewLineLimit'),
   z.literal('smallDeviceCardColumns'),
   z.literal('mediumDeviceCardColumns'),
   z.literal('largeDeviceCardColumns'),
@@ -162,6 +163,7 @@ export const ZConfigSchema = z.object({
   mediumDeviceCardColumns: z.any().optional(),
   largeDeviceCardColumns: z.any().optional(),
   textFoldLength: z.number().nullable().optional(),
+  articlePreviewLineLimit: z.number().nullable().optional(),
   objectStorage: z.any().optional(),
   s3AccessKeyId: z.any().optional(),
   s3AccessKeySecret: z.any().optional(),

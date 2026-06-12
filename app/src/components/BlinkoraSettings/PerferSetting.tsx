@@ -16,6 +16,11 @@ import { GradientBackground } from "../Common/GradientBackground";
 import { UserStore } from "@/store/user";
 import { BaseStore } from "@/store/baseStore";
 import FontSwitcher from "../Common/FontSwitcher";
+import {
+  ARTICLE_PREVIEW_LINE_LIMIT_MAX,
+  ARTICLE_PREVIEW_LINE_LIMIT_MIN,
+  normalizeArticlePreviewLineLimit,
+} from "@/lib/articlePreviewConfig";
 
 export const PerferSetting = observer(() => {
   const { t } = useTranslation()
@@ -23,6 +28,7 @@ export const PerferSetting = observer(() => {
   const blinkora = RootStore.Get(BlinkoraStore)
   const base = RootStore.Get(BaseStore)
   const [textLength, setTextLength] = useState(blinkora.config.value?.textFoldLength?.toString() || '500');
+  const [articlePreviewLineLimit, setArticlePreviewLineLimit] = useState(normalizeArticlePreviewLineLimit(blinkora.config.value?.articlePreviewLineLimit).toString());
   const [maxHomePageWidth, setMaxHomePageWidth] = useState(blinkora.config.value?.maxHomePageWidth?.toString() || '0');
   const [mobileNavBottomPadding, setMobileNavBottomPadding] = useState(blinkora.config.value?.mobileNavBottomPadding?.toString() || '0');
   const [customBackgroundUrl, setCustomBackgroundUrl] = useState(blinkora.config.value?.customBackgroundUrl || '');
@@ -33,12 +39,13 @@ export const PerferSetting = observer(() => {
   useEffect(() => {
     blinkora.config.call();
     setTextLength(blinkora.config.value?.textFoldLength?.toString() || '500');
+    setArticlePreviewLineLimit(normalizeArticlePreviewLineLimit(blinkora.config.value?.articlePreviewLineLimit).toString());
     setMaxHomePageWidth(blinkora.config.value?.maxHomePageWidth?.toString() || '0');
     setMobileNavBottomPadding(blinkora.config.value?.mobileNavBottomPadding?.toString() || '0');
     setCustomBackgroundUrl(blinkora.config.value?.customBackgroundUrl || '');
     setSigninFooterText(blinkora.config.value?.signinFooterText || '');
     setCustomTitle(blinkora.config.value?.customTitle || '');
-  }, [blinkora.config.value?.textFoldLength, blinkora.config.value?.maxHomePageWidth, blinkora.config.value?.mobileNavBottomPadding, blinkora.config.value?.customBackgroundUrl, blinkora.config.value?.signinFooterText, blinkora.config.value?.customTitle]);
+  }, [blinkora.config.value?.textFoldLength, blinkora.config.value?.articlePreviewLineLimit, blinkora.config.value?.maxHomePageWidth, blinkora.config.value?.mobileNavBottomPadding, blinkora.config.value?.customBackgroundUrl, blinkora.config.value?.signinFooterText, blinkora.config.value?.customTitle]);
 
 
   return <CollapsibleCard
@@ -216,6 +223,37 @@ export const PerferSetting = observer(() => {
             min={0}
           />
           <span className="text-sm text-default-400">{t('chars')}</span>
+        </div>
+      }
+    />
+
+    <Item
+      leftContent={<div className="flex flex-col">
+        <div>{t('article-preview-line-limit')}</div>
+        <div className="text-xs text-default-400">{t('article-preview-line-limit-tip')}</div>
+      </div>}
+      rightContent={
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            size='sm'
+            className='w-20'
+            aria-label={t('article-preview-line-limit')}
+            value={articlePreviewLineLimit}
+            onChange={e => setArticlePreviewLineLimit(e.target.value)}
+            onBlur={async e => {
+              const value = normalizeArticlePreviewLineLimit(e.target.value);
+              setArticlePreviewLineLimit(value.toString());
+              await PromiseCall(api.config.update.mutate({
+                key: 'articlePreviewLineLimit',
+                value
+              }));
+              blinkora.config.call();
+            }}
+            min={ARTICLE_PREVIEW_LINE_LIMIT_MIN}
+            max={ARTICLE_PREVIEW_LINE_LIMIT_MAX}
+          />
+          <span className="text-sm text-default-400">{t('lines')}</span>
         </div>
       }
     />

@@ -12,6 +12,7 @@ interface BlogContentProps {
     title?: string;
   };
   isExpanded?: boolean;
+  previewLineLimit?: number | null;
 }
 
 const PreviewItem = ({ line }: { line: PreviewLine }) => {
@@ -47,14 +48,14 @@ const PreviewItem = ({ line }: { line: PreviewLine }) => {
   );
 };
 
-export const CardBlogBox = ({ blinkoraItem, isExpanded }: BlogContentProps) => {
+export const CardBlogBox = ({ blinkoraItem, isExpanded, previewLineLimit }: BlogContentProps) => {
   const navigate = useNavigate();
   const title = useMemo(() => {
     return findPreviewTitle(blinkoraItem.content, blinkoraItem.title);
   }, [blinkoraItem.content, blinkoraItem.title]);
   const previewLines = useMemo(() => {
-    return buildPreviewLines(blinkoraItem.content, title, isExpanded);
-  }, [blinkoraItem.content, title, isExpanded]);
+    return buildPreviewLines(blinkoraItem.content, title, isExpanded, previewLineLimit);
+  }, [blinkoraItem.content, title, isExpanded, previewLineLimit]);
 
   return (
     <div className={`flex items-start gap-2 mt-4 w-full mb-4`}>

@@ -1,3 +1,8 @@
+import {
+  EXPANDED_ARTICLE_PREVIEW_LINE_LIMIT,
+  normalizeArticlePreviewLineLimit,
+} from '@/lib/articlePreviewConfig';
+
 export type PreviewLine = {
   kind: 'heading' | 'bullet' | 'paragraph' | 'quote';
   text: string;
@@ -143,8 +148,15 @@ export const shouldUseBlogPreview = (content: string = '', foldLength: number | 
   return readableLines > lineThreshold;
 };
 
-export const buildPreviewLines = (content: string = '', title: string = '', isExpanded?: boolean): PreviewLine[] => {
-  const maxLines = isExpanded ? 8 : 5;
+export const buildPreviewLines = (
+  content: string = '',
+  title: string = '',
+  isExpanded?: boolean,
+  previewLineLimit?: number | null
+): PreviewLine[] => {
+  const maxLines = isExpanded
+    ? EXPANDED_ARTICLE_PREVIEW_LINE_LIMIT
+    : normalizeArticlePreviewLineLimit(previewLineLimit);
   const titleText = normalizePreviewText(title);
   const preview: PreviewLine[] = [];
   let skippedTitle = false;
