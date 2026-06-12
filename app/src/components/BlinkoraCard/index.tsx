@@ -10,7 +10,6 @@ import { _ } from '@/lib/lodash';
 import { useState } from "react";
 import { CardBlogBox } from "./cardBlogBox";
 import { NoteContent } from "./noteContent";
-import { helper } from "@/lib/helper";
 import { CardHeader } from "./cardHeader";
 import { CardFooter } from "./cardFooter";
 import { FocusEditorFixMobile } from "../Common/Editor/editorUtils";
@@ -19,6 +18,7 @@ import { api } from "@/lib/trpc";
 import { FullscreenEditor } from "./FullscreenEditor";
 import { SimpleCommentList } from "./annotationButton";
 import { confirmDeleteNotes } from "@/lib/noteDeletion";
+import { findPreviewTitle, shouldUseBlogPreview } from "./cardPreview";
 
 
 export type BlinkoraItem = Note & {
@@ -50,13 +50,9 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
   if (forceBlog) {
     blinkoraItem.isBlog = true
   } else {
-    blinkoraItem.isBlog = (blinkoraItem.content?.length ?? 0) > (blinkora.config.value?.textFoldLength ?? 1000)
+    blinkoraItem.isBlog = shouldUseBlogPreview(blinkoraItem.content, blinkora.config.value?.textFoldLength)
   }
-  blinkoraItem.title = blinkoraItem.content?.split('\n').find(line => {
-    if (!line.trim()) return false;
-    if (helper.regex.isContainHashTag.test(line)) return false;
-    return true;
-  }) || '';
+  blinkoraItem.title = findPreviewTitle(blinkoraItem.content, blinkoraItem.title);
 
 
   const handleClick = () => {

@@ -1,10 +1,10 @@
-import { Image } from '@heroui/react';
 import { Note } from '@shared/lib/types';
 import { helper } from '@/lib/helper';
 import { RootStore } from '@/store/root';
 import { useNavigate } from 'react-router-dom';
 import { BlinkoraStore } from '@/store/blinkoraStore';
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useMemo } from 'react';
+import { buildPreviewLines, findPreviewTitle, type PreviewLine } from './cardPreview';
 
 interface BlogContentProps {
   blinkoraItem: Note & {
@@ -14,63 +14,69 @@ interface BlogContentProps {
   isExpanded?: boolean;
 }
 
-const gradientPairs: [string, string][] = [
-  ['#FF6B6B', '#4ECDC4'],
-  ['#764BA2', '#667EEA'],
-  ['#2E3192', '#1BFFFF'],
-  ['#6B73FF', '#000DFF'],
-  ['#FC466B', '#3F5EFB'],
-  ['#11998E', '#38EF7D'],
-  ['#536976', '#292E49'],
-  ['#4776E6', '#8E54E9'],
-  ['#1A2980', '#26D0CE'],
-  ['#4B134F', '#C94B4B'],
-];
+const PreviewItem = ({ line }: { line: PreviewLine }) => {
+  if (line.kind === 'heading') {
+    return (
+      <div className="text-default-700 text-sm font-semibold leading-6 line-clamp-1">
+        {line.text}
+      </div>
+    );
+  }
+
+  if (line.kind === 'bullet') {
+    return (
+      <div className="flex gap-2 text-desc text-sm leading-6">
+        <span className="mt-[0.65em] h-1.5 w-1.5 rounded-full bg-default-400 flex-none" />
+        <span className="line-clamp-1">{line.text}</span>
+      </div>
+    );
+  }
+
+  if (line.kind === 'quote') {
+    return (
+      <div className="border-l-2 border-default-300 pl-2 text-desc text-sm leading-6 line-clamp-2">
+        {line.text}
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-desc text-sm leading-6 line-clamp-2">
+      {line.text}
+    </div>
+  );
+};
 
 export const CardBlogBox = ({ blinkoraItem, isExpanded }: BlogContentProps) => {
   const navigate = useNavigate();
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [contentHeight, setContentHeight] = useState<number>(112);
-
-  useEffect(() => {
-    const updateHeight = () => {
-      if (contentRef.current) {
-        const height = contentRef.current.offsetHeight;
-        setContentHeight(Math.max(100, height));
-      }
-    };
-
-    updateHeight();
-
-    const resizeObserver = new ResizeObserver(updateHeight);
-    if (contentRef.current) {
-      resizeObserver.observe(contentRef.current);
-    }
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [blinkoraItem.content, blinkoraItem.title, blinkoraItem.tags]);
+  const title = useMemo(() => {
+    return findPreviewTitle(blinkoraItem.content, blinkoraItem.title);
+  }, [blinkoraItem.content, blinkoraItem.title]);
+  const previewLines = useMemo(() => {
+    return buildPreviewLines(blinkoraItem.content, title, isExpanded);
+  }, [blinkoraItem.content, title, isExpanded]);
 
   return (
     <div className={`flex items-start gap-2 mt-4 w-full mb-4`}>
       <div
-        ref={contentRef}
-        className='blog-content flex flex-col pr-2'
+        className='blog-content flex flex-col gap-2 pr-2'
         style={{
           width: '100%'
         }}
       >
-        <div className={`font-bold mb-1 line-clamp-2 ${isExpanded ? 'text-lg' : 'text-md'}`}>
-          {blinkoraItem.title?.replace(/#/g, '').replace(/\*/g, '')}
+        <div className={`font-bold leading-snug line-clamp-2 ${isExpanded ? 'text-lg' : 'text-md'}`}>
+          {title}
         </div>
-        <div className={`text-desc flex-1 ${isExpanded ? 'text-sm' : 'text-sm'} line-clamp-4`}
-        >
-          {blinkoraItem.content?.replace(blinkoraItem.title ?? '', '').replace(/#/g, '').replace(/\*/g, '')}
+
+        <div className="flex flex-col gap-1">
+          {previewLines.map((line, index) => (
+            <PreviewItem key={`${line.kind}-${index}-${line.text}`} line={line} />
+          ))}
         </div>
+
         {
           !!blinkoraItem?.tags?.length && blinkoraItem?.tags?.length > 0 && (
-            <div className='flex flex-nowrap gap-1 overflow-x-scroll mt-1 hide-scrollbar'>
+            <div className='flex flex-nowrap gap-1 overflow-x-scroll pt-1 hide-scrollbar'>
               {(() => {
                 const tagTree = helper.buildHashTagTreeFromDb(
                   blinkoraItem.tags.map(tagItem => tagItem?.tag ?? tagItem)
