@@ -988,6 +988,32 @@ assert(
   restoredTypeNote,
 );
 
+const archivedViaUpsert = await trpc('notes.upsert', { id: note.id, isArchived: true }, token);
+assert(
+  archivedViaUpsert?.id === note.id && archivedViaUpsert.isArchived === true,
+  'notes.upsert archive flag update',
+  archivedViaUpsert,
+);
+
+const archivedListViaUpsert = await trpc(
+  'notes.list',
+  { page: 1, size: 20, isArchived: true, searchText: `Rust smoke note edited ${stamp}` },
+  token,
+  'GET',
+);
+assert(
+  Array.isArray(archivedListViaUpsert) && archivedListViaUpsert.some((item) => item.id === note.id),
+  'notes.list archived note after upsert flag update',
+  archivedListViaUpsert,
+);
+
+const restoredViaUpsert = await trpc('notes.upsert', { id: note.id, isArchived: false, isTop: true }, token);
+assert(
+  restoredViaUpsert?.id === note.id && restoredViaUpsert.isArchived === false && restoredViaUpsert.isTop === true,
+  'notes.upsert restore and top flag update',
+  restoredViaUpsert,
+);
+
 const history = await trpc('notes.getNoteHistory', { noteId: note.id }, token, 'GET');
 assert(Array.isArray(history) && history.length >= 1, 'notes.getNoteHistory', history);
 

@@ -376,6 +376,10 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let id = input.get("id").and_then(Value::as_i64).map(|v| v as i32);
         let content = input.get("content").and_then(Value::as_str).map(str::to_owned);
         let note_type = input.get("type").and_then(Value::as_i64).map(|value| value as i32);
+        let is_archived = input.get("isArchived").and_then(Value::as_bool);
+        let is_recycle = input.get("isRecycle").and_then(Value::as_bool);
+        let is_top = input.get("isTop").and_then(Value::as_bool);
+        let is_reviewed = input.get("isReviewed").and_then(Value::as_bool);
         let metadata = input.get("metadata").cloned();
         let mut tx = ctx.state.pool().begin().await?;
         let (note_id, synced_content) = if let Some(id) = id {
@@ -401,10 +405,14 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                     .await?;
                 let next_content = content.unwrap_or(old_content);
                 let next_note_type = note_type.unwrap_or(old_note_type);
-                sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3::json, metadata), "updatedAt"=NOW() WHERE id=$4 AND "accountId"=$5 AND "workspaceId"=$6"#)
+                sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3::json, metadata), "isArchived"=COALESCE($4, "isArchived"), "isRecycle"=COALESCE($5, "isRecycle"), "isTop"=COALESCE($6, "isTop"), "isReviewed"=COALESCE($7, "isReviewed"), "updatedAt"=NOW() WHERE id=$8 AND "accountId"=$9 AND "workspaceId"=$10"#)
                     .bind(&next_content)
                     .bind(next_note_type)
                     .bind(metadata)
+                    .bind(is_archived)
+                    .bind(is_recycle)
+                    .bind(is_top)
+                    .bind(is_reviewed)
                     .bind(id)
                     .bind(user.id)
                     .bind(ws)
@@ -417,10 +425,14 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         } else {
             let content = content.unwrap_or_default();
             let note_type = note_type.unwrap_or(0);
-            sqlx::query_scalar(r#"INSERT INTO notes (content, type, metadata, "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING id"#)
+            sqlx::query_scalar(r#"INSERT INTO notes (content, type, metadata, "isArchived", "isRecycle", "isTop", "isReviewed", "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()) RETURNING id"#)
                 .bind(&content)
                 .bind(note_type)
                 .bind(metadata)
+                .bind(is_archived.unwrap_or(false))
+                .bind(is_recycle.unwrap_or(false))
+                .bind(is_top.unwrap_or(false))
+                .bind(is_reviewed.unwrap_or(false))
                 .bind(user.id)
                 .bind(ws)
                 .fetch_one(&mut *tx)
