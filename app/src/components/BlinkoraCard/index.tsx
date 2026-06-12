@@ -34,11 +34,10 @@ interface BlinkoraCardProps {
   forceBlog?: boolean;
   defaultExpanded?: boolean;
   glassEffect?: boolean;
-  withoutHoverAnimation?: boolean;
   withoutBoxShadow?: boolean;
 }
 
-export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, forceBlog = false, withoutBoxShadow = false, withoutHoverAnimation = false, className, defaultExpanded = false }: BlinkoraCardProps) => {
+export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, forceBlog = false, withoutBoxShadow = false, className, defaultExpanded = false }: BlinkoraCardProps) => {
   const isPc = useMediaQuery('(min-width: 768px)');
   const blinkora = RootStore.Get(BlinkoraStore);
   const [isFullscreenEditorOpen, setIsFullscreenEditorOpen] = useState(false);
@@ -111,8 +110,7 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
               onContextMenu={e => !isPc && e.stopPropagation()}
               shadow='none'
               className={`
-                flex flex-col p-4 ${glassEffect ? 'bg-transparent' : 'bg-background'} transition-[transform,background-color,box-shadow] duration-150 ease-out group/card
-                ${isPc && !withoutHoverAnimation ? 'hover:translate-y-1' : ''}
+                flex flex-col p-4 ${glassEffect ? 'bg-transparent' : 'bg-background'} transition-[background-color,box-shadow] duration-150 ease-out group/card
                 ${blinkoraItem.isBlog ? 'cursor-pointer' : ''}
                 ${isSelected ? 'ring-2 ring-inset ring-primary/70 bg-primary/5 shadow-sm' : ''}
                 ${className}

@@ -255,7 +255,7 @@ export const GlobalSearch = observer(({ isOpen, onOpenChange }: GlobalSearchProp
           }}
           tooltip={
             <div className="max-w-[400px] p-0 rounded-2xl bg-transparent">
-              <BlinkoraCard blinkoraItem={note} withoutHoverAnimation withoutBoxShadow className='!border-none' />
+              <BlinkoraCard blinkoraItem={note} withoutBoxShadow className='!border-none' />
             </div>
           }
         />

@@ -22,7 +22,7 @@ export const ReferencesContent = ({ blinkoraItem, className }: { blinkoraItem: B
           onlyContent: true,
           showOnlyContentCloseButton: true,
           size: '4xl',
-          content: <BlinkoraCard blinkoraItem={note!} withoutHoverAnimation />
+          content: <BlinkoraCard blinkoraItem={note!} />
         })
       }}>
         <div className='text-desc text-xs ml-1 select-none flex'>
@@ -44,7 +44,7 @@ export const ReferencesContent = ({ blinkoraItem, className }: { blinkoraItem: B
           onlyContent: true,
           showOnlyContentCloseButton: true,
           size: '4xl',
-          content: <BlinkoraCard blinkoraItem={note!} withoutHoverAnimation />
+          content: <BlinkoraCard blinkoraItem={note!} />
         })
       }}>
         <div className='text-desc text-xs ml-1 select-none flex'>
