@@ -8,6 +8,7 @@ import { api } from '@/lib/trpc';
 import { MultiSelectToolbar } from '../Common/MultiSelectToolbar';
 import { confirmDeleteNotes } from '@/lib/noteDeletion';
 import { useSearchParams } from 'react-router-dom';
+import { ShowMoveWorkspaceModel } from '../BlinkoraRightClickMenu';
 
 export const BlinkoraMultiSelectPop = observer(() => {
   const { t } = useTranslation();
@@ -35,6 +36,16 @@ export const BlinkoraMultiSelectPop = observer(() => {
         blinkora.onMultiSelectRest();
       }
     },
+    ...(!isRecycleView ? [{
+      icon: "tabler:briefcase-2",
+      text: t('move-to'),
+      onClick: () => {
+        ShowMoveWorkspaceModel({
+          ids: [...blinkora.curMultiSelectIds],
+          onMoved: resetMultiSelectAfterMutation
+        });
+      }
+    }] : []),
     {
       icon: "solar:tag-outline",
       text: t('add-tag'),

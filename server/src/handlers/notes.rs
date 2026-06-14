@@ -463,13 +463,13 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         }
 
         let source_workspace_id = workspace_id(&ctx).await?;
-        let note_id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
+        let note_ids = unique_ids(&ids_from_input(&input));
         let target_workspace_id = input
             .get("targetWorkspaceId")
             .and_then(Value::as_i64)
             .unwrap_or_default() as i32;
 
-        if note_id <= 0 {
+        if note_ids.is_empty() {
             bail!("note id is required");
         }
         if target_workspace_id <= 0 {
@@ -490,36 +490,40 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         }
 
         let mut tx = ctx.state.pool().begin().await?;
-        let note_row: Option<(String, bool)> = sqlx::query_as(
-            r#"SELECT content, "isRecycle" FROM notes
-               WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3
+        let note_rows: Vec<(i32, String, bool)> = sqlx::query_as(
+            r#"SELECT id, content, "isRecycle" FROM notes
+               WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3
                FOR UPDATE"#,
         )
-        .bind(note_id)
+        .bind(&note_ids)
         .bind(user.id)
         .bind(source_workspace_id)
-        .fetch_optional(&mut *tx)
+        .fetch_all(&mut *tx)
         .await?;
 
-        let Some((content, is_recycle)) = note_row else {
+        if note_rows.len() != note_ids.len() {
             bail!("Note not found");
-        };
-        if is_recycle {
+        }
+        if note_rows.iter().any(|(_, _, is_recycle)| *is_recycle) {
             bail!("cannot move recycled note");
         }
 
         let source_tag_ids: Vec<i32> =
-            sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId"=$1"#)
-                .bind(note_id)
+            sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId"=ANY($1)"#)
+                .bind(&note_ids)
                 .fetch_all(&mut *tx)
                 .await?;
 
-        sqlx::query(r#"DELETE FROM "noteReference" WHERE "fromNoteId"=$1 OR "toNoteId"=$1"#)
-            .bind(note_id)
+        sqlx::query(
+            r#"DELETE FROM "noteReference"
+               WHERE ("fromNoteId"=ANY($1) AND NOT ("toNoteId"=ANY($1)))
+                  OR ("toNoteId"=ANY($1) AND NOT ("fromNoteId"=ANY($1)))"#,
+        )
+            .bind(&note_ids)
             .execute(&mut *tx)
             .await?;
-        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=$1"#)
-            .bind(note_id)
+        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=ANY($1)"#)
+            .bind(&note_ids)
             .execute(&mut *tx)
             .await?;
         cleanup_unused_tags(&mut tx, &source_tag_ids, user.id, source_workspace_id).await?;
@@ -527,10 +531,10 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         sqlx::query(
             r#"UPDATE notes
                SET "workspaceId"=$1, "updatedAt"=NOW()
-               WHERE id=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
+               WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#,
         )
         .bind(target_workspace_id)
-        .bind(note_id)
+        .bind(&note_ids)
         .bind(user.id)
         .bind(source_workspace_id)
         .execute(&mut *tx)
@@ -539,10 +543,10 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         sqlx::query(
             r#"UPDATE attachments
                SET "workspaceId"=$1, "updatedAt"=NOW()
-               WHERE "noteId"=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
+               WHERE "noteId"=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#,
         )
         .bind(target_workspace_id)
-        .bind(note_id)
+        .bind(&note_ids)
         .bind(user.id)
         .bind(source_workspace_id)
         .execute(&mut *tx)
@@ -551,10 +555,10 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         sqlx::query(
             r#"UPDATE comments
                SET "workspaceId"=$1, "updatedAt"=NOW()
-               WHERE "noteId"=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
+               WHERE "noteId"=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#,
         )
         .bind(target_workspace_id)
-        .bind(note_id)
+        .bind(&note_ids)
         .bind(user.id)
         .bind(source_workspace_id)
         .execute(&mut *tx)
@@ -563,32 +567,36 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         sqlx::query(
             r#"UPDATE "noteHistory"
                SET "workspaceId"=$1
-               WHERE "noteId"=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
+               WHERE "noteId"=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#,
         )
         .bind(target_workspace_id)
-        .bind(note_id)
+        .bind(&note_ids)
         .bind(user.id)
         .bind(source_workspace_id)
         .execute(&mut *tx)
         .await?;
 
-        sync_tags(
-            &ctx,
-            &mut tx,
-            note_id,
-            user.id,
-            target_workspace_id,
-            &content,
-        )
-        .await?;
+        for (note_id, content, _) in &note_rows {
+            sync_tags(
+                &ctx,
+                &mut tx,
+                *note_id,
+                user.id,
+                target_workspace_id,
+                content,
+            )
+            .await?;
+        }
 
         tx.commit().await?;
-        crate::rag::delete_note_vectors(ctx.state.pool(), &[note_id], user.id, source_workspace_id)
+        crate::rag::delete_note_vectors(ctx.state.pool(), &note_ids, user.id, source_workspace_id)
             .await?;
 
         Ok(json!({
             "success": true,
-            "id": note_id,
+            "id": note_ids[0],
+            "ids": note_ids,
+            "count": note_rows.len(),
             "sourceWorkspaceId": source_workspace_id,
             "targetWorkspaceId": target_workspace_id
         }))

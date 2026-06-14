@@ -53,7 +53,8 @@ interface UpsertNoteParams {
 }
 
 interface MoveNoteToWorkspaceParams {
-  id: number;
+  id?: number;
+  ids?: number[];
   targetWorkspaceId: number;
   targetWorkspaceName?: string;
 }
@@ -247,9 +248,12 @@ export class BlinkoraStore implements Store {
   })
 
   moveNoteToWorkspace = new PromiseState({
-    function: async ({ id, targetWorkspaceId, targetWorkspaceName }: MoveNoteToWorkspaceParams) => {
-      const res = await api.notes.moveToWorkspace.mutate({ id, targetWorkspaceId });
-      RootStore.Get(ToastPlugin).success(i18n.t("card-moved-to-workspace", {
+    function: async ({ id, ids, targetWorkspaceId, targetWorkspaceName }: MoveNoteToWorkspaceParams) => {
+      const noteIds = ids?.length ? ids : id ? [id] : [];
+      const res = await api.notes.moveToWorkspace.mutate({ ids: noteIds, targetWorkspaceId });
+      const toastKey = noteIds.length > 1 ? "cards-moved-to-workspace" : "card-moved-to-workspace";
+      RootStore.Get(ToastPlugin).success(i18n.t(toastKey, {
+        count: noteIds.length,
         name: targetWorkspaceName || i18n.t("workspace")
       }));
       this.updateTicker++;

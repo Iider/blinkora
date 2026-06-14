@@ -199,14 +199,23 @@ export const ShowEditBlinkoraModel = (size: string = '2xl', mode: 'create' | 'ed
   })
 }
 
-export const ShowMoveWorkspaceModel = () => {
+type MoveWorkspaceModelOptions = {
+  ids?: number[];
+  onMoved?: () => void;
+}
+
+export const ShowMoveWorkspaceModel = (options: MoveWorkspaceModelOptions = {}) => {
   const blinkora = RootStore.Get(BlinkoraStore)
   const workspaceStore = RootStore.Get(WorkspaceStore)
   const currentWorkspaceId = workspaceStore.workspaceId
   const targetWorkspaces = workspaceStore.workspaceList.filter(workspace => workspace.id !== currentWorkspaceId)
+  const selectedNoteIds = Array.from(new Set(
+    (options.ids?.length ? options.ids : blinkora.curSelectedNote?.id ? [blinkora.curSelectedNote.id] : [])
+      .filter((id): id is number => Number.isFinite(id) && id > 0)
+  ))
 
-  if (!blinkora.curSelectedNote?.id) return;
-  if (blinkora.curSelectedNote?.isRecycle) {
+  if (selectedNoteIds.length === 0) return;
+  if (!options.ids?.length && blinkora.curSelectedNote?.isRecycle) {
     RootStore.Get(ToastPlugin).error(i18n.t('cannot-move-recycled-card'))
     return;
   }
@@ -231,11 +240,12 @@ export const ShowMoveWorkspaceModel = () => {
         setIsMoving(true);
         try {
           const moved = await blinkora.moveNoteToWorkspace.call({
-            id: blinkora.curSelectedNote.id,
+            ids: selectedNoteIds,
             targetWorkspaceId: selectedWorkspace.id,
             targetWorkspaceName: selectedWorkspace.name
           });
           if (moved) {
+            options.onMoved?.();
             RootStore.Get(DialogStore).close();
           }
         } finally {
