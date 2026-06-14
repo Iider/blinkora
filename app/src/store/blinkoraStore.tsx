@@ -52,6 +52,12 @@ interface UpsertNoteParams {
   metadata?: any;
 }
 
+interface MoveNoteToWorkspaceParams {
+  id: number;
+  targetWorkspaceId: number;
+  targetWorkspaceName?: string;
+}
+
 interface OfflineNote extends Omit<Note, 'id' | 'references'> {
   id: number;
   isOffline: boolean;
@@ -237,6 +243,17 @@ export class BlinkoraStore implements Store {
       showToast && RootStore.Get(ToastPlugin).success(id ? i18n.t("update-successfully") : i18n.t("create-successfully"))
       refresh && this.updateTicker++
       return res
+    }
+  })
+
+  moveNoteToWorkspace = new PromiseState({
+    function: async ({ id, targetWorkspaceId, targetWorkspaceName }: MoveNoteToWorkspaceParams) => {
+      const res = await api.notes.moveToWorkspace.mutate({ id, targetWorkspaceId });
+      RootStore.Get(ToastPlugin).success(i18n.t("card-moved-to-workspace", {
+        name: targetWorkspaceName || i18n.t("workspace")
+      }));
+      this.updateTicker++;
+      return res;
     }
   })
 

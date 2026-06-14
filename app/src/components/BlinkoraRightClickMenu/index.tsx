@@ -1,6 +1,6 @@
 import { observer } from "mobx-react-lite";
 import { BlinkoraStore } from '@/store/blinkoraStore';
-import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Button, DatePicker } from '@heroui/react';
+import { Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Button, DatePicker, Select, SelectItem } from '@heroui/react';
 import { useTranslation } from 'react-i18next';
 import { ContextMenu, ContextMenuItem } from '@/components/Common/ContextMenu';
 import { Icon } from '@/components/Common/Iconify/icons';
@@ -8,6 +8,7 @@ import { PromiseCall } from '@/store/standard/PromiseState';
 import { api } from '@/lib/trpc';
 import { RootStore } from "@/store";
 import { DialogStore } from "@/store/module/Dialog";
+import { ToastPlugin } from "@/store/module/Toast/Toast";
 import { BlinkoraEditor } from "../BlinkoraEditor";
 import { useEffect, useState } from "react";
 import { NoteType } from "@shared/lib/types";
@@ -16,6 +17,7 @@ import i18n from "@/lib/i18n";
 import { useLocation } from "react-router-dom";
 import { FocusEditorFixMobile } from "@/components/Common/Editor/editorUtils";
 import { confirmDeleteNotes } from "@/lib/noteDeletion";
+import { WorkspaceStore } from "@/store/workspace";
 
 const toIsoString = (value?: string | Date | null) => {
   if (!value) return null;
@@ -197,6 +199,82 @@ export const ShowEditBlinkoraModel = (size: string = '2xl', mode: 'create' | 'ed
   })
 }
 
+export const ShowMoveWorkspaceModel = () => {
+  const blinkora = RootStore.Get(BlinkoraStore)
+  const workspaceStore = RootStore.Get(WorkspaceStore)
+  const currentWorkspaceId = workspaceStore.workspaceId
+  const targetWorkspaces = workspaceStore.workspaceList.filter(workspace => workspace.id !== currentWorkspaceId)
+
+  if (!blinkora.curSelectedNote?.id) return;
+  if (blinkora.curSelectedNote?.isRecycle) {
+    RootStore.Get(ToastPlugin).error(i18n.t('cannot-move-recycled-card'))
+    return;
+  }
+  if (targetWorkspaces.length === 0) {
+    RootStore.Get(ToastPlugin).error(i18n.t('no-other-workspace'))
+    return;
+  }
+
+  RootStore.Get(DialogStore).setData({
+    size: 'sm' as any,
+    isOpen: true,
+    onlyContent: true,
+    isDismissable: true,
+    showOnlyContentCloseButton: true,
+    content: () => {
+      const [selectedWorkspaceId, setSelectedWorkspaceId] = useState(String(targetWorkspaces[0].id));
+      const [isMoving, setIsMoving] = useState(false);
+      const selectedWorkspace = targetWorkspaces.find(workspace => String(workspace.id) === selectedWorkspaceId);
+
+      const handleMove = async () => {
+        if (!selectedWorkspace || !blinkora.curSelectedNote?.id) return;
+        setIsMoving(true);
+        try {
+          const moved = await blinkora.moveNoteToWorkspace.call({
+            id: blinkora.curSelectedNote.id,
+            targetWorkspaceId: selectedWorkspace.id,
+            targetWorkspaceName: selectedWorkspace.name
+          });
+          if (moved) {
+            RootStore.Get(DialogStore).close();
+          }
+        } finally {
+          setIsMoving(false);
+        }
+      }
+
+      return <div className="flex flex-col gap-4 p-4">
+        <div className="flex flex-col gap-1">
+          <div className="text-lg font-semibold">{i18n.t('move-card-to-workspace')}</div>
+          <div className="text-sm text-default-500">{i18n.t('select-target-workspace')}</div>
+        </div>
+        <Select
+          aria-label={i18n.t('select-target-workspace')}
+          selectedKeys={selectedWorkspaceId ? [selectedWorkspaceId] : []}
+          onChange={e => setSelectedWorkspaceId(e.target.value)}
+        >
+          {targetWorkspaces.map(workspace => (
+            <SelectItem key={String(workspace.id)} textValue={workspace.name}>
+              <div className="flex items-center gap-2">
+                <Icon icon={workspace.icon || 'tabler:briefcase-2'} width="16" height="16" />
+                <span>{workspace.name}</span>
+              </div>
+            </SelectItem>
+          ))}
+        </Select>
+        <div className="flex justify-end gap-2">
+          <Button variant="light" onPress={() => RootStore.Get(DialogStore).close()}>
+            {i18n.t('cancel')}
+          </Button>
+          <Button color="primary" isLoading={isMoving} isDisabled={!selectedWorkspace} onPress={handleMove}>
+            {i18n.t('move-to-workspace')}
+          </Button>
+        </div>
+      </div>
+    }
+  })
+}
+
 const handleEdit = (isDetailPage: boolean) => {
   ShowEditBlinkoraModel(isDetailPage ? '5xl' : '5xl')
   FocusEditorFixMobile()
@@ -322,6 +400,14 @@ export const ConvertItem = observer(() => {
   </div>
 })
 
+export const MoveWorkspaceItem = observer(({ isDisabled = false }: { isDisabled?: boolean }) => {
+  const { t } = useTranslation();
+  return <div className={`flex items-start gap-2 ${isDisabled ? 'text-default-400' : ''}`}>
+    <Icon icon="tabler:briefcase-2" width="20" height="20" />
+    <div>{t('move-to-workspace')}</div>
+  </div>
+})
+
 export const TopItem = observer(() => {
   const { t } = useTranslation();
   const blinkora = RootStore.Get(BlinkoraStore)
@@ -369,10 +455,26 @@ export const BlinkoraRightClickMenu = observer(() => {
   const location = useLocation()
   
   const blinkora = RootStore.Get(BlinkoraStore)
+  const workspaceStore = RootStore.Get(WorkspaceStore)
+  const canMoveToWorkspace = !blinkora.curSelectedNote?.isRecycle && workspaceStore.workspaceList.some(workspace => workspace.id !== workspaceStore.workspaceId)
 
   useEffect(() => {
     setIsDetailPage(location.pathname.includes('/detail'))
   }, [location.pathname])
+
+  useEffect(() => {
+    if (workspaceStore.workspaceList.length === 0) {
+      workspaceStore.list.call()
+    }
+  }, [workspaceStore])
+
+  const handleMoveWorkspace = () => {
+    if (!canMoveToWorkspace) {
+      RootStore.Get(ToastPlugin).error(i18n.t('no-other-workspace'))
+      return;
+    }
+    ShowMoveWorkspaceModel()
+  }
 
   return <ContextMenu className='font-bold' id="blink-item-context-menu" hideOnLeave={false} animation="zoom">
     <ContextMenuItem onClick={() => handleEdit(isDetailPage)}>
@@ -397,6 +499,12 @@ export const BlinkoraRightClickMenu = observer(() => {
     <ContextMenuItem onClick={ConvertItemFunction}>
       <ConvertItem />
     </ContextMenuItem>
+
+    {!blinkora.curSelectedNote?.isRecycle ? (
+      <ContextMenuItem onClick={handleMoveWorkspace}>
+        <MoveWorkspaceItem isDisabled={!canMoveToWorkspace} />
+      </ContextMenuItem>
+    ) : <></>}
 
     <ContextMenuItem onClick={handleTop}>
       <TopItem />
@@ -423,13 +531,24 @@ export const BlinkoraRightClickMenu = observer(() => {
 export const LeftCickMenu = observer(({ onTrigger, className }: { onTrigger: () => void, className: string }) => {
   const [isDetailPage, setIsDetailPage] = useState(false)
   const blinkora = RootStore.Get(BlinkoraStore)
+  const workspaceStore = RootStore.Get(WorkspaceStore)
   const location = useLocation()
 
   useEffect(() => {
     setIsDetailPage(location.pathname.includes('/detail'))
   }, [location.pathname])
 
-  const disabledKeys = isDetailPage ? ['MutiSelectItem'] : []
+  useEffect(() => {
+    if (workspaceStore.workspaceList.length === 0) {
+      workspaceStore.list.call()
+    }
+  }, [workspaceStore])
+
+  const canMoveToWorkspace = !blinkora.curSelectedNote?.isRecycle && workspaceStore.workspaceList.some(workspace => workspace.id !== workspaceStore.workspaceId)
+  const disabledKeys = [
+    ...(isDetailPage ? ['MutiSelectItem'] : []),
+    ...(!canMoveToWorkspace ? ['MoveWorkspaceItem'] : [])
+  ]
 
   return <Dropdown onOpenChange={e => onTrigger()}>
     <DropdownTrigger >
@@ -451,6 +570,11 @@ export const LeftCickMenu = observer(({ onTrigger, className }: { onTrigger: () 
       ) : null}
       <DropdownItem key="EditTimeItem" onPress={() => ShowEditTimeModel()}> <EditTimeItem /></DropdownItem>
       <DropdownItem key="ConvertItem" onPress={ConvertItemFunction}> <ConvertItem /></DropdownItem>
+      {!blinkora.curSelectedNote?.isRecycle ? (
+        <DropdownItem key="MoveWorkspaceItem" onPress={ShowMoveWorkspaceModel}>
+          <MoveWorkspaceItem isDisabled={!canMoveToWorkspace} />
+        </DropdownItem>
+      ) : null}
       <DropdownItem key="TopItem" onPress={handleTop}> <TopItem />  </DropdownItem>
       <DropdownItem key="ArchivedItem" onPress={handleArchived}>
         <ArchivedItem />

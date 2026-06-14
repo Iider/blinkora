@@ -16,6 +16,7 @@ pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
     registry.insert("notes.randomNoteList", random_list);
     registry.insert("notes.reviewNote", review);
     registry.insert("notes.upsert", upsert);
+    registry.insert("notes.moveToWorkspace", move_to_workspace);
     registry.insert("notes.updateMany", update_many);
     registry.insert("notes.trashMany", trash_many);
     registry.insert("notes.deleteMany", delete_many);
@@ -450,6 +451,147 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .fetch_one(ctx.state.pool())
             .await?;
         Ok(note_json(&ctx, row).await?)
+    }
+    .boxed()
+}
+
+fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
+    async move {
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        if user.is_workspace_agent() {
+            bail!("Agent token is not allowed for this endpoint");
+        }
+
+        let source_workspace_id = workspace_id(&ctx).await?;
+        let note_id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
+        let target_workspace_id = input
+            .get("targetWorkspaceId")
+            .and_then(Value::as_i64)
+            .unwrap_or_default() as i32;
+
+        if note_id <= 0 {
+            bail!("note id is required");
+        }
+        if target_workspace_id <= 0 {
+            bail!("target workspace is required");
+        }
+        if target_workspace_id == source_workspace_id {
+            bail!("cannot move note to current workspace");
+        }
+
+        let target_exists: Option<i32> =
+            sqlx::query_scalar(r#"SELECT id FROM workspaces WHERE id=$1 AND "accountId"=$2"#)
+                .bind(target_workspace_id)
+                .bind(user.id)
+                .fetch_optional(ctx.state.pool())
+                .await?;
+        if target_exists.is_none() {
+            bail!("target workspace not found");
+        }
+
+        let mut tx = ctx.state.pool().begin().await?;
+        let note_row: Option<(String, bool)> = sqlx::query_as(
+            r#"SELECT content, "isRecycle" FROM notes
+               WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3
+               FOR UPDATE"#,
+        )
+        .bind(note_id)
+        .bind(user.id)
+        .bind(source_workspace_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let Some((content, is_recycle)) = note_row else {
+            bail!("Note not found");
+        };
+        if is_recycle {
+            bail!("cannot move recycled note");
+        }
+
+        let source_tag_ids: Vec<i32> =
+            sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId"=$1"#)
+                .bind(note_id)
+                .fetch_all(&mut *tx)
+                .await?;
+
+        sqlx::query(r#"DELETE FROM "noteReference" WHERE "fromNoteId"=$1 OR "toNoteId"=$1"#)
+            .bind(note_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=$1"#)
+            .bind(note_id)
+            .execute(&mut *tx)
+            .await?;
+        cleanup_unused_tags(&mut tx, &source_tag_ids, user.id, source_workspace_id).await?;
+
+        sqlx::query(
+            r#"UPDATE notes
+               SET "workspaceId"=$1, "updatedAt"=NOW()
+               WHERE id=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
+        )
+        .bind(target_workspace_id)
+        .bind(note_id)
+        .bind(user.id)
+        .bind(source_workspace_id)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"UPDATE attachments
+               SET "workspaceId"=$1, "updatedAt"=NOW()
+               WHERE "noteId"=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
+        )
+        .bind(target_workspace_id)
+        .bind(note_id)
+        .bind(user.id)
+        .bind(source_workspace_id)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"UPDATE comments
+               SET "workspaceId"=$1, "updatedAt"=NOW()
+               WHERE "noteId"=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
+        )
+        .bind(target_workspace_id)
+        .bind(note_id)
+        .bind(user.id)
+        .bind(source_workspace_id)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"UPDATE "noteHistory"
+               SET "workspaceId"=$1
+               WHERE "noteId"=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
+        )
+        .bind(target_workspace_id)
+        .bind(note_id)
+        .bind(user.id)
+        .bind(source_workspace_id)
+        .execute(&mut *tx)
+        .await?;
+
+        sync_tags(
+            &ctx,
+            &mut tx,
+            note_id,
+            user.id,
+            target_workspace_id,
+            &content,
+        )
+        .await?;
+
+        tx.commit().await?;
+        crate::rag::delete_note_vectors(ctx.state.pool(), &[note_id], user.id, source_workspace_id)
+            .await?;
+
+        Ok(json!({
+            "success": true,
+            "id": note_id,
+            "sourceWorkspaceId": source_workspace_id,
+            "targetWorkspaceId": target_workspace_id
+        }))
     }
     .boxed()
 }
