@@ -60,6 +60,18 @@ bun run deploy:local db-up
 bun run deploy:local db-stop
 ```
 
+## 代码变更后生效
+
+本机持久化模式不会直接读取仓库里的 `dist/public`。前端或后端改完后，执行：
+
+```bash
+bun run deploy:local update
+```
+
+这个命令会重新构建 Web、编译 Rust release、复制静态资源到 `release/local/public`，并重启 `com.blinkora.local`。
+
+如果页面没有看到新按钮，先刷新浏览器；仍没有时，检查当前页面加载的 `/assets/index-*.js` 是否来自最新的 `release/local/public`。
+
 卸载本机服务但保留数据：
 
 ```bash

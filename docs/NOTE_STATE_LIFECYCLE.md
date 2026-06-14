@@ -26,6 +26,7 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - 多选归档、恢复和置顶走 `notes.updateMany`。
 - 移入回收站走 `notes.trashMany`。
 - 彻底删除走 `notes.deleteMany`，同时清理引用、评论、附件关系、孤立标签和 RAG 向量。
+- 跨工作区移动走 `notes.moveToWorkspace`。它不改变 `type`、`isArchived`、`isTop`、`isReviewed`，回收站卡片不允许移动；批量移动也复用这个接口。
 
 状态更新必须支持“只改状态，不改正文”。前端按钮不应该为了归档或恢复额外提交正文。
 

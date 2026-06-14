@@ -41,6 +41,7 @@ Docker compose 文件：
 | --- | --- | --- | --- |
 | [ ] | 完整 Docker 服务健康 | 完整 Docker 模式下，在 `docker/` 执行 `docker compose ps` | Web 和 DB 容器均为 healthy |
 | [ ] | 本机持久化服务健康 | 本机持久化模式下，执行 `bun run deploy:local status` | `com.blinkora.local` 为 running，`blinkora-db` 为 healthy，不需要 `blinkora-web` |
+| [ ] | 本机部署更新生效 | 本机持久化模式下执行 `bun run deploy:local update` 后刷新 `http://localhost:6676` | 页面加载 `release/local/public` 中最新 `index-*.js`，新功能可见 |
 | [ ] | Web 端口正确 | 打开 Rust 主栈 `http://localhost:6676` | 页面可打开，不出现 `ERR_UNSAFE_PORT` |
 | [ ] | Web 端口统一 | 搜索当前文档或配置中的 Web 入口 | 运行入口使用 `6676` |
 | [ ] | 启动日志无新错误 | Docker 模式看 `docker compose logs --tail=80 web`；本机持久化模式看 `tail -n 80 ~/.blinkora/local/logs/blinkora.out.log ~/.blinkora/local/logs/blinkora.err.log` | 除未登录请求外，无新增服务端异常 |
@@ -79,6 +80,8 @@ Docker compose 文件：
 | [ ] | 创建待办 | 进入 `待办`，输入 `烟测待办 YYYY-MM-DD` 并发送 | 待办出现在时间线或待办列表 |
 | [ ] | 编辑卡片 | 打开卡片编辑，修改内容并保存 | 卡片内容更新，无重复卡片 |
 | [ ] | 类型转换不丢正文 | 点击卡片左下角类型标识，在闪念和笔记之间转换 | 卡片移动到目标类型列表，原正文、标签和附件仍保留 |
+| [ ] | 单卡移动到 Workspace | 准备默认 Workspace 与测试 Workspace，在普通或归档卡片右键菜单 / 三点菜单点击“移动到工作区”并选择目标 Workspace | 当前 Workspace 列表消失，目标 Workspace 可见；正文、标签、附件、评论和历史保留；回收站卡片无移动入口 |
+| [ ] | 多选移动到 Workspace | 多选两张测试卡片后，在底部多选栏点击“移动到”并选择目标 Workspace | 所选卡片一起移动；移动集合内部引用保留，指向集合外的引用被清理 |
 | [ ] | 长内容缩略 | 创建或查看包含多级标题、列表或长段落的长卡片 | 卡片高度受控，预览保留标题、小标题和列表线索，点击卡片可打开全文 |
 | [ ] | 文章摘要线数设置 | 在偏好设置把文章摘要线数改为 3 和 5，分别查看同一长文章卡片 | 普通折叠态摘要线数随设置变化；打开全文和非文章卡片不受影响 |
 | [ ] | 复制入口 | 点击卡片复制按钮 | 显示成功提示，内容可复制 |
