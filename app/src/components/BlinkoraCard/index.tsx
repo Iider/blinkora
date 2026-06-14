@@ -107,6 +107,7 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
             onClick={handleClick}
           >
             <Card
+              data-note-type-picker-boundary="true"
               onContextMenu={e => !isPc && e.stopPropagation()}
               shadow='none'
               className={`
