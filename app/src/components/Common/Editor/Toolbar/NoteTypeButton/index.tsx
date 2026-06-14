@@ -1,87 +1,37 @@
-import { IconButton } from '../IconButton';
-import { useTranslation } from 'react-i18next';
+import { Icon } from '@/components/Common/Iconify/icons';
+import { NoteTypePicker } from '@/components/Common/NoteTypePicker';
 import { NoteType } from '@shared/lib/types';
-import { Div } from '@/components/Common/Div';
 import { useEffect, useState } from 'react';
 
-export const NoteTypeButton = ({ noteType, setNoteType}: {
+export const NoteTypeButton = ({ noteType, setNoteType }: {
   noteType: NoteType,
   setNoteType: (noteType: NoteType) => void
 }) => {
-  const { t } = useTranslation();
   const [type, setType] = useState(noteType);
 
   useEffect(() => {
     setType(noteType);
   }, [noteType]);
-  
-  const getNextNoteType = (currentType: NoteType) => {
-    switch (currentType) {
-      case NoteType.BLINKORA:
-        return NoteType.NOTE;
-      case NoteType.NOTE:
-        return NoteType.TODO;
-      case NoteType.TODO:
-        return NoteType.BLINKORA;
-      default:
-        return NoteType.BLINKORA;
-    }
-  };
 
-  const getIconForType = (noteType: NoteType) => {
-    switch (noteType) {
-      case NoteType.BLINKORA:
-        return 'basil:lightning-solid';
-      case NoteType.NOTE:
-        return 'solar:notes-minimalistic-bold-duotone';
-      case NoteType.TODO:
-        return 'solar:folder-check-bold';
-      default:
-        return 'basil:lightning-solid';
-    }
-  };
-
-  const getColorForType = (noteType: NoteType) => {
-    switch (noteType) {
-      case NoteType.BLINKORA:
-        return '!text-[#FFD700]';
-      case NoteType.NOTE:
-        return '!text-[#3B82F6]';
-      case NoteType.TODO:
-        return '!text-[#10B981]';
-      default:
-        return '!text-[#FFD700]';
-    }
-  };
-
-  const getLabelForType = (noteType: NoteType) => {
-    switch (noteType) {
-      case NoteType.BLINKORA:
-        return t('blinkora');
-      case NoteType.NOTE:
-        return t('note');
-      case NoteType.TODO:
-        return t('todo');
-      default:
-        return t('blinkora');
-    }
-  };
-  
   return (
-    <Div
-      className='mr-[-2px]'
-      onTap={() => {
-        const newType = getNextNoteType(type);
-        setType(newType);
-        setNoteType(newType);
-      }}>
-      <IconButton
-        icon={getIconForType(type)}
-        classNames={{
-          icon: getColorForType(type)
+    <div className='mr-[-2px]'>
+      <NoteTypePicker
+        value={type}
+        onChange={(newType) => {
+          setType(newType);
+          setNoteType(newType);
         }}
-        tooltip={getLabelForType(type)}
+        trigger={(option, label) => (
+          <button
+            type="button"
+            title={label}
+            aria-label={label}
+            className="hover:bg-hover transition-colors duration-200 cursor-pointer rounded-md flex items-center justify-center w-[23px] h-[23px]"
+          >
+            <Icon icon={option.icon} className={option.iconClassName} width={20} height={20} />
+          </button>
+        )}
       />
-    </Div>
+    </div>
   );
-}; 
+};

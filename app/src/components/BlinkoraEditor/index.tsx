@@ -28,6 +28,31 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
   const [searchParams] = useSearchParams()
   const location = useLocation()
 
+  const navigateToCreatedTypePage = async (noteType: NoteType) => {
+    const currentPath = searchParams.get('path')
+
+    if (noteType === NoteType.NOTE) {
+      if (currentPath !== 'notes') {
+        await navigate('/?path=notes')
+        blinkora.forceQuery++
+      }
+      return
+    }
+
+    if (noteType === NoteType.TODO) {
+      if (currentPath !== 'todo') {
+        await navigate('/?path=todo')
+        blinkora.forceQuery++
+      }
+      return
+    }
+
+    if (location.pathname !== '/' || currentPath) {
+      await navigate('/')
+      blinkora.forceQuery++
+    }
+  }
+
   const store = RootStore.Local(() => ({
     get noteContent() {
       if (isCreateMode) {
@@ -154,14 +179,7 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
           await blinkora.upsertNote.call({ type: noteType, references, refresh: false, content, attachments: files.map(i => { return { name: i.name, path: i.uploadPath, size: i.size, type: i.type } }), metadata })
           blinkora.createAttachmentsStorage.clear()
           blinkora.createContentStorage.clear()
-          if (blinkora.noteTypeDefault == NoteType.NOTE && searchParams.get('path') != 'notes') {
-            await navigate('/?path=notes')
-            blinkora.forceQuery++
-          }
-          if (blinkora.noteTypeDefault == NoteType.BLINKORA && location.pathname != '/') {
-            await navigate('/')
-            blinkora.forceQuery++
-          }
+          await navigateToCreatedTypePage(noteType)
           blinkora.updateTicker++
         } else {
           if (!blinkora.curSelectedNote) return;
