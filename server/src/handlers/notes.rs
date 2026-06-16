@@ -32,6 +32,116 @@ pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
     registry.insert("notes.getNoteVersion", get_version);
 }
 
+struct NoteListFilters<'a> {
+    user_id: i32,
+    workspace_id: i32,
+    note_type: i64,
+    is_recycle: bool,
+    is_archived: Option<&'a Value>,
+    tag_id: Option<i32>,
+    with_file: bool,
+    without_tag: bool,
+    metadata_filter: Option<Value>,
+    is_use_ai_query: bool,
+    ai_terms: &'a [String],
+    vector_ids: &'a [i32],
+    search: &'a str,
+    with_link: bool,
+    has_todo: bool,
+    start_date: Option<&'a str>,
+    end_date: Option<&'a str>,
+}
+
+fn push_note_list_filters(query: &mut QueryBuilder<'_, Postgres>, filters: &NoteListFilters<'_>) {
+    query.push(r#"n."accountId"="#).push_bind(filters.user_id);
+    query
+        .push(r#" AND n."workspaceId"="#)
+        .push_bind(filters.workspace_id);
+    query
+        .push(r#" AND n."isRecycle"="#)
+        .push_bind(filters.is_recycle);
+
+    if !filters.is_recycle {
+        match filters.is_archived {
+            Some(Value::Null) => {}
+            Some(Value::Bool(value)) => {
+                query.push(r#" AND n."isArchived"="#).push_bind(*value);
+            }
+            _ => {
+                query.push(r#" AND n."isArchived"="#).push_bind(false);
+            }
+        }
+    }
+    if filters.note_type != -1 {
+        query
+            .push(" AND n.type=")
+            .push_bind(filters.note_type as i32);
+    }
+    if let Some(tag_id) = filters.tag_id {
+        query
+            .push(r#" AND EXISTS (SELECT 1 FROM "tagsToNote" ttn2 WHERE ttn2."noteId"=n.id AND ttn2."tagId"="#)
+            .push_bind(tag_id)
+            .push(")");
+    }
+    if filters.with_file {
+        query.push(r#" AND EXISTS (SELECT 1 FROM attachments a2 WHERE a2."noteId"=n.id)"#);
+    }
+    if filters.without_tag {
+        query.push(r#" AND NOT EXISTS (SELECT 1 FROM "tagsToNote" ttn3 WHERE ttn3."noteId"=n.id)"#);
+    }
+    if let Some(metadata_filter) = filters.metadata_filter.clone() {
+        query.push(r#" AND COALESCE(n.metadata::jsonb, '{}'::jsonb) @> "#);
+        query.push_bind(metadata_filter);
+        query.push("::jsonb");
+    }
+    if filters.is_use_ai_query && (!filters.ai_terms.is_empty() || !filters.vector_ids.is_empty()) {
+        query.push(" AND (");
+        let mut has_condition = false;
+        if !filters.vector_ids.is_empty() {
+            query
+                .push("n.id=ANY(")
+                .push_bind(filters.vector_ids.to_vec())
+                .push(")");
+            has_condition = true;
+        }
+        for (idx, term) in filters.ai_terms.iter().enumerate() {
+            if has_condition || idx > 0 {
+                query.push(" OR ");
+            }
+            let pattern = format!("%{term}%");
+            query.push("n.content ILIKE ");
+            query.push_bind(pattern.clone());
+            query.push(r#" OR EXISTS (SELECT 1 FROM attachments a3 WHERE a3."noteId"=n.id AND a3.path ILIKE "#);
+            query.push_bind(pattern);
+            query.push(")");
+            has_condition = true;
+        }
+        query.push(")");
+    } else if !filters.search.is_empty() {
+        let pattern = format!("%{}%", filters.search);
+        query.push(" AND (n.content ILIKE ");
+        query.push_bind(pattern.clone());
+        query.push(
+            r#" OR EXISTS (SELECT 1 FROM attachments a3 WHERE a3."noteId"=n.id AND a3.path ILIKE "#,
+        );
+        query.push_bind(pattern);
+        query.push("))");
+    }
+    if filters.with_link {
+        query.push(" AND (n.content ILIKE '%http://%' OR n.content ILIKE '%https://%')");
+    }
+    if filters.has_todo {
+        query.push(" AND (n.content ILIKE '%- [ ]%' OR n.content ILIKE '%- [x]%' OR n.content ILIKE '%* [ ]%' OR n.content ILIKE '%* [x]%')");
+    }
+    if let (Some(start_date), Some(end_date)) = (filters.start_date, filters.end_date) {
+        query.push(r#" AND n."createdAt" >= "#);
+        query.push_bind(start_date.to_string());
+        query.push(r#"::timestamptz AND n."createdAt" <= "#);
+        query.push_bind(end_date.to_string());
+        query.push("::timestamptz");
+    }
+}
+
 fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
@@ -60,6 +170,7 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             "DESC"
         };
         let is_use_ai_query = input.get("isUseAiQuery").and_then(Value::as_bool).unwrap_or(false);
+        let include_page_info = input.get("includePageInfo").and_then(Value::as_bool).unwrap_or(false);
         let cleaned_ai_search;
         let search = if is_use_ai_query {
             cleaned_ai_search = normalize_ai_query(raw_search);
@@ -81,88 +192,32 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .map(|(idx, item)| (item.note_id, (idx, item.score)))
             .collect::<HashMap<_, _>>();
         let vector_ids = vector_matches.iter().map(|item| item.note_id).collect::<Vec<_>>();
+        let filters = NoteListFilters {
+            user_id: user.id,
+            workspace_id: ws,
+            note_type,
+            is_recycle,
+            is_archived,
+            tag_id,
+            with_file,
+            without_tag,
+            metadata_filter,
+            is_use_ai_query,
+            ai_terms: &ai_terms,
+            vector_ids: &vector_ids,
+            search,
+            with_link,
+            has_todo,
+            start_date,
+            end_date,
+        };
 
         let mut query = QueryBuilder::<Postgres>::new(
             r#"SELECT n.id, n.type, n.content, n."isArchived", n."isRecycle", n."isTop", n."isReviewed", n.metadata,
                       n."accountId", n."workspaceId", n."sortOrder", n."createdAt", n."updatedAt"
-               FROM notes n WHERE n."accountId"="#,
+               FROM notes n WHERE "#,
         );
-        query.push_bind(user.id);
-        query.push(r#" AND n."workspaceId"="#).push_bind(ws);
-        query.push(r#" AND n."isRecycle"="#).push_bind(is_recycle);
-
-        if !is_recycle {
-            match is_archived {
-                Some(Value::Null) => {}
-                Some(Value::Bool(value)) => {
-                    query.push(r#" AND n."isArchived"="#).push_bind(*value);
-                }
-                _ => {
-                    query.push(r#" AND n."isArchived"="#).push_bind(false);
-                }
-            }
-        }
-        if note_type != -1 {
-            query.push(" AND n.type=").push_bind(note_type as i32);
-        }
-        if let Some(tag_id) = tag_id {
-            query
-                .push(r#" AND EXISTS (SELECT 1 FROM "tagsToNote" ttn2 WHERE ttn2."noteId"=n.id AND ttn2."tagId"="#)
-                .push_bind(tag_id)
-                .push(")");
-        }
-        if with_file {
-            query.push(r#" AND EXISTS (SELECT 1 FROM attachments a2 WHERE a2."noteId"=n.id)"#);
-        }
-        if without_tag {
-            query.push(r#" AND NOT EXISTS (SELECT 1 FROM "tagsToNote" ttn3 WHERE ttn3."noteId"=n.id)"#);
-        }
-        if let Some(metadata_filter) = metadata_filter {
-            query.push(r#" AND COALESCE(n.metadata::jsonb, '{}'::jsonb) @> "#);
-            query.push_bind(metadata_filter);
-            query.push("::jsonb");
-        }
-        if is_use_ai_query && (!ai_terms.is_empty() || !vector_ids.is_empty()) {
-            query.push(" AND (");
-            let mut has_condition = false;
-            if !vector_ids.is_empty() {
-                query.push("n.id=ANY(").push_bind(vector_ids.clone()).push(")");
-                has_condition = true;
-            }
-            for (idx, term) in ai_terms.iter().enumerate() {
-                if has_condition || idx > 0 {
-                    query.push(" OR ");
-                }
-                let pattern = format!("%{term}%");
-                query.push("n.content ILIKE ");
-                query.push_bind(pattern.clone());
-                query.push(r#" OR EXISTS (SELECT 1 FROM attachments a3 WHERE a3."noteId"=n.id AND a3.path ILIKE "#);
-                query.push_bind(pattern);
-                query.push(")");
-                has_condition = true;
-            }
-            query.push(")");
-        } else if !search.is_empty() {
-            let pattern = format!("%{search}%");
-            query.push(" AND (n.content ILIKE ");
-            query.push_bind(pattern.clone());
-            query.push(r#" OR EXISTS (SELECT 1 FROM attachments a3 WHERE a3."noteId"=n.id AND a3.path ILIKE "#);
-            query.push_bind(pattern);
-            query.push("))");
-        }
-        if with_link {
-            query.push(" AND (n.content ILIKE '%http://%' OR n.content ILIKE '%https://%')");
-        }
-        if has_todo {
-            query.push(" AND (n.content ILIKE '%- [ ]%' OR n.content ILIKE '%- [x]%' OR n.content ILIKE '%* [ ]%' OR n.content ILIKE '%* [x]%')");
-        }
-        if let (Some(start_date), Some(end_date)) = (start_date, end_date) {
-            query.push(r#" AND n."createdAt" >= "#);
-            query.push_bind(start_date.to_string());
-            query.push(r#"::timestamptz AND n."createdAt" <= "#);
-            query.push_bind(end_date.to_string());
-            query.push("::timestamptz");
-        }
+        push_note_list_filters(&mut query, &filters);
 
         let time_order_column = if bool_config(&ctx, user.id, ws, "isOrderByCreateTime").await? {
             r#"n."createdAt""#
@@ -202,6 +257,13 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 .push(" OFFSET ")
                 .push_bind(offset);
         }
+        let total = if include_page_info && !is_use_ai_query {
+            let mut count_query = QueryBuilder::<Postgres>::new(r#"SELECT COUNT(*) FROM notes n WHERE "#);
+            push_note_list_filters(&mut count_query, &filters);
+            count_query.build_query_scalar::<i64>().fetch_one(ctx.state.pool()).await?
+        } else {
+            0
+        };
         let rows = query.build().fetch_all(ctx.state.pool()).await?;
         let mut items = Vec::new();
         for row in rows {
@@ -215,6 +277,11 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             }
             items.push(item);
         }
+        let mut total = if include_page_info && is_use_ai_query {
+            items.len() as i64
+        } else {
+            total
+        };
         if is_use_ai_query {
             items.sort_by(|left, right| {
                 right
@@ -245,7 +312,19 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 Vec::new()
             };
         }
-        Ok(Value::Array(items))
+        if include_page_info {
+            if !is_use_ai_query && total < 0 {
+                total = 0;
+            }
+            Ok(json!({
+                "items": items,
+                "total": total,
+                "page": page,
+                "size": size
+            }))
+        } else {
+            Ok(Value::Array(items))
+        }
     }
     .boxed()
 }
@@ -508,20 +587,21 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             bail!("cannot move recycled note");
         }
 
-        let source_tag_ids: Vec<i32> =
-            sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId"=ANY($1)"#)
-                .bind(&note_ids)
-                .fetch_all(&mut *tx)
-                .await?;
+        let source_tag_ids: Vec<i32> = sqlx::query_scalar(
+            r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId"=ANY($1)"#,
+        )
+        .bind(&note_ids)
+        .fetch_all(&mut *tx)
+        .await?;
 
         sqlx::query(
             r#"DELETE FROM "noteReference"
                WHERE ("fromNoteId"=ANY($1) AND NOT ("toNoteId"=ANY($1)))
                   OR ("toNoteId"=ANY($1) AND NOT ("fromNoteId"=ANY($1)))"#,
         )
-            .bind(&note_ids)
-            .execute(&mut *tx)
-            .await?;
+        .bind(&note_ids)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=ANY($1)"#)
             .bind(&note_ids)
             .execute(&mut *tx)

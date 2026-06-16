@@ -58,6 +58,7 @@ export const SelectDropdown = ({
   onChange
 }: SelectDropdownProps) => {
   const { t } = useTranslation()
+  const selectedOption = options.find(option => option.key === value);
   return (
     <Dropdown>
       <DropdownTrigger>
@@ -65,7 +66,7 @@ export const SelectDropdown = ({
           variant='flat'
           startContent={icon && <Icon icon={icon} width="20" height="20" />}
         >
-          {t(value as string) || placeholder}
+          {selectedOption?.label || t(value as string) || placeholder}
         </Button>
       </DropdownTrigger>
       <DropdownMenu

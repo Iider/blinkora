@@ -7,7 +7,7 @@ import { ThemeColor } from "../Common/Theme/ThemeColor";
 import LanguageSwitcher from "../Common/LanguageSwitcher";
 import { RootStore } from "@/store";
 import { BlinkoraStore } from "@/store/blinkoraStore";
-import { PageSize, PromiseCall } from "@/store/standard/PromiseState";
+import { NoteLoadMode, PageSize, PromiseCall } from "@/store/standard/PromiseState";
 import { api } from "@/lib/trpc";
 import { useState, useEffect } from "react";
 import { useMediaQuery } from "usehooks-ts";
@@ -351,6 +351,25 @@ export const PerferSetting = observer(() => {
 
 
     <Item
+      leftContent={<div className="flex flex-col">
+        <div>{t('card-load-mode')}</div>
+        <div className="text-xs text-default-400">{t('card-load-mode-tip')}</div>
+      </div>}
+      rightContent={
+        <SelectDropdown
+          value={NoteLoadMode.value}
+          options={[
+            { key: 'infinite', label: t('load-mode-infinite') },
+            { key: 'pagination', label: t('load-mode-pagination') },
+          ]}
+          onChange={async (value) => {
+            NoteLoadMode.save(value as 'infinite' | 'pagination');
+            await blinkora.refreshData();
+          }}
+        />
+      } />
+
+    <Item
       leftContent={<>{t('page-size')}</>}
       rightContent={
         <Input
@@ -360,6 +379,7 @@ export const PerferSetting = observer(() => {
           value={PageSize.value}
           onChange={e => {
             PageSize.save(Number(e.target.value))
+            blinkora.refreshData()
           }}
         />
       } />

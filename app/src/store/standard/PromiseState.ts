@@ -149,6 +149,24 @@ export class PromiseState<T extends (...args: any[]) => Promise<any>, U = Return
 
 
 export const PageSize = new StorageState<number>({ key: "pageSize", value: 30, default: 30 })
+export const NoteLoadMode = new StorageState<'infinite' | 'pagination'>({
+  key: "noteLoadMode",
+  value: "infinite",
+  default: "infinite",
+  validate: (value) => value === "pagination" ? "pagination" : "infinite"
+})
+
+type PageResponse<T = any> = {
+  items: T[];
+  total?: number;
+  page?: number;
+  size?: number;
+}
+
+const isPageResponse = (value: any): value is PageResponse => {
+  return value && typeof value === 'object' && Array.isArray(value.items);
+}
+
 export class PromisePageState<T extends (...args: any) => Promise<any>, U = ReturnType<T>> {
   page: number = 1;
   size = PageSize
@@ -156,7 +174,16 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
   key?: string;
   loading = new BooleanState();
   isLoadAll: boolean = false;
+  includePageInfo: boolean = false;
+  total: number = 0;
   autoAuthRedirect: boolean = true;
+  get isPaginationMode() {
+    return this.includePageInfo && NoteLoadMode.value === 'pagination'
+  }
+  get totalPages() {
+    const size = Number(this.size.value) || 1;
+    return Math.ceil(this.total / size);
+  }
   get isEmpty() {
     if (this.loading.value) return false
     if (this.value == null) return true
@@ -220,10 +247,25 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
       } else {
         args[0] = { page: this.page, size: Number(this.size.value) }
       }
-      if (this.isLoadAll) return this.value
+      if (this.isPaginationMode) {
+        Object.assign(args[0], { includePageInfo: true })
+      }
+      if (!this.isPaginationMode && this.isLoadAll) return this.value
       const res = await this.function.apply(this.context, args);
-      if (!Array.isArray(res)) throw new Error("PromisePageState function must return array")
-      if (res.length == 0) {
+      const items = isPageResponse(res) ? res.items : res;
+      if (isPageResponse(res)) {
+        this.total = Number(res.total ?? items.length) || 0;
+      } else if (!this.isPaginationMode && this.page == 1) {
+        this.total = Array.isArray(items) ? items.length : 0;
+      }
+      if (!Array.isArray(items)) throw new Error("PromisePageState function must return array")
+      if (this.isPaginationMode) {
+        this.isLoadAll = this.totalPages > 0 ? this.page >= this.totalPages : true;
+        this.setValue(items.length == 0 ? null : items);
+        //@ts-ignore
+        return this.value;
+      }
+      if (items.length == 0) {
         this.isLoadAll = true
         if (this.page == 1) {
           this.setValue(null);
@@ -231,14 +273,14 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
         //@ts-ignore
         return this.value
       }
-      if (res.length == Number(this.size.value)) {
+      if (items.length == Number(this.size.value)) {
         if (this.page == 1) {
-          this.setValue(res);
+          this.setValue(items);
         } else {
           //@ts-ignore
           // Fix: Deduplicate items when concatenating pages to avoid duplicate display
           const existingMap = new Map(this.value!.map(item => [item.id, item]));
-          res.forEach(item => {
+          items.forEach(item => {
             if (!existingMap.has(item.id)) {
               existingMap.set(item.id, item);
             }
@@ -247,16 +289,16 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
         }
       } else {
         if (this.page == 1) {
-          this.setValue(res);
+          this.setValue(items);
           this.isLoadAll = true
         } else {
           //@ts-ignore
-          this.setValue(this.value!.concat(res));
+          this.setValue(this.value!.concat(items));
           this.isLoadAll = true
         }
       }
 
-      if (this.autoAlert && this.successMsg && res) {
+      if (this.autoAlert && this.successMsg && items) {
         toast.success(this.successMsg);
       }
       return this.value;
@@ -283,11 +325,23 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
   async resetAndCall(...args: Parameters<T>): Promise<Awaited<U> | undefined> {
     this.isLoadAll = false
     this.page = 1
+    this.total = 0
+    //@ts-ignore
+    return await this.call(...args)
+  }
+  async setPageAndCall(page: number, ...args: Parameters<T>): Promise<Awaited<U> | undefined> {
+    if (this.loading.value) return
+    const nextPage = Math.max(1, Math.min(Number(page) || 1, this.totalPages || Number(page) || 1));
+    this.isLoadAll = false
+    this.page = nextPage
     //@ts-ignore
     return await this.call(...args)
   }
   async callNextPage(...args: Parameters<T>): Promise<Awaited<U> | undefined> {
     if (this.loading.value) return
+    if (this.isPaginationMode) {
+      return this.setPageAndCall(this.page + 1, ...args)
+    }
     this.page++
     //@ts-ignore
     return await this.call(...args)

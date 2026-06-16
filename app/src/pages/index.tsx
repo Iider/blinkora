@@ -9,6 +9,7 @@ import { BlinkoraCard } from '@/components/BlinkoraCard';
 import { useMediaQuery } from 'usehooks-ts';
 import { BlinkoraAddButton } from '@/components/BlinkoraAddButton';
 import { LoadingAndEmpty } from '@/components/Common/LoadingAndEmpty';
+import { Pagination } from '@heroui/react';
 import { useSearchParams, useLocation } from 'react-router-dom';
 import { useMemo, useState, useEffect, useRef } from 'react';
 import dayjs from '@/lib/dayjs';
@@ -16,6 +17,8 @@ import { NoteType } from '@shared/lib/types';
 import { Icon } from '@/components/Common/Iconify/icons';
 import { DndContext, closestCenter, DragOverlay } from '@dnd-kit/core';
 import { useDragCard, DraggableBlinkoraCard } from '@/hooks/useDragCard';
+import { NoteLoadMode } from '@/store/standard/PromiseState';
+import type { ScrollAreaHandles } from '@/components/Common/ScrollArea';
 
 interface TodoGroup {
   displayDate: string;
@@ -38,8 +41,9 @@ const Home = observer(() => {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [insertPosition, setInsertPosition] = useState<number | null>(null);
   const [isDragForbidden, setIsDragForbidden] = useState<boolean>(false);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<ScrollAreaHandles>(null);
   const isCardDragEnabled = isPc && !isTodoView;
+  const isPaginationMode = NoteLoadMode.value === 'pagination';
 
   const currentListState = useMemo(() => {
     if (isNotesView) {
@@ -73,9 +77,6 @@ const Home = observer(() => {
     editorHeight: 30,
     get showEditor() {
       return !blinkora.noteListFilterConfig.isArchived && !blinkora.noteListFilterConfig.isRecycle
-    },
-    get showLoadAll() {
-      return currentListState.isLoadAll
     }
   }))
 
@@ -118,7 +119,7 @@ const Home = observer(() => {
       const position = Number(savedPosition);
       setTimeout(() => {
         if (scrollAreaRef.current) {
-          scrollAreaRef.current.scrollTop = position;
+          scrollAreaRef.current.scrollTo(position);
         }
         // Clear the saved position after restoring
         sessionStorage.removeItem('restore-scroll-position');
@@ -154,7 +155,7 @@ const Home = observer(() => {
           onRefresh={async () => {
             await currentListState.resetAndCall({})
           }}
-          onBottom={() => {
+          onBottom={isPaginationMode ? undefined : () => {
             blinkora.onBottom();
           }}
           style={{ height: store.showEditor ? `calc(100% - ${(isPc ? (!store.showEditor ? store.editorHeight : 10) : 0)}px)` : '100%' }}
@@ -230,7 +231,21 @@ const Home = observer(() => {
             </>
           )}
 
-          {store.showLoadAll && <div className='select-none w-full text-center text-sm font-bold text-ignore my-4'>{t('all-notes-have-been-loaded', { items: currentListState.value?.length })}</div>}
+          {isPaginationMode && currentListState.totalPages > 1 && (
+            <div className="flex justify-center w-full my-5">
+              <Pagination
+                showControls
+                size="sm"
+                total={currentListState.totalPages}
+                page={currentListState.page}
+                onChange={async (page) => {
+                  await currentListState.setPageAndCall(page, {});
+                  scrollAreaRef.current?.scrollTo(0);
+                }}
+              />
+            </div>
+          )}
+          {!isPaginationMode && currentListState.isLoadAll && <div className='select-none w-full text-center text-sm font-bold text-ignore my-4'>{t('all-notes-have-been-loaded', { items: currentListState.value?.length })}</div>}
         </ScrollArea>
       }
     </div>

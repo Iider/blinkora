@@ -149,11 +149,13 @@ export class BlinkoraStore implements Store {
   private async getFilteredNotes(params: {
     page: number;
     size: number;
+    includePageInfo?: boolean;
     filterConfig: any;
     offlineFilter?: (note: OfflineNote) => boolean | undefined;
   }) {
-    const { page, size, filterConfig, offlineFilter = () => true } = params;
+    const { page, size, includePageInfo = false, filterConfig, offlineFilter = () => true } = params;
     let notes: Note[] = [];
+    let total = 0;
 
     if (this.isOnline) {
       const queryParams = { 
@@ -161,9 +163,17 @@ export class BlinkoraStore implements Store {
         ...filterConfig,
         searchText: this.searchText, 
         page, 
-        size 
+        size,
+        includePageInfo
       };
-      notes = await api.notes.list.mutate(queryParams);
+      const res = await api.notes.list.mutate(queryParams);
+      if (includePageInfo && res && typeof res === 'object' && Array.isArray(res.items)) {
+        notes = res.items;
+        total = Number(res.total ?? notes.length) || 0;
+      } else {
+        notes = res;
+        total = Array.isArray(notes) ? notes.length : 0;
+      }
 
       
       if (this.offlineNotes.length > 0) {
@@ -177,10 +187,15 @@ export class BlinkoraStore implements Store {
     if (!this.isOnline) {
       const start = (page - 1) * size;
       const end = start + size;
-      return mergedNotes.slice(start, end);
+      const items = mergedNotes.slice(start, end);
+      return includePageInfo
+        ? { items, total: mergedNotes.length, page, size }
+        : items;
     }
 
-    return mergedNotes;
+    return includePageInfo
+      ? { items: mergedNotes, total: total + filteredOfflineNotes.length, page, size }
+      : mergedNotes;
   }
 
   upsertNote = new PromiseState({
@@ -285,10 +300,12 @@ export class BlinkoraStore implements Store {
   }
 
   blinkoraList = new PromisePageState({
-    function: async ({ page, size }) => {
+    includePageInfo: true,
+    function: async ({ page, size, includePageInfo }) => {
       return this.getFilteredNotes({
         page,
         size,
+        includePageInfo,
         filterConfig: {
           type: NoteType.BLINKORA,
           isArchived: false,
@@ -302,10 +319,12 @@ export class BlinkoraStore implements Store {
   })
 
   noteOnlyList = new PromisePageState({
-    function: async ({ page, size }) => {
+    includePageInfo: true,
+    function: async ({ page, size, includePageInfo }) => {
       return this.getFilteredNotes({
         page,
         size,
+        includePageInfo,
         filterConfig: {
           type: NoteType.NOTE,
           isArchived: false,
@@ -319,10 +338,12 @@ export class BlinkoraStore implements Store {
   })
 
   todoList = new PromisePageState({
-    function: async ({ page, size }) => {
+    includePageInfo: true,
+    function: async ({ page, size, includePageInfo }) => {
       return this.getFilteredNotes({
         page,
         size,
+        includePageInfo,
         filterConfig: {
           type: NoteType.TODO,
           isArchived: false,
@@ -336,10 +357,12 @@ export class BlinkoraStore implements Store {
   })
 
   archivedList = new PromisePageState({
-    function: async ({ page, size }) => {
+    includePageInfo: true,
+    function: async ({ page, size, includePageInfo }) => {
       return this.getFilteredNotes({
         page,
         size,
+        includePageInfo,
         filterConfig: {
           isArchived: true,
           isRecycle: false
@@ -352,10 +375,12 @@ export class BlinkoraStore implements Store {
   })
 
   trashList = new PromisePageState({
-    function: async ({ page, size }) => {
+    includePageInfo: true,
+    function: async ({ page, size, includePageInfo }) => {
       return this.getFilteredNotes({
         page,
         size,
+        includePageInfo,
         filterConfig: {
           isRecycle: true
         },
@@ -367,10 +392,12 @@ export class BlinkoraStore implements Store {
   })
 
   noteList = new PromisePageState({
-    function: async ({ page, size, ...filterConfig }) => {
+    includePageInfo: true,
+    function: async ({ page, size, includePageInfo, ...filterConfig }) => {
       return this.getFilteredNotes({
         page,
         size,
+        includePageInfo,
         filterConfig: {
           isArchived: false,
           ...filterConfig
@@ -452,7 +479,7 @@ export class BlinkoraStore implements Store {
     } else if (currentPath === 'trash') {
       await this.trashList.callNextPage({});
     } else if (currentPath === 'all') {
-      this.noteList.resetAndCall({});
+      await this.noteList.callNextPage({});
     } else {
       await this.blinkoraList.callNextPage({});
     }
