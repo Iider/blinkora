@@ -31,7 +31,7 @@ const Home = observer(() => {
   const blinkora = RootStore.Get(BlinkoraStore)
   blinkora.use()
   blinkora.useQuery();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const location = useLocation();
   const isTodoView = searchParams.get('path') === 'todo';
   const isNotesView = searchParams.get('path') === 'notes';
@@ -153,7 +153,11 @@ const Home = observer(() => {
           ref={scrollAreaRef}
           fixMobileTopBar
           onRefresh={async () => {
-            await currentListState.resetAndCall({})
+            if (isPaginationMode) {
+              await currentListState.setPageAndCall(currentListState.page, {})
+            } else {
+              await currentListState.resetAndCall({})
+            }
           }}
           onBottom={isPaginationMode ? undefined : () => {
             blinkora.onBottom();
@@ -238,8 +242,14 @@ const Home = observer(() => {
                 size="sm"
                 total={currentListState.totalPages}
                 page={currentListState.page}
-                onChange={async (page) => {
-                  await currentListState.setPageAndCall(page, {});
+                onChange={(page) => {
+                  const nextSearchParams = new URLSearchParams(searchParams);
+                  if (page <= 1) {
+                    nextSearchParams.delete('page');
+                  } else {
+                    nextSearchParams.set('page', String(page));
+                  }
+                  setSearchParams(nextSearchParams);
                   scrollAreaRef.current?.scrollTo(0);
                 }}
               />

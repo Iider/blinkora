@@ -1,6 +1,6 @@
 "use client";
 import { useEffect } from 'react';
-import { PromisePageState, PromiseState } from './standard/PromiseState';
+import { NoteLoadMode, PromisePageState, PromiseState } from './standard/PromiseState';
 import { Store } from './standard/base';
 import { helper } from '@/lib/helper';
 import { ToastPlugin } from './module/Toast/Toast';
@@ -577,6 +577,12 @@ export class BlinkoraStore implements Store {
       const searchText = searchParams.get('searchText') || this.searchText;
       const hasTodo = searchParams.get('hasTodo');
       const path = searchParams.get('path');
+      const page = Math.max(1, Number(searchParams.get('page') || 1) || 1);
+      const loadList = (list: PromisePageState<any>) => {
+        return NoteLoadMode.value === 'pagination' && page > 1
+          ? list.setPageAndCall(page, {})
+          : list.resetAndCall({});
+      }
 
       this.noteListFilterConfig.type = NoteType.BLINKORA
       this.noteTypeDefault = NoteType.BLINKORA
@@ -616,23 +622,23 @@ export class BlinkoraStore implements Store {
 
       if (path == 'notes') {
         this.noteListFilterConfig.type = NoteType.NOTE
-        this.noteOnlyList.resetAndCall({});
+        loadList(this.noteOnlyList);
       } else if (path == 'todo') {
         this.noteListFilterConfig.type = NoteType.TODO
-        this.todoList.resetAndCall({});
+        loadList(this.todoList);
       } else if (path == 'all') {
         this.noteListFilterConfig.type = -1
-        this.noteList.resetAndCall({});
+        loadList(this.noteList);
       } else if (path == 'archived') {
         this.noteListFilterConfig.type = -1
         this.noteListFilterConfig.isArchived = true
-        this.archivedList.resetAndCall({});
+        loadList(this.archivedList);
       } else if (path == 'trash') {
         this.noteListFilterConfig.type = -1
         this.noteListFilterConfig.isRecycle = true
-        this.trashList.resetAndCall({});
+        loadList(this.trashList);
       } else {
-        this.blinkoraList.resetAndCall({});
+        loadList(this.blinkoraList);
       }
     }, [this.forceQuery, location.pathname, searchParams])
   }
