@@ -519,6 +519,18 @@ export class BlinkoraStore implements Store {
     this.dailyReviewNoteList.call()
   }
 
+  private getPageFromSearchParams(searchParams: URLSearchParams, fallbackPage = 1) {
+    const page = Number(searchParams.get('page') || fallbackPage) || fallbackPage
+    return Math.max(1, page)
+  }
+
+  private refreshListAtCurrentPage(list: PromisePageState<any>, searchParams: URLSearchParams, fallbackPage = 1) {
+    const page = this.getPageFromSearchParams(searchParams, fallbackPage)
+    return NoteLoadMode.value === 'pagination' && page > 1
+      ? list.setPageAndCall(page, {})
+      : list.resetAndCall({})
+  }
+
 
   async refreshData() {
     // Fix: Clear multi-select state when refreshing data to avoid stale selections
@@ -526,20 +538,21 @@ export class BlinkoraStore implements Store {
 
     this.tagList.call()
 
-    const currentPath = new URLSearchParams(window.location.search).get('path');
+    const searchParams = new URLSearchParams(window.location.search);
+    const currentPath = searchParams.get('path');
     
     if (currentPath === 'notes') {
-      this.noteOnlyList.resetAndCall({});
+      this.refreshListAtCurrentPage(this.noteOnlyList, searchParams, this.noteOnlyList.page);
     } else if (currentPath === 'todo') {
-      this.todoList.resetAndCall({});
+      this.refreshListAtCurrentPage(this.todoList, searchParams, this.todoList.page);
     } else if (currentPath === 'archived') {
-      this.archivedList.resetAndCall({});
+      this.refreshListAtCurrentPage(this.archivedList, searchParams, this.archivedList.page);
     } else if (currentPath === 'trash') {
-      this.trashList.resetAndCall({});
+      this.refreshListAtCurrentPage(this.trashList, searchParams, this.trashList.page);
     } else if (currentPath === 'all') {
-      this.noteList.resetAndCall({});
+      this.refreshListAtCurrentPage(this.noteList, searchParams, this.noteList.page);
     } else {
-      this.blinkoraList.resetAndCall({});
+      this.refreshListAtCurrentPage(this.blinkoraList, searchParams, this.blinkoraList.page);
     }
     
     this.config.call()
@@ -577,11 +590,8 @@ export class BlinkoraStore implements Store {
       const searchText = searchParams.get('searchText') || this.searchText;
       const hasTodo = searchParams.get('hasTodo');
       const path = searchParams.get('path');
-      const page = Math.max(1, Number(searchParams.get('page') || 1) || 1);
       const loadList = (list: PromisePageState<any>) => {
-        return NoteLoadMode.value === 'pagination' && page > 1
-          ? list.setPageAndCall(page, {})
-          : list.resetAndCall({});
+        return this.refreshListAtCurrentPage(list, searchParams);
       }
 
       this.noteListFilterConfig.type = NoteType.BLINKORA
