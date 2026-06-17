@@ -1,6 +1,5 @@
 import { Icon } from '@/components/Common/Iconify/icons';
 import { Tooltip } from '@heroui/react';
-import { Copy } from "../Common/Copy";
 import { LeftCickMenu, ShowEditTimeModel } from "../BlinkoraRightClickMenu";
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { Note, NoteType } from '@shared/lib/types';
@@ -9,11 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { _ } from '@/lib/lodash';
 import { useIsIOS } from '@/lib/hooks';
 import { observer } from 'mobx-react-lite';
-import { HistoryButton } from '../BlinkoraNoteHistory/HistoryButton';
-import { api } from '@/lib/trpc';
-import { PromiseCall } from '@/store/standard/PromiseState';
-import { AnnotationTriggerButton } from './annotationButton';
-import { confirmDeleteNotes } from '@/lib/noteDeletion';
+import { CardActionButtons } from './cardActions';
 
 interface CardHeaderProps {
   blinkoraItem: Note;
@@ -97,47 +92,12 @@ export const CardHeader = observer(({ blinkoraItem, blinkora, isExpanded }: Card
           </div>
         </Tooltip>
 
-        <div data-drag-ignore="true" className={`ml-auto ${actionVisibleClass}`}>
-          <Copy
-            size={16}
-            content={blinkoraItem.content + `\n${blinkoraItem.attachments?.map(i => window.location.origin + i.path).join('\n')}`}
-          />
-        </div>
-
-        <AnnotationTriggerButton
+        <CardActionButtons
           blinkoraItem={blinkoraItem}
-          className={`ml-2 ${actionVisibleClass}`}
+          blinkora={blinkora}
+          iconSize={iconSize}
+          className={`ml-auto ${actionVisibleClass}`}
         />
-
-        {!!blinkoraItem._count?.histories && blinkoraItem._count?.histories > 0 && (
-          <div data-drag-ignore="true">
-            <HistoryButton
-              noteId={blinkoraItem.id!}
-              className={'opacity-0 group-hover/card:opacity-100 group-hover/card:translate-x-0 ml-2 cursor-pointer hover:text-primary text-desc mt-[1px]'}
-            />
-          </div>
-        )}
-
-        <Tooltip content={blinkoraItem.isRecycle ? t('delete') : t('trash')} delay={1000}>
-          <span data-drag-ignore="true" className={`ml-2 inline-flex items-center ${actionVisibleClass}`}>
-            <Icon
-              icon="mingcute:delete-2-line"
-              width={iconSize}
-              height={iconSize}
-              className="cursor-pointer text-desc hover:text-red-500"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (blinkoraItem.isRecycle) {
-                  confirmDeleteNotes({ ids: [blinkoraItem.id!] });
-                  return;
-                }
-                PromiseCall(api.notes.trashMany.mutate({ ids: [blinkoraItem.id!] })).then(() => {
-                  blinkora.updateTicker++;
-                });
-              }}
-            />
-          </span>
-        </Tooltip>
 
         {blinkoraItem.isTop && (
           <Icon

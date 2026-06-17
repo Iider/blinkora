@@ -14,6 +14,7 @@ import { MarkdownRender } from "@/components/Common/MarkdownRender";
 import { FilesAttachmentRender } from "../Common/AttachmentRender";
 import { ReferencesContent } from "./referencesContent";
 import { useTranslation } from "react-i18next";
+import { CardActionButtons } from "./cardActions";
 
 interface FullscreenEditorProps {
   blinkoraItem: BlinkoraItem;
@@ -164,6 +165,49 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
 
   if (!isOpen) return null;
 
+  const activeNote = blinkora.noteDetail.value?.id === blinkoraItem.id
+    ? blinkora.noteDetail.value
+    : blinkoraItem;
+
+  const renderModeButton = () => editorMode === 'preview' ? (
+    <Tooltip content={t('edit')}>
+      <Button
+        isIconOnly
+        variant="light"
+        size="sm"
+        onPress={handleSwitchToEdit}
+        className="text-foreground hover:bg-default-100"
+      >
+        <Icon icon="tabler:edit" width={20} height={20} />
+      </Button>
+    </Tooltip>
+  ) : (
+    <Tooltip content={t('preview')}>
+      <Button
+        isIconOnly
+        variant="light"
+        size="sm"
+        onPress={handleSwitchToPreview}
+        className="text-foreground hover:bg-default-100"
+      >
+        <Icon icon="tabler:eye" width={20} height={20} />
+      </Button>
+    </Tooltip>
+  );
+
+  const renderPreviewActions = () => editorMode === 'preview' && (
+    <CardActionButtons
+      blinkoraItem={activeNote}
+      blinkora={blinkora}
+      iconSize={20}
+      className="rounded-full bg-background/80 px-1 py-0.5 shadow-sm backdrop-blur"
+      itemClassName="h-8 w-8 justify-center"
+      showHistory={false}
+      onDeleted={handleClose}
+      onTrashed={handleClose}
+    />
+  );
+
   const editorContent = (
     <div 
       className="fixed inset-0 z-[9999] bg-background overflow-hidden"
@@ -213,31 +257,8 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
                 <Icon icon="tabler:arrow-left" width={20} height={20} />
               </Button>
               <div className="flex-1 flex justify-end ml-2 gap-2">
-                {editorMode === 'preview' ? (
-                  <Tooltip content={t('edit')}>
-                    <Button
-                      isIconOnly
-                      variant="light"
-                      size="sm"
-                      onPress={handleSwitchToEdit}
-                      className="text-foreground hover:bg-default-100"
-                    >
-                      <Icon icon="tabler:edit" width={20} height={20} />
-                    </Button>
-                  </Tooltip>
-                ) : (
-                  <Tooltip content={t('preview')}>
-                    <Button
-                      isIconOnly
-                      variant="light"
-                      size="sm"
-                      onPress={handleSwitchToPreview}
-                      className="text-foreground hover:bg-default-100"
-                    >
-                      <Icon icon="tabler:eye" width={20} height={20} />
-                    </Button>
-                  </Tooltip>
-                )}
+                {renderPreviewActions()}
+                {renderModeButton()}
                 {editorMode === 'edit' && (
                   <div id={`editor-top-toolbar-${blinkoraItem.id}`} className="flex justify-end"></div>
                 )}
@@ -253,16 +274,16 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
               onDoubleClick={handleSwitchToEdit}
             >
               <MarkdownRender
-                content={blinkora.noteDetail.value?.content ?? blinkoraItem.content}
+                content={activeNote.content}
                 onChange={(newContent) => {
                   blinkoraItem.content = newContent;
                   blinkora.upsertNote.call({ id: blinkoraItem.id, content: newContent, refresh: false });
                 }}
                 largeSpacing={true}
               />
-              <ReferencesContent blinkoraItem={blinkora.noteDetail.value ?? blinkoraItem} className="my-4" />
+              <ReferencesContent blinkoraItem={activeNote} className="my-4" />
               <div className={blinkoraItem.attachments?.length != 0 ? 'my-2' : ''}>
-                <FilesAttachmentRender files={blinkora.noteDetail.value?.attachments ?? blinkoraItem.attachments ?? []} preview />
+                <FilesAttachmentRender files={activeNote.attachments ?? []} preview />
               </div>
             </div>
           ) : (
@@ -294,31 +315,8 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
                 <Icon icon="tabler:arrow-left" width={20} height={20} />
               </Button>
               <div className="flex-1 flex justify-end ml-2 gap-2">
-                {editorMode === 'preview' ? (
-                  <Tooltip content={t('edit')}>
-                    <Button
-                      isIconOnly
-                      variant="light"
-                      size="sm"
-                      onPress={handleSwitchToEdit}
-                      className="text-foreground hover:bg-default-100"
-                    >
-                      <Icon icon="tabler:edit" width={20} height={20} />
-                    </Button>
-                  </Tooltip>
-                ) : (
-                  <Tooltip content={t('preview')}>
-                    <Button
-                      isIconOnly
-                      variant="light"
-                      size="sm"
-                      onPress={handleSwitchToPreview}
-                      className="text-foreground hover:bg-default-100"
-                    >
-                      <Icon icon="tabler:eye" width={20} height={20} />
-                    </Button>
-                  </Tooltip>
-                )}
+                {renderPreviewActions()}
+                {renderModeButton()}
                 {editorMode === 'edit' && (
                   <div id={`editor-top-toolbar-${blinkoraItem.id}`} className="flex justify-end"></div>
                 )}

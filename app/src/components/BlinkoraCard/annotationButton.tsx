@@ -159,7 +159,15 @@ export const SimpleCommentList = observer(({ blinkoraItem }: { blinkoraItem: Not
   );
 });
 
-export const AnnotationTriggerButton = observer(({ blinkoraItem, className = '' }: { blinkoraItem: Note; className?: string }) => {
+export const AnnotationTriggerButton = observer(({
+  blinkoraItem,
+  className = '',
+  size = 16
+}: {
+  blinkoraItem: Note;
+  className?: string;
+  size?: number | string;
+}) => {
   const { t } = useTranslation();
   const count = (blinkoraItem as any)._count?.comments ?? 0;
 
@@ -176,7 +184,7 @@ export const AnnotationTriggerButton = observer(({ blinkoraItem, className = '' 
         className={`flex cursor-pointer items-center border-0 bg-transparent p-0 leading-none text-desc hover:text-primary ${className}`}
         onClick={open}
       >
-        <Icon icon="mingcute:comment-line" width="16" height="16" />
+        <Icon icon="mingcute:comment-line" width={size} height={size} />
       </button>
     </Tooltip>
   );

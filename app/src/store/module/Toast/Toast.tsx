@@ -47,6 +47,7 @@ export class ToastPlugin implements Store {
 
   provider = () => (
     <Toaster
+      containerStyle={{ zIndex: 12000 }}
       toastOptions={{
         className: '!bg-[#fff] !rounded-2xl !text-[#000] dark:!bg-[#131218] dark:!text-[#fff] !shadow-md',
       }}

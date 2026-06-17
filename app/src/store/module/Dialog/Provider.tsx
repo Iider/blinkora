@@ -12,7 +12,7 @@ const CloseButton = ({ onClose }: { onClose: () => void }) => (
   <motion.div
     onClick={onClose}
     className={`cursor-pointer absolute
-    md:top-[-12px] md:right-[-12px] top-[-20px] right-[calc(50%-17.5px)] bg-background border-2 border-border z-[2002] text-foreground p-2 rounded-full
+    md:top-[-12px] md:right-[-12px] top-[-20px] right-[calc(50%-17.5px)] bg-background border-2 border-border z-[11002] text-foreground p-2 rounded-full
     !w-[35px] !h-[35px] flex items-center justify-center shadow-lg`}
     whileTap={{
       scale: 0.85,
@@ -69,8 +69,8 @@ const Dialog = observer(() => {
   };
 
   const containerClass = isPc
-    ? "fixed inset-0 z-[2001] flex justify-center items-center pointer-events-none max-w-screen-2xl mx-auto left-0 right-0"
-    : "fixed bottom-0 left-0 right-0 z-[2001] flex flex-col items-center pointer-events-none";
+    ? "fixed inset-0 z-[11001] flex justify-center items-center pointer-events-none max-w-screen-2xl mx-auto left-0 right-0"
+    : "fixed bottom-0 left-0 right-0 z-[11001] flex flex-col items-center pointer-events-none";
 
   const modalSizeClass = (() => {
     const baseClass = 'mx-auto ';
@@ -104,7 +104,7 @@ const Dialog = observer(() => {
     return (
       <>
         <div
-          className="fixed inset-0 z-[2000] bg-black/50 backdrop-blur-sm"
+          className="fixed inset-0 z-[11000] bg-black/50 backdrop-blur-sm"
           onClick={() => {
             if (isDismissable) {
               modal.close()
@@ -159,7 +159,7 @@ const Dialog = observer(() => {
   return (
     <>
       <Modal
-        style={{ zIndex: 2000 }}
+        style={{ zIndex: 11000 }}
         onClose={() => {
           modal.close();
         }}
@@ -179,7 +179,11 @@ const Dialog = observer(() => {
         }}
         hideCloseButton={(size === 'full' || onlyContent) ? true : false}
         className={`${className} ${transparent ? 'bg-transparent' : ''}`}
-        classNames={classNames}
+        classNames={{
+          wrapper: 'z-[11000]',
+          backdrop: 'z-[10999]',
+          ...classNames
+        }}
         isDismissable={isDismissable}
         motionProps={{
           variants: {
