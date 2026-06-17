@@ -127,6 +127,28 @@ const Home = observer(() => {
     }
   }, [location.key]);
 
+  useEffect(() => {
+    const requestedPage = Math.max(1, Number(searchParams.get('page') || 1) || 1);
+    const isOutOfRangePage = isPaginationMode
+      && requestedPage > 1
+      && !currentListState.isLoading
+      && currentListState.totalPages > 0
+      && requestedPage > currentListState.totalPages;
+
+    if (!isOutOfRangePage) return;
+
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.delete('page');
+    setSearchParams(nextSearchParams, { replace: true });
+  }, [
+    isPaginationMode,
+    searchParams,
+    setSearchParams,
+    currentListState,
+    currentListState.isLoading,
+    currentListState.totalPages
+  ]);
+
   return (
     <div
       style={{
