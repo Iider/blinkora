@@ -49,6 +49,40 @@ const DevInspector = () => {
   );
 };
 
+const ScrollbarActivityTracker = () => {
+  useEffect(() => {
+    const root = document.documentElement;
+    let hideTimer: number | undefined;
+    const listenerOptions: AddEventListenerOptions = { capture: true, passive: true };
+
+    const showScrollbar = () => {
+      root.classList.add('scrollbar-active');
+      if (hideTimer) {
+        window.clearTimeout(hideTimer);
+      }
+      hideTimer = window.setTimeout(() => {
+        root.classList.remove('scrollbar-active');
+      }, 1000);
+    };
+
+    window.addEventListener('scroll', showScrollbar, listenerOptions);
+    window.addEventListener('wheel', showScrollbar, listenerOptions);
+    window.addEventListener('touchmove', showScrollbar, listenerOptions);
+
+    return () => {
+      if (hideTimer) {
+        window.clearTimeout(hideTimer);
+      }
+      root.classList.remove('scrollbar-active');
+      window.removeEventListener('scroll', showScrollbar, listenerOptions);
+      window.removeEventListener('wheel', showScrollbar, listenerOptions);
+      window.removeEventListener('touchmove', showScrollbar, listenerOptions);
+    };
+  }, []);
+
+  return null;
+};
+
 const HomeRedirect = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -143,6 +177,7 @@ function App() {
       <BrowserRouter>
         <HeroUIProvider>
           <ThemeProvider attribute="class" enableSystem={false}>
+            <ScrollbarActivityTracker />
             <AppProvider />
             <CommonLayout>
               <div className="app-content">
