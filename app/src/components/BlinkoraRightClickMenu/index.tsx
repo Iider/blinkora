@@ -11,13 +11,14 @@ import { DialogStore } from "@/store/module/Dialog";
 import { ToastPlugin } from "@/store/module/Toast/Toast";
 import { BlinkoraEditor } from "../BlinkoraEditor";
 import { useEffect, useState } from "react";
-import { NoteType } from "@shared/lib/types";
+import { NoteType, toNoteTypeEnum } from "@shared/lib/types";
 import { parseAbsoluteToLocal } from "@internationalized/date";
 import i18n from "@/lib/i18n";
 import { useLocation } from "react-router-dom";
 import { FocusEditorFixMobile } from "@/components/Common/Editor/editorUtils";
 import { confirmDeleteNotes } from "@/lib/noteDeletion";
 import { WorkspaceStore } from "@/store/workspace";
+import { getNoteTypeOption, NOTE_TYPE_OPTIONS } from "../Common/NoteTypePicker";
 
 const toIsoString = (value?: string | Date | null) => {
   if (!value) return null;
@@ -392,21 +393,25 @@ export const SelectAllItem = observer(() => {
   </div>
 })
 
-export const ConvertItemFunction = () => {
+const getConvertTargetOptions = (currentType?: number | NoteType) => {
+  const safeCurrentType = toNoteTypeEnum(currentType);
+  return NOTE_TYPE_OPTIONS.filter(option => option.type !== safeCurrentType);
+}
+
+export const ConvertItemFunction = (targetType: NoteType) => {
   const blinkora = RootStore.Get(BlinkoraStore)
   blinkora.upsertNote.call({
     id: blinkora.curSelectedNote?.id,
-    type: blinkora.curSelectedNote?.type == NoteType.NOTE ? NoteType.BLINKORA : NoteType.NOTE
+    type: targetType
   })
 }
 
-export const ConvertItem = observer(() => {
+export const ConvertItem = observer(({ targetType }: { targetType: NoteType }) => {
   const { t } = useTranslation();
-  const blinkora = RootStore.Get(BlinkoraStore)
+  const option = getNoteTypeOption(targetType);
   return <div className="flex items-start gap-2">
     <Icon icon="ri:exchange-2-line" width="20" height="20" />
-    <div>{t('convert-to')} {blinkora.curSelectedNote?.type == NoteType.NOTE ?
-      <span className='text-yellow-500'>{t('blinkora')}</span> : <span className='text-blue-500'>{t('note')}</span>}</div>
+    <div>{t('convert-to')} <span className={option.iconClassName}>{t(option.labelKey)}</span></div>
   </div>
 })
 
@@ -506,9 +511,11 @@ export const BlinkoraRightClickMenu = observer(() => {
       <EditTimeItem />
     </ContextMenuItem>
 
-    <ContextMenuItem onClick={ConvertItemFunction}>
-      <ConvertItem />
-    </ContextMenuItem>
+    {getConvertTargetOptions(blinkora.curSelectedNote?.type).map(option => (
+      <ContextMenuItem key={`ConvertItem-${option.type}`} onClick={() => ConvertItemFunction(option.type)}>
+        <ConvertItem targetType={option.type} />
+      </ContextMenuItem>
+    ))}
 
     {!blinkora.curSelectedNote?.isRecycle ? (
       <ContextMenuItem onClick={handleMoveWorkspace}>
@@ -579,7 +586,11 @@ export const LeftCickMenu = observer(({ onTrigger, className }: { onTrigger: () 
         </>
       ) : null}
       <DropdownItem key="EditTimeItem" onPress={() => ShowEditTimeModel()}> <EditTimeItem /></DropdownItem>
-      <DropdownItem key="ConvertItem" onPress={ConvertItemFunction}> <ConvertItem /></DropdownItem>
+      {getConvertTargetOptions(blinkora.curSelectedNote?.type).map(option => (
+        <DropdownItem key={`ConvertItem-${option.type}`} onPress={() => ConvertItemFunction(option.type)}>
+          <ConvertItem targetType={option.type} />
+        </DropdownItem>
+      ))}
       {!blinkora.curSelectedNote?.isRecycle ? (
         <DropdownItem key="MoveWorkspaceItem" onPress={ShowMoveWorkspaceModel}>
           <MoveWorkspaceItem isDisabled={!canMoveToWorkspace} />
