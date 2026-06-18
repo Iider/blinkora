@@ -42,6 +42,7 @@ export const CardActionButtons = observer(({
   onTrashed,
 }: CardActionButtonsProps) => {
   const { t } = useTranslation();
+  const actionItemClassName = `inline-flex items-center justify-center ${itemClassName}`;
 
   const handleDelete = (e: MouseEvent) => {
     e.stopPropagation();
@@ -58,7 +59,7 @@ export const CardActionButtons = observer(({
 
   return (
     <div data-drag-ignore="true" className={`flex items-center gap-2 ${className}`}>
-      <div className={itemClassName}>
+      <div className={actionItemClassName}>
         <Copy
           size={Number(iconSize)}
           content={buildCopyContent(blinkoraItem)}
@@ -67,12 +68,12 @@ export const CardActionButtons = observer(({
 
       <AnnotationTriggerButton
         blinkoraItem={blinkoraItem}
-        className={itemClassName}
+        className={actionItemClassName}
         size={iconSize}
       />
 
       {showHistory && !!blinkoraItem._count?.histories && blinkoraItem._count.histories > 0 && (
-        <div data-drag-ignore="true" className={itemClassName}>
+        <div data-drag-ignore="true" className={actionItemClassName}>
           <HistoryButton
             noteId={blinkoraItem.id!}
             className="cursor-pointer text-desc hover:text-primary"
@@ -84,7 +85,7 @@ export const CardActionButtons = observer(({
         <button
           type="button"
           data-drag-ignore="true"
-          className={`inline-flex cursor-pointer items-center border-0 bg-transparent p-0 leading-none text-desc hover:text-red-500 ${itemClassName}`}
+          className={`cursor-pointer border-0 bg-transparent p-0 leading-none text-desc hover:text-red-500 ${actionItemClassName}`}
           onClick={handleDelete}
         >
           <Icon
