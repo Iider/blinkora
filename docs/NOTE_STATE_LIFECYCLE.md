@@ -23,12 +23,22 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 ## 状态写入
 
 - 单条卡片的归档、恢复、置顶、回顾状态走 `notes.upsert`。
+- 单条卡片的类型转换也走 `notes.upsert`，只写 `type`，不提交正文。
 - 多选归档、恢复和置顶走 `notes.updateMany`。
 - 移入回收站走 `notes.trashMany`。
 - 彻底删除走 `notes.deleteMany`，同时清理引用、评论、附件关系、孤立标签和 RAG 向量。
 - 跨工作区移动走 `notes.moveToWorkspace`。它不改变 `type`、`isArchived`、`isTop`、`isReviewed`，回收站卡片不允许移动；批量移动也复用这个接口。
 
 状态更新必须支持“只改状态，不改正文”。前端按钮不应该为了归档或恢复额外提交正文。
+
+## 类型转换入口
+
+闪念、笔记、待办之间可以互相转换。入口：
+
+- 卡片左下角类型标识：点击后弹出三种类型，选择目标类型。
+- 卡片右键菜单和右上角三个点菜单：只显示当前类型以外的两个目标类型。
+
+转换后，卡片应从当前类型列表移到目标类型列表；正文、标签、附件、评论、历史和归档状态保持不变。
 
 ## 维护同步点
 
@@ -40,12 +50,15 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - `server/src/handlers/mcp.rs`：MCP 工具入参 schema。
 - `server/src/rag.rs`：索引元数据和查询过滤。
 - `app/src/store/blinkoraStore.tsx`：各页面列表筛选。
+- `app/src/components/BlinkoraRightClickMenu/index.tsx`：右键菜单和三点菜单的类型转换入口。
+- `app/src/components/Common/NoteTypePicker/index.tsx`：卡片左下角和编辑器里的类型选择器。
 - `scripts/rust-smoke.mjs`：至少覆盖归档、归档列表可见、恢复。
 
 ## 验收
 
 - 对普通闪念或笔记执行归档后，原列表不再显示，`/?path=archived` 可见。
 - 在归档页恢复后，内容回到对应类型列表。
+- 闪念、笔记、待办互转后，内容进入目标类型列表，原正文、标签和附件不变。
 - 全局搜索可按需要跨普通区和归档区查询。
 - 回收站内容不应出现在普通区或归档区。
 - `bun run verify:rust` 通过。
