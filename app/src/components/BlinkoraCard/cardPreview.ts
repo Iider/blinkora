@@ -132,6 +132,18 @@ export const findPreviewTitle = (content: string = '', fallbackTitle: string = '
   return title;
 };
 
+export const getReferencePreviewText = (content: string = '') => {
+  let previewText = '';
+  eachReadableLine(content, (rawLine) => {
+    const normalized = normalizePreviewText(rawLine);
+    if (normalized) {
+      previewText = normalized;
+      return false;
+    }
+  });
+  return previewText;
+};
+
 export const shouldUseBlogPreview = (content: string = '', foldLength: number | null | undefined = defaultFoldLength) => {
   const safeFoldLength = typeof foldLength === 'number' && Number.isFinite(foldLength) && foldLength >= 0
     ? foldLength

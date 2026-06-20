@@ -8,6 +8,7 @@ import { Icon } from '@/components/Common/Iconify/icons'
 import { cn } from "@heroui/theme"
 import { Tooltip } from "@heroui/react"
 import { useTranslation } from "react-i18next"
+import { getReferencePreviewText } from "./cardPreview"
 
 type ReferenceDirection = 'outgoing' | 'incoming' | 'mutual';
 
@@ -124,7 +125,7 @@ export const ReferencesContent = ({ blinkoraItem, className }: { blinkoraItem: B
           {getDisplayTime(item.note?.createdAt, item.note?.updatedAt)}
           {renderDirectionIcon(item.direction)}
         </div>
-        <div className='text-default-700 text-xs font-bold ml-1 select-none line-clamp-3 '>{item.note?.content}</div>
+        <div className='text-default-700 text-xs ml-1 select-none line-clamp-3 '>{getReferencePreviewText(item.note?.content)}</div>
       </div>
     })}
   </div>
