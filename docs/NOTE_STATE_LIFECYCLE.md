@@ -51,6 +51,13 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 
 `articlePreviewLineLimit` 只控制文章预览在普通折叠态展示的摘要行数，不改变全文阅读、普通短卡片呈现和内容保存。
 
+普通短卡片的列表排版：
+
+- 仍完整渲染 Markdown，不按 `articlePreviewLineLimit` 截断。
+- 复用文章卡片的紧凑字号和行距。
+- 第一条可读行是 Markdown 标题时，标题使用主文字色，正文使用描述色。
+- 第一条可读行不是 Markdown 标题时，整张卡片使用主文字色。
+
 ## 引用展示
 
 - 普通列表卡片不展示引用摘要，避免卡片高度被引用关系拉长。
@@ -68,6 +75,10 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - `server/src/handlers/mcp.rs`：MCP 工具入参 schema。
 - `server/src/rag.rs`：索引元数据和查询过滤。
 - `app/src/store/blinkoraStore.tsx`：各页面列表筛选。
+- `app/src/components/BlinkoraCard/index.tsx`：文章预览判定、全屏打开交互和普通卡片渲染分流。
+- `app/src/components/BlinkoraCard/cardPreview.ts`：可读行解析、文章预览标题、引用预览文本和首行标题判断。
+- `app/src/components/BlinkoraCard/noteContent.tsx`：普通短卡片 Markdown 渲染和排版状态 class。
+- `app/src/styles/github-markdown.css`：普通短卡片、全屏阅读和 Markdown 基础样式。
 - `app/src/components/BlinkoraRightClickMenu/index.tsx`：右键菜单和三点菜单的类型转换入口。
 - `app/src/components/Common/NoteTypePicker/index.tsx`：卡片左下角和编辑器里的类型选择器。
 - `scripts/rust-smoke.mjs`：至少覆盖归档、归档列表可见、恢复。

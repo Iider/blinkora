@@ -144,6 +144,15 @@ export const getReferencePreviewText = (content: string = '') => {
   return previewText;
 };
 
+export const hasLeadingMarkdownHeading = (content: string = '') => {
+  let hasHeading = false;
+  eachReadableLine(content, (rawLine) => {
+    hasHeading = /^\s{0,3}#{1,6}\s+/.test(rawLine);
+    return false;
+  });
+  return hasHeading;
+};
+
 export const shouldUseBlogPreview = (content: string = '', foldLength: number | null | undefined = defaultFoldLength) => {
   const safeFoldLength = typeof foldLength === 'number' && Number.isFinite(foldLength) && foldLength >= 0
     ? foldLength

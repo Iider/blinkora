@@ -486,6 +486,61 @@ ol {
   color: var(--desc);
 }
 
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body.content {
+  color: var(--foreground);
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+}
+
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h1,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h2,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h3,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h4,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h5,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h6 {
+  margin-top: 0;
+  margin-bottom: 0.25rem;
+  padding-bottom: 0;
+  color: var(--foreground);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.375;
+}
+
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body p,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body li,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body blockquote {
+  color: var(--foreground);
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+}
+
+.blinkora-card-markdown-has-title:not(.blinkora-card-markdown-expanded) .markdown-body.content,
+.blinkora-card-markdown-has-title:not(.blinkora-card-markdown-expanded) .markdown-body p,
+.blinkora-card-markdown-has-title:not(.blinkora-card-markdown-expanded) .markdown-body li,
+.blinkora-card-markdown-has-title:not(.blinkora-card-markdown-expanded) .markdown-body blockquote {
+  color: var(--desc);
+}
+
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body p,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body blockquote,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body ul,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body ol,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body dl,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body details {
+  margin-bottom: 0.25rem;
+}
+
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body ul,
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body ol {
+  margin-top: 0.25rem;
+  padding-left: 1rem;
+}
+
+.blinkora-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body blockquote {
+  padding: 0.125rem 0.75rem;
+}
+
 
 .markdown-body h1 {
   font-weight: bold;

@@ -3,6 +3,7 @@ import { FilesAttachmentRender } from "../Common/AttachmentRender";
 import { Note } from '@shared/lib/types';
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { observer } from 'mobx-react-lite';
+import { hasLeadingMarkdownHeading } from './cardPreview';
 
 interface NoteContentProps {
   blinkoraItem: Note;
@@ -11,16 +12,20 @@ interface NoteContentProps {
 }
 
 export const NoteContent = observer(({ blinkoraItem, blinkora, isExpanded }: NoteContentProps) => {
+  const hasTitle = hasLeadingMarkdownHeading(blinkoraItem.content);
+
   return (
     <>
-      <MarkdownRender
-        content={blinkoraItem.content}
-        onChange={(newContent) => {
-          blinkoraItem.content = newContent
-          blinkora.upsertNote.call({ id: blinkoraItem.id, content: newContent, refresh: false })
-        }}
-        largeSpacing={isExpanded}
-      />
+      <div className={`blinkora-card-markdown ${hasTitle ? 'blinkora-card-markdown-has-title' : ''} ${isExpanded ? 'blinkora-card-markdown-expanded' : ''}`}>
+        <MarkdownRender
+          content={blinkoraItem.content}
+          onChange={(newContent) => {
+            blinkoraItem.content = newContent
+            blinkora.upsertNote.call({ id: blinkoraItem.id, content: newContent, refresh: false })
+          }}
+          largeSpacing={isExpanded}
+        />
+      </div>
       <div className={blinkoraItem.attachments?.length != 0 ? 'my-2' : ''}>
         <FilesAttachmentRender files={blinkoraItem.attachments ?? []} preview />
       </div>
