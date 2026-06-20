@@ -180,6 +180,30 @@ export const PerferSetting = observer(() => {
     />
 
     <Item
+      leftContent={<div className="flex flex-col">
+        <div>{t('card-interaction-mode')}</div>
+        <div className="text-xs text-default-400">{t('card-interaction-mode-tip')}</div>
+      </div>}
+      rightContent={
+        <SelectDropdown
+          value={blinkora.config.value?.cardInteractionMode === 'auto' ? 'auto' : 'article'}
+          options={[
+            { key: 'article', label: t('interaction-mode-article') },
+            { key: 'auto', label: t('interaction-mode-auto') },
+          ]}
+          onChange={async (value) => {
+            await PromiseCall(api.config.update.mutate({
+              key: 'cardInteractionMode',
+              value
+            }));
+            await blinkora.config.call();
+            await blinkora.refreshData();
+          }}
+        />
+      }
+    />
+
+    <Item
       leftContent={<ItemWithTooltip
         content={t('text-fold-length')}
         toolTipContent={<div className="w-[300px] flex gap-2 py-4 px-2">

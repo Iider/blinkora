@@ -3,7 +3,6 @@ import { FilesAttachmentRender } from "../Common/AttachmentRender";
 import { Note } from '@shared/lib/types';
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { observer } from 'mobx-react-lite';
-import { ReferencesContent } from './referencesContent';
 
 interface NoteContentProps {
   blinkoraItem: Note;
@@ -22,7 +21,6 @@ export const NoteContent = observer(({ blinkoraItem, blinkora, isExpanded }: Not
         }}
         largeSpacing={isExpanded}
       />
-      <ReferencesContent blinkoraItem={blinkoraItem} className={`${isExpanded ? 'my-4' : 'my-2'}`} />
       <div className={blinkoraItem.attachments?.length != 0 ? 'my-2' : ''}>
         <FilesAttachmentRender files={blinkoraItem.attachments ?? []} preview />
       </div>

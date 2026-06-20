@@ -45,19 +45,18 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
 
   // DraggableBlinkoraCard reads this flag to disable sorting while fullscreen editing owns the note.
   blinkoraItem.isExpand = blinkora.fullscreenEditorNoteId === blinkoraItem.id;
+  const cardInteractionMode = blinkora.config.value?.cardInteractionMode === 'auto' ? 'auto' : 'article';
+  const usesArticlePreview = forceBlog || shouldUseBlogPreview(blinkoraItem.content, blinkora.config.value?.textFoldLength);
+  const usesFullscreenInteraction = forceBlog || usesArticlePreview || cardInteractionMode === 'article';
 
-  if (forceBlog) {
-    blinkoraItem.isBlog = true
-  } else {
-    blinkoraItem.isBlog = shouldUseBlogPreview(blinkoraItem.content, blinkora.config.value?.textFoldLength)
-  }
+  blinkoraItem.isBlog = usesArticlePreview;
   blinkoraItem.title = findPreviewTitle(blinkoraItem.content, blinkoraItem.title);
 
 
   const handleClick = () => {
     if (blinkora.isMultiSelectMode) {
       blinkora.onMultiSelectNote(blinkoraItem.id!);
-    } else if (blinkoraItem.isBlog) {
+    } else if (usesFullscreenInteraction) {
       setIsFullscreenEditorOpen(true);
       blinkora.fullscreenEditorNoteId = blinkoraItem.id!;
     }
@@ -68,6 +67,7 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
   };
 
   const handleDoubleClick = (e: React.MouseEvent) => {
+    if (usesFullscreenInteraction) return;
     blinkora.curSelectedNote = _.cloneDeep(blinkoraItem);
     ShowEditBlinkoraModel();
     FocusEditorFixMobile()
@@ -112,7 +112,7 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
               shadow='none'
               className={`
                 flex flex-col p-4 ${glassEffect ? 'bg-transparent' : 'bg-background'} transition-[background-color,box-shadow] duration-150 ease-out group/card
-                ${blinkoraItem.isBlog ? 'cursor-pointer' : ''}
+                ${usesFullscreenInteraction ? 'cursor-pointer' : ''}
                 ${isSelected ? 'ring-2 ring-inset ring-primary/70 bg-primary/5 shadow-sm' : ''}
                 ${className}
               `}
