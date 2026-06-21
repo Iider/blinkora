@@ -41,7 +41,7 @@ Docker compose 文件：
 | --- | --- | --- | --- |
 | [ ] | 完整 Docker 服务健康 | 完整 Docker 模式下，在 `docker/` 执行 `docker compose ps` | Web 和 DB 容器均为 healthy |
 | [ ] | 本机持久化服务健康 | 本机持久化模式下，执行 `bun run deploy:local status` | `com.blinkora.local` 为 running，`blinkora-db` 为 healthy，不需要 `blinkora-web` |
-| [ ] | 本机部署更新生效 | 本机持久化模式下执行 `bun run deploy:local update` 后刷新 `http://localhost:6676` | 页面加载 `release/local/public` 中最新 `index-*.js`，新功能可见 |
+| [ ] | 本机部署更新生效 | 本机持久化模式下执行 `bun run deploy:local update`，再运行 `curl -I http://127.0.0.1:6676/` 并刷新 `http://localhost:6676` | `curl` 返回 `200 OK`；页面加载 `release/local/public` 中最新 `index-*.js`，新功能可见 |
 | [ ] | Web 端口正确 | 打开 Rust 主栈 `http://localhost:6676` | 页面可打开，不出现 `ERR_UNSAFE_PORT` |
 | [ ] | Web 端口统一 | 搜索当前文档或配置中的 Web 入口 | 运行入口使用 `6676` |
 | [ ] | 启动日志无新错误 | Docker 模式看 `docker compose logs --tail=80 web`；本机持久化模式看 `tail -n 80 ~/.blinkora/local/logs/blinkora.out.log ~/.blinkora/local/logs/blinkora.err.log` | 除未登录请求外，无新增服务端异常 |

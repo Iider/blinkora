@@ -144,6 +144,7 @@ bun run deploy:local status
 | 现象 | 优先检查 | 处理 |
 | --- | --- | --- |
 | 页面打不开 | `launchd` 是否 running，`lsof` 是否监听 `6676` | `bun run deploy:local restart` |
+| `lsof` 显示监听但 `curl -I` 没有返回 | 服务进程可能处在旧 launchd 状态 | 先 `bun run deploy:local stop`，再 `bun run deploy:local start`；仍不行时看 stdout / stderr 日志 |
 | 数据库连不上 | `blinkora-db` 是否 healthy | `bun run deploy:local db-up` |
 | 端口被占用 | 是否还有旧 `blinkora-web` 或其他服务占着 `6676` | `cd docker && docker compose stop web`，再 `bun run deploy:local restart` |
 | 日志里有 `getcwd: Operation not permitted` | launchd 工作目录是否还是项目目录 | 更新脚本后重新 `bun run deploy:local start`，当前脚本已把工作目录放到 `~/.blinkora/local` |
