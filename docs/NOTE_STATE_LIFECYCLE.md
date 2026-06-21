@@ -85,9 +85,10 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 
 - 只支持扁平值：`string`、`number`、`boolean`、`null`、`string[]`。
 - 保存属性时只替换 `metadata.properties`，不能覆盖 `metadata` 下的索引状态、导入来源等系统字段。
-- 空 YAML 表示清空自定义属性，并从 `metadata` 中移除 `properties`。
+- 属性编辑区使用两列表格填写“属性 / 内容”；空白行不保存，清空所有行后从 `metadata` 中移除 `properties`。
+- 属性内容按单个 YAML 值解析，普通文字直接保存，`4`、`true`、`null`、`[自媒体, IP]` 会保存成对应类型。
 - 卡片列表、普通摘要和引用摘要都不展示属性。
-- 全屏阅读底部展示“属性”折叠区，默认只读 YAML，点击编辑后可手动增删改。
+- 全屏阅读底部展示“属性”折叠区，默认只读表格，点击编辑后可手动增删改。
 - Markdown 导出时，有属性的 `.md` 文件会在开头写标准 YAML frontmatter；没有属性的笔记不输出空 frontmatter。
 - 备份恢复仍以 `manifest.json` 里的 `metadata` 为事实源，不从 `.md` 文件反解析属性。
 
@@ -104,7 +105,7 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - `app/src/components/BlinkoraCard/index.tsx`：文章预览判定、全屏打开交互和普通卡片渲染分流。
 - `app/src/components/BlinkoraCard/cardPreview.ts`：可读行解析、文章预览标题、引用预览文本和首行标题判断。
 - `app/src/components/BlinkoraCard/noteContent.tsx`：普通短卡片 Markdown 渲染和排版状态 class。
-- `app/src/components/BlinkoraCard/NotePropertiesPanel.tsx`：详情底部属性 YAML 的展示、校验和保存。
+- `app/src/components/BlinkoraCard/NotePropertiesPanel.tsx`：详情底部属性表格的展示、校验和保存。
 - `app/src/styles/github-markdown.css`：普通短卡片、全屏阅读和 Markdown 基础样式。
 - `app/src/components/BlinkoraRightClickMenu/index.tsx`：右键菜单和三点菜单的类型转换入口。
 - `app/src/components/Common/NoteTypePicker/index.tsx`：卡片左下角和编辑器里的类型选择器。

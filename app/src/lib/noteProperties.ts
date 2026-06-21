@@ -7,6 +7,10 @@ export type ParsePropertiesResult =
   | { ok: true; properties: NoteProperties }
   | { ok: false; error: string };
 
+export type ParsePropertyValueResult =
+  | { ok: true; value: NotePropertyValue }
+  | { ok: false; error: string };
+
 const isPlainObject = (value: unknown): value is Record<string, unknown> => {
   if (value === null || typeof value !== 'object') return false;
   const prototype = Object.getPrototypeOf(value);
@@ -76,9 +80,34 @@ export const parseNotePropertiesYaml = (input: string): ParsePropertiesResult =>
   }
 };
 
+export const parseNotePropertyValueInput = (input: string): ParsePropertyValueResult => {
+  if (!input.trim()) return { ok: true, value: '' };
+
+  try {
+    const document = parseDocument(input, { prettyErrors: true });
+    if (document.errors.length > 0) {
+      return { ok: false, error: formatYamlError(document.errors[0]) };
+    }
+
+    const parsed = document.toJSON();
+    if (!isSupportedPropertyValue(parsed)) {
+      return { ok: false, error: 'error.unsupported-property-value' };
+    }
+    return { ok: true, value: parsed };
+  } catch (error) {
+    return { ok: false, error: formatYamlError(error) };
+  }
+};
+
 export const stringifyNotePropertiesYaml = (value: unknown) => {
   if (!isPlainObject(value) || Object.keys(value).length === 0) return '';
   return stringify(stableObject(value), { lineWidth: 0 }).trimEnd();
+};
+
+export const stringifyNotePropertyValueInput = (value: NotePropertyValue) => {
+  if (Array.isArray(value)) return JSON.stringify(value);
+  if (value === null) return 'null';
+  return String(value);
 };
 
 export const hasNoteProperties = (value: unknown) => {

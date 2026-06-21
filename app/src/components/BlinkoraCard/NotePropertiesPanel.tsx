@@ -1,4 +1,4 @@
-import { Button, Textarea } from '@heroui/react';
+import { Button } from '@heroui/react';
 import { observer } from 'mobx-react-lite';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -9,10 +9,36 @@ import { BlinkoraStore } from '@/store/blinkoraStore';
 import { ToastPlugin } from '@/store/module/Toast/Toast';
 import {
   hasNoteProperties,
-  parseNotePropertiesYaml,
-  stringifyNotePropertiesYaml,
+  NoteProperties,
+  parseNotePropertyValueInput,
+  stringifyNotePropertyValueInput,
 } from '@/lib/noteProperties';
 import { BlinkoraItem } from './index';
+
+type PropertyRow = {
+  id: string;
+  key: string;
+  value: string;
+};
+
+let propertyRowId = 0;
+
+const createPropertyRow = (key = '', value = ''): PropertyRow => ({
+  id: `property-row-${propertyRowId++}`,
+  key,
+  value,
+});
+
+const rowsFromProperties = (properties: unknown): PropertyRow[] => {
+  if (!hasNoteProperties(properties)) return [createPropertyRow()];
+
+  return Object.keys(properties)
+    .sort((a, b) => a.localeCompare(b))
+    .map(key => createPropertyRow(
+      key,
+      stringifyNotePropertyValueInput((properties as NoteProperties)[key]),
+    ));
+};
 
 export const NotePropertiesPanel = observer(({
   blinkoraItem,
@@ -28,34 +54,70 @@ export const NotePropertiesPanel = observer(({
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const propertiesYaml = useMemo(
-    () => stringifyNotePropertiesYaml(blinkoraItem.metadata?.properties),
+  const propertyRows = useMemo(
+    () => rowsFromProperties(blinkoraItem.metadata?.properties),
     [blinkoraItem.metadata?.properties],
   );
-  const [draft, setDraft] = useState(propertiesYaml);
+  const [draftRows, setDraftRows] = useState<PropertyRow[]>(propertyRows);
   const hasProperties = hasNoteProperties(blinkoraItem.metadata?.properties);
 
   useEffect(() => {
     if (!isEditing) {
-      setDraft(propertiesYaml);
+      setDraftRows(propertyRows);
       setError('');
     }
-  }, [isEditing, propertiesYaml]);
+  }, [isEditing, propertyRows]);
+
+  const updateDraftRow = (id: string, field: 'key' | 'value', value: string) => {
+    setDraftRows(rows => rows.map(row => (
+      row.id === id ? { ...row, [field]: value } : row
+    )));
+    setError('');
+  };
+
+  const handleValueFocus = (index: number) => {
+    setDraftRows(rows => (
+      index === rows.length - 1 ? [...rows, createPropertyRow()] : rows
+    ));
+  };
 
   const handleSave = async () => {
     if (!blinkoraItem.id) return;
 
-    const result = parseNotePropertiesYaml(draft);
-    if (!result.ok) {
-      setError(t('invalid-properties-yaml', { reason: result.error }));
-      return;
+    const properties: NoteProperties = {};
+    const seenKeys = new Set<string>();
+
+    for (const row of draftRows) {
+      const key = row.key.trim();
+      const value = row.value.trim();
+      if (!key && !value) continue;
+      if (!key) {
+        setError(t('property-key-required'));
+        return;
+      }
+      if (seenKeys.has(key)) {
+        setError(t('duplicate-property-key', { key }));
+        return;
+      }
+
+      const parsedValue = parseNotePropertyValueInput(row.value);
+      if (!parsedValue.ok) {
+        setError(t('invalid-property-value', {
+          key,
+          reason: t(parsedValue.error, { defaultValue: parsedValue.error }),
+        }));
+        return;
+      }
+
+      seenKeys.add(key);
+      properties[key] = parsedValue.value;
     }
 
     const nextMetadata = { ...(blinkoraItem.metadata ?? {}) };
-    if (Object.keys(result.properties).length === 0) {
+    if (Object.keys(properties).length === 0) {
       delete nextMetadata.properties;
     } else {
-      nextMetadata.properties = result.properties;
+      nextMetadata.properties = properties;
     }
 
     setIsSaving(true);
@@ -73,7 +135,7 @@ export const NotePropertiesPanel = observer(({
       if (blinkora.curSelectedNote?.id === blinkoraItem.id) {
         blinkora.curSelectedNote.metadata = nextMetadata;
       }
-      setDraft(stringifyNotePropertiesYaml(nextMetadata.properties));
+      setDraftRows(rowsFromProperties(nextMetadata.properties));
       setError('');
       setIsEditing(false);
       RootStore.Get(ToastPlugin).success(t('properties-saved'));
@@ -100,27 +162,48 @@ export const NotePropertiesPanel = observer(({
         <div className="mt-2 rounded-md border border-border bg-default-50/70 p-3 dark:bg-default-100/10">
           {isEditing ? (
             <div className="flex flex-col gap-3">
-              <Textarea
-                value={draft}
-                onValueChange={(value) => {
-                  setDraft(value);
-                  setError('');
-                }}
-                minRows={5}
-                maxRows={12}
-                variant="bordered"
-                classNames={{
-                  input: 'font-mono text-xs leading-5',
-                }}
-                placeholder={'type: permanent\nstatus: 待整理\ntags:\n  - 自媒体'}
-              />
+              <div className="text-xs leading-5 text-default-500">
+                {t('properties-table-tip')}
+              </div>
+              <div className="overflow-hidden rounded-lg border border-default-300 bg-background/80 dark:border-default-200/40 dark:bg-default-50/5">
+                <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] border-b border-default-300 bg-default-100/70 text-sm font-semibold text-default-600 dark:border-default-200/40 dark:bg-default-100/10 dark:text-default-400">
+                  <div className="border-r border-default-300 px-3 py-2 dark:border-default-200/40">
+                    {t('property-key')}
+                  </div>
+                  <div className="px-3 py-2">
+                    {t('property-value')}
+                  </div>
+                </div>
+                {draftRows.map((row, index) => (
+                  <div
+                    key={row.id}
+                    className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] border-b border-default-200 last:border-b-0 dark:border-default-200/25"
+                  >
+                    <input
+                      value={row.key}
+                      aria-label={t('property-key')}
+                      className="min-h-11 min-w-0 border-r border-default-200 bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-default-400 focus:bg-default-100/60 dark:border-default-200/25 dark:focus:bg-default-100/10"
+                      placeholder={t('property-key-placeholder')}
+                      onChange={event => updateDraftRow(row.id, 'key', event.target.value)}
+                    />
+                    <input
+                      value={row.value}
+                      aria-label={t('property-value')}
+                      className="min-h-11 min-w-0 bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-default-400 focus:bg-default-100/60 dark:focus:bg-default-100/10"
+                      placeholder={t('property-value-placeholder')}
+                      onFocus={() => handleValueFocus(index)}
+                      onChange={event => updateDraftRow(row.id, 'value', event.target.value)}
+                    />
+                  </div>
+                ))}
+              </div>
               {error && <div className="text-xs text-danger">{error}</div>}
               <div className="flex justify-end gap-2">
                 <Button
                   size="sm"
                   variant="light"
                   onPress={() => {
-                    setDraft(propertiesYaml);
+                    setDraftRows(propertyRows);
                     setError('');
                     setIsEditing(false);
                   }}
@@ -140,9 +223,21 @@ export const NotePropertiesPanel = observer(({
           ) : (
             <div className="flex flex-col gap-3">
               {hasProperties ? (
-                <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-background/70 p-3 font-mono text-xs leading-5 text-default-700">
-                  {propertiesYaml}
-                </pre>
+                <div className="overflow-hidden rounded-lg border border-default-200 bg-background/70 dark:border-default-200/30">
+                  {propertyRows.map(row => (
+                    <div
+                      key={row.id}
+                      className="grid grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] border-b border-default-200 text-sm last:border-b-0 dark:border-default-200/25"
+                    >
+                      <div className="min-w-0 border-r border-default-200 px-3 py-2 font-medium text-default-600 dark:border-default-200/25">
+                        {row.key}
+                      </div>
+                      <div className="min-w-0 break-words px-3 py-2 text-default-700 dark:text-default-300">
+                        {row.value}
+                      </div>
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <div className="rounded bg-background/70 p-3 text-xs text-default-500">
                   {t('no-properties')}
@@ -153,7 +248,7 @@ export const NotePropertiesPanel = observer(({
                   size="sm"
                   variant="flat"
                   onPress={() => {
-                    setDraft(propertiesYaml);
+                    setDraftRows(propertyRows);
                     setError('');
                     setIsEditing(true);
                   }}
