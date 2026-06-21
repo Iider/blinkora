@@ -15,6 +15,7 @@ import { FilesAttachmentRender } from "../Common/AttachmentRender";
 import { ReferencesContent } from "./referencesContent";
 import { useTranslation } from "react-i18next";
 import { CardActionButtons } from "./cardActions";
+import { NotePropertiesPanel } from "./NotePropertiesPanel";
 
 interface FullscreenEditorProps {
   blinkoraItem: BlinkoraItem;
@@ -281,10 +282,11 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
                 }}
                 largeSpacing={true}
               />
-              <ReferencesContent blinkoraItem={activeNote} className="my-4" />
               <div className={blinkoraItem.attachments?.length != 0 ? 'my-2' : ''}>
                 <FilesAttachmentRender files={activeNote.attachments ?? []} preview />
               </div>
+              <ReferencesContent blinkoraItem={activeNote} className="my-4" />
+              <NotePropertiesPanel blinkoraItem={activeNote} className="my-4" />
             </div>
           ) : (
             /* Edit mode - render with BlinkoraEditor */

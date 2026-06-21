@@ -8,7 +8,7 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use futures::FutureExt;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use sqlx::Row;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -28,6 +28,11 @@ pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
 }
 
 const REBUILD_EMBEDDING_PROGRESS_KEY: &str = "rebuild-embedding-progress";
+
+struct MarkdownExportFile {
+    path: String,
+    content: String,
+}
 
 async fn import_backup(
     user: CurrentUser,
@@ -390,6 +395,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 .await?
         };
         let mut manifest_workspaces = Vec::new();
+        let mut markdown_files: Vec<MarkdownExportFile> = Vec::new();
         let mut note_count = 0usize;
         let mut attachment_count = 0usize;
         for workspace in workspaces {
@@ -481,6 +487,32 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             }
             note_count += notes.len();
             attachment_count += attachments.len();
+            let mut manifest_notes = Vec::new();
+            for row in notes {
+                let note_id = row.get::<i32, _>("id");
+                let content = row.get::<String, _>("content");
+                let metadata = row.get::<Option<Value>, _>("metadata");
+                if format == "markdown" {
+                    markdown_files.push(MarkdownExportFile {
+                        path: format!("markdown/workspace-{workspace_id}/note-{note_id}.md"),
+                        content: markdown_note_content(&content, metadata.as_ref())?,
+                    });
+                }
+                manifest_notes.push(json!({
+                    "id": note_id,
+                    "type": row.get::<i32, _>("type"),
+                    "content": content,
+                    "isArchived": row.get::<bool, _>("isArchived"),
+                    "isRecycle": row.get::<bool, _>("isRecycle"),
+                    "isTop": row.get::<bool, _>("isTop"),
+                    "isReviewed": row.get::<bool, _>("isReviewed"),
+                    "metadata": metadata,
+                    "sortOrder": row.get::<i32, _>("sortOrder"),
+                    "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("createdAt"),
+                    "updatedAt": row.get::<chrono::DateTime<chrono::Utc>, _>("updatedAt"),
+                    "tagIds": tag_ids_by_note.get(&note_id).cloned().unwrap_or_default()
+                }));
+            }
             manifest_workspaces.push(json!({
                 "workspace": {
                     "id": workspace_id,
@@ -492,20 +524,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                     "createdAt": workspace.get::<chrono::DateTime<chrono::Utc>, _>("createdAt"),
                     "updatedAt": workspace.get::<chrono::DateTime<chrono::Utc>, _>("updatedAt")
                 },
-                "notes": notes.into_iter().map(|row| json!({
-                    "id": row.get::<i32, _>("id"),
-                    "type": row.get::<i32, _>("type"),
-                    "content": row.get::<String, _>("content"),
-                    "isArchived": row.get::<bool, _>("isArchived"),
-                    "isRecycle": row.get::<bool, _>("isRecycle"),
-                    "isTop": row.get::<bool, _>("isTop"),
-                    "isReviewed": row.get::<bool, _>("isReviewed"),
-                    "metadata": row.get::<Option<Value>, _>("metadata"),
-                    "sortOrder": row.get::<i32, _>("sortOrder"),
-                    "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("createdAt"),
-                    "updatedAt": row.get::<chrono::DateTime<chrono::Utc>, _>("updatedAt"),
-                    "tagIds": tag_ids_by_note.get(&row.get::<i32, _>("id")).cloned().unwrap_or_default()
-                })).collect::<Vec<_>>(),
+                "notes": manifest_notes,
                 "attachments": attachments.into_iter().map(|row| json!({
                     "id": row.get::<i32, _>("id"),
                     "name": row.get::<String, _>("name"),
@@ -582,6 +601,9 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let mut zip = zip::ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         let (attachment_file_count, missing_file_count) = add_attachment_files_to_zip(&mut zip, &mut manifest, &ctx.state.config.data_dir, options)?;
+        if format == "markdown" {
+            add_markdown_files_to_zip(&mut zip, &markdown_files, options)?;
+        }
         manifest["attachmentFileCount"] = json!(attachment_file_count);
         manifest["missingFileCount"] = json!(missing_file_count);
         zip.start_file("manifest.json", options)?;
@@ -798,6 +820,65 @@ fn embedding_progress_json(
         "startTime": start_time.to_rfc3339(),
         "isIncremental": is_incremental
     })
+}
+
+fn add_markdown_files_to_zip(
+    zip: &mut zip::ZipWriter<File>,
+    markdown_files: &[MarkdownExportFile],
+    options: SimpleFileOptions,
+) -> anyhow::Result<()> {
+    for markdown_file in markdown_files {
+        zip.start_file(&markdown_file.path, options)?;
+        zip.write_all(markdown_file.content.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn markdown_note_content(content: &str, metadata: Option<&Value>) -> anyhow::Result<String> {
+    let frontmatter = note_properties_frontmatter(metadata)?;
+    Ok(match frontmatter {
+        Some(frontmatter) => format!("{frontmatter}{content}"),
+        None => content.to_string(),
+    })
+}
+
+fn note_properties_frontmatter(metadata: Option<&Value>) -> anyhow::Result<Option<String>> {
+    let Some(properties) = metadata.and_then(|value| value.get("properties")) else {
+        return Ok(None);
+    };
+    let Some(properties) = sanitize_note_properties(properties) else {
+        return Ok(None);
+    };
+    let yaml = serde_yaml::to_string(&properties)?;
+    if yaml.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("---\n{}---\n\n", yaml.trim_end())))
+}
+
+fn sanitize_note_properties(properties: &Value) -> Option<Map<String, Value>> {
+    let object = properties.as_object()?;
+    let mut sanitized = Map::new();
+    let mut keys = object.keys().collect::<Vec<_>>();
+    keys.sort();
+
+    for key in keys {
+        let value = object.get(key)?;
+        if is_supported_note_property_value(value) {
+            sanitized.insert(key.to_string(), value.clone());
+        }
+    }
+
+    if sanitized.is_empty() { None } else { Some(sanitized) }
+}
+
+fn is_supported_note_property_value(value: &Value) -> bool {
+    match value {
+        Value::Null | Value::Bool(_) | Value::String(_) => true,
+        Value::Number(number) => number.as_f64().map(f64::is_finite).unwrap_or(true),
+        Value::Array(items) => items.iter().all(Value::is_string),
+        Value::Object(_) => false,
+    }
 }
 
 
