@@ -541,6 +541,46 @@ ol {
   padding: 0.125rem 0.75rem;
 }
 
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body.content,
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body p,
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body li,
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body blockquote {
+  font-size: 16px;
+}
+
+@media (max-width: 768px) {
+  .blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body.content,
+  .blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body p,
+  .blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body li,
+  .blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body blockquote {
+    font-size: 15px;
+  }
+}
+
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h1 {
+  font-size: 2em;
+}
+
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h2 {
+  font-size: 1.5em;
+}
+
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h3 {
+  font-size: 1.25em;
+}
+
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h4 {
+  font-size: 1em;
+}
+
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h5 {
+  font-size: 0.875em;
+}
+
+.blinkora-review-card-markdown:not(.blinkora-card-markdown-expanded) .markdown-body h6 {
+  font-size: 0.85em;
+}
+
 
 .markdown-body h1 {
   font-weight: bold;

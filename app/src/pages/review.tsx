@@ -176,7 +176,7 @@ const App = observer(() => {
                           </div>
                       }
                     </div>
-                    <div className={`blinkora-card-markdown ${hasLeadingMarkdownHeading(i.content) ? 'blinkora-card-markdown-has-title' : ''}`}>
+                    <div className={`blinkora-card-markdown blinkora-review-card-markdown ${hasLeadingMarkdownHeading(i.content) ? 'blinkora-card-markdown-has-title' : ''}`}>
                       <MarkdownRender content={i.content} onChange={(newContent) => {
                         i.content = newContent
                         blinkora.upsertNote.call({ id: i.id, content: newContent, refresh: false })
