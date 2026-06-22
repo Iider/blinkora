@@ -9,14 +9,27 @@ import { _ } from '@/lib/lodash';
 import { useIsIOS } from '@/lib/hooks';
 import { observer } from 'mobx-react-lite';
 import { CardActionButtons } from './cardActions';
+import type React from 'react';
 
 interface CardHeaderProps {
   blinkoraItem: Note;
   blinkora: BlinkoraStore;
   isExpanded?: boolean;
+  onTopPointerDown?: React.PointerEventHandler<HTMLDivElement>;
+  onTopPointerMove?: React.PointerEventHandler<HTMLDivElement>;
+  onTopPointerUp?: React.PointerEventHandler<HTMLDivElement>;
+  onTopClick?: React.MouseEventHandler<HTMLDivElement>;
 }
 
-export const CardHeader = observer(({ blinkoraItem, blinkora, isExpanded }: CardHeaderProps) => {
+export const CardHeader = observer(({
+  blinkoraItem,
+  blinkora,
+  isExpanded,
+  onTopPointerDown,
+  onTopPointerMove,
+  onTopPointerUp,
+  onTopClick,
+}: CardHeaderProps) => {
   const { t } = useTranslation();
   const iconSize = isExpanded ? '20' : '16';
   const isIOSDevice = useIsIOS();
@@ -47,7 +60,14 @@ export const CardHeader = observer(({ blinkoraItem, blinkora, isExpanded }: Card
   };
 
   return (
-    <div className={`flex items-center ${isExpanded ? 'mb-4' : 'mb-1'}`}>
+    <div
+      className={`flex cursor-pointer items-center ${isExpanded ? 'mb-4' : 'mb-1'}`}
+      onPointerDown={onTopPointerDown}
+      onPointerMove={onTopPointerMove}
+      onPointerUp={onTopPointerUp}
+      onClick={onTopClick}
+      title={t('flip-to-back')}
+    >
       <div className={`flex items-center w-full gap-1 ${isExpanded ? 'text-base' : 'text-xs'}`}>
         {blinkoraItem.type === NoteType.TODO && (
           <Tooltip content={blinkoraItem.isArchived ? t('restore') : t('complete')} delay={1000}>

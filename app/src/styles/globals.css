@@ -42,6 +42,55 @@
   margin-bottom: 10px;
 }
 
+.blinkora-flip-card {
+  perspective: 1200px;
+}
+
+.blinkora-flip-face {
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+  transform-origin: center center;
+}
+
+.blinkora-card-flip-out {
+  animation: blinkora-card-flip-out 100ms ease-in forwards;
+}
+
+.blinkora-card-flip-in {
+  animation: blinkora-card-flip-in 110ms ease-out both;
+}
+
+@keyframes blinkora-card-flip-out {
+  from {
+    transform: rotateY(0deg);
+    opacity: 1;
+  }
+
+  to {
+    transform: rotateY(90deg);
+    opacity: 0.85;
+  }
+}
+
+@keyframes blinkora-card-flip-in {
+  from {
+    transform: rotateY(-90deg);
+    opacity: 0.85;
+  }
+
+  to {
+    transform: rotateY(0deg);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .blinkora-card-flip-out,
+  .blinkora-card-flip-in {
+    animation: none;
+  }
+}
+
 
 .blog-masonry-grid {
   display: -webkit-box;
