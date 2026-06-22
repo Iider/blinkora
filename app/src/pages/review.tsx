@@ -25,6 +25,7 @@ import { confirmDeleteNotes } from '@/lib/noteDeletion';
 import { DialogStore } from '@/store/module/Dialog';
 import { BlinkoraEditor } from '@/components/BlinkoraEditor';
 import { FocusEditorFixMobile } from '@/components/Common/Editor/editorUtils';
+import { hasLeadingMarkdownHeading } from '@/components/BlinkoraCard/cardPreview';
 const App = observer(() => {
   const blinkora = RootStore.Get(BlinkoraStore)
   const swiperRef = useRef(null);
@@ -175,10 +176,12 @@ const App = observer(() => {
                           </div>
                       }
                     </div>
-                    <MarkdownRender content={i.content} onChange={(newContent) => {
-                      i.content = newContent
-                      blinkora.upsertNote.call({ id: i.id, content: newContent, refresh: false })
-                    }} />
+                    <div className={`blinkora-card-markdown ${hasLeadingMarkdownHeading(i.content) ? 'blinkora-card-markdown-has-title' : ''}`}>
+                      <MarkdownRender content={i.content} onChange={(newContent) => {
+                        i.content = newContent
+                        blinkora.upsertNote.call({ id: i.id, content: newContent, refresh: false })
+                      }} />
+                    </div>
                     <div className={i.attachments?.length != 0 ? 'my-2' : ''}>
                       <FilesAttachmentRender columns={2} files={i.attachments ?? []} preview />
                     </div>
