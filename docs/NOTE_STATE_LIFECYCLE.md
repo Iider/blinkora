@@ -113,9 +113,12 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - `server/src/rag.rs`：索引元数据和查询过滤。
 - `app/src/store/blinkoraStore.tsx`：各页面列表筛选。
 - `app/src/components/BlinkoraCard/index.tsx`：文章预览判定、全屏打开交互和普通卡片渲染分流。
+- `app/src/components/BlinkoraCard/cardHeader.tsx`：卡片顶部区域、时间入口、操作按钮和三点菜单。
+- `app/src/components/BlinkoraCard/CardBack.tsx`：列表卡背的人可读字段、自定义属性只读展示和内部字段隐藏。
 - `app/src/components/BlinkoraCard/cardPreview.ts`：可读行解析、文章预览标题、引用预览文本和首行标题判断。
 - `app/src/components/BlinkoraCard/noteContent.tsx`：普通短卡片 Markdown 渲染和排版状态 class。
 - `app/src/components/BlinkoraCard/NotePropertiesPanel.tsx`：详情底部属性表格的展示、校验和保存。
+- `app/src/hooks/useDragCard.tsx`：顶部/底部长按拖拽区域，改卡片顶部交互时必须确认不会破坏拖拽。
 - `app/src/styles/github-markdown.css`：普通短卡片、全屏阅读和 Markdown 基础样式。
 - `app/src/components/BlinkoraRightClickMenu/index.tsx`：右键菜单和三点菜单的类型转换入口。
 - `app/src/components/Common/NoteTypePicker/index.tsx`：卡片左下角和编辑器里的类型选择器。

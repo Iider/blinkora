@@ -5,7 +5,7 @@
 ## 文档
 
 - [Smoke test checklist](./SMOKE_TEST_CHECKLIST.md)：Rust 运行栈手动烟测清单。
-- [笔记状态模型](./NOTE_STATE_LIFECYCLE.md)：闪念、笔记、待办的类型转换、归档、回收站、置顶、回顾、列表交互和引用展示规则。
+- [笔记状态模型](./NOTE_STATE_LIFECYCLE.md)：闪念、笔记、待办的类型转换、归档、回收站、置顶、回顾、列表交互、卡背和引用展示规则。
 - [Local persistent deployment](./LOCAL_PERSISTENT_DEPLOYMENT.md)：PostgreSQL 用 Docker，Rust Web 服务用 macOS `launchd` 常驻。
 - [Workspace agent access](./WORKSPACE_AGENT_ACCESS.md)：工作区令牌、MCP、Skill 的使用和安全边界。
 - [Workspace data lifecycle](./WORKSPACE_DATA_LIFECYCLE.md)：Workspace 删除清理、卡片跨工作区移动、S3 注意事项和残留检查命令。
