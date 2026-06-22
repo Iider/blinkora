@@ -10,10 +10,6 @@ type CardBackProps = {
   blinkoraItem: Note;
   blinkora: BlinkoraStore;
   isExpanded?: boolean;
-  onTopPointerDown: React.PointerEventHandler<HTMLDivElement>;
-  onTopPointerMove: React.PointerEventHandler<HTMLDivElement>;
-  onTopPointerUp: React.PointerEventHandler<HTMLDivElement>;
-  onTopClick: React.MouseEventHandler<HTMLDivElement>;
 };
 
 type InfoItem = {
@@ -85,10 +81,6 @@ export const CardBack = ({
   blinkoraItem,
   blinkora,
   isExpanded,
-  onTopPointerDown,
-  onTopPointerMove,
-  onTopPointerUp,
-  onTopClick,
 }: CardBackProps) => {
   const { t } = useTranslation();
   const typeOption = typeIconMap[blinkoraItem.type ?? NoteType.BLINKORA] ?? typeIconMap[NoteType.BLINKORA];
@@ -117,10 +109,6 @@ export const CardBack = ({
     <div className={`w-full ${isExpanded ? 'min-h-[220px]' : ''}`}>
       <div
         className={`mb-3 flex min-h-8 cursor-pointer items-center gap-2 ${isExpanded ? 'text-base' : 'text-sm'}`}
-        onPointerDown={onTopPointerDown}
-        onPointerMove={onTopPointerMove}
-        onPointerUp={onTopPointerUp}
-        onClick={onTopClick}
         title={t('flip-to-front')}
       >
         <div className="flex h-7 w-7 items-center justify-center rounded-full bg-default-100 text-default-600 dark:bg-default-100/20 dark:text-default-300">

@@ -24,6 +24,7 @@ import { CardBack } from "./CardBack";
 
 const TOP_CLICK_MAX_DURATION_MS = 230;
 const TOP_CLICK_MAX_MOVE_PX = 6;
+const CARD_TOP_ZONE_HEIGHT = 40;
 const CARD_TOP_INTERACTIVE_SELECTOR = [
   '[data-drag-ignore="true"]',
   'a',
@@ -45,6 +46,11 @@ const getEventTargetElement = (target: EventTarget | null) => {
 
 const isTopInteractiveTarget = (target: EventTarget | null) => {
   return !!getEventTargetElement(target)?.closest(CARD_TOP_INTERACTIVE_SELECTOR);
+};
+
+const isEventInTopZone = (e: React.PointerEvent<HTMLDivElement> | React.MouseEvent<HTMLDivElement>) => {
+  const rect = e.currentTarget.getBoundingClientRect();
+  return e.clientY - rect.top <= CARD_TOP_ZONE_HEIGHT;
 };
 
 
@@ -134,7 +140,15 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
     flipTimerRef.current = [switchTimer, doneTimer];
   };
 
-  const handleClick = () => {
+  const handleClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isEventInTopZone(e)) {
+      e.stopPropagation();
+      if (blinkora.isMultiSelectMode && !isTopInteractiveTarget(e.target)) {
+        blinkora.onMultiSelectNote(blinkoraItem.id!);
+      }
+      return;
+    }
+
     if (isBackVisible || flipPhase !== 'idle') return;
 
     if (blinkora.isMultiSelectMode) {
@@ -150,6 +164,7 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
   };
 
   const handleDoubleClick = (e: React.MouseEvent) => {
+    if (isEventInTopZone(e as React.MouseEvent<HTMLDivElement>)) return;
     if (usesFullscreenInteraction || isBackVisible || flipPhase !== 'idle') return;
     blinkora.curSelectedNote = _.cloneDeep(blinkoraItem);
     ShowEditBlinkoraModel();
@@ -157,7 +172,7 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
   };
 
   const handleTopPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.button !== 0 || isTopInteractiveTarget(e.target)) {
+    if (e.button !== 0 || !isEventInTopZone(e) || isTopInteractiveTarget(e.target)) {
       topPressRef.current = null;
       return;
     }
@@ -184,21 +199,18 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
   const handleTopPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const topPress = topPressRef.current;
     topPressRef.current = null;
-    if (!topPress || topPress.moved || blinkora.isMultiSelectMode || isTopInteractiveTarget(e.target)) return;
+    if (
+      !topPress ||
+      topPress.moved ||
+      blinkora.isMultiSelectMode ||
+      !isEventInTopZone(e) ||
+      isTopInteractiveTarget(e.target)
+    ) return;
 
     const duration = Date.now() - topPress.startedAt;
     if (duration > TOP_CLICK_MAX_DURATION_MS) return;
 
     toggleCardFace();
-  };
-
-  const handleTopClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    if (isTopInteractiveTarget(e.target)) return;
-
-    if (blinkora.isMultiSelectMode) {
-      blinkora.onMultiSelectNote(blinkoraItem.id!);
-    }
   };
 
   const handleSwipePin = () => {
@@ -233,6 +245,9 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
             onContextMenu={handleContextMenu}
             onDoubleClick={handleDoubleClick}
             onClick={handleClick}
+            onPointerDown={handleTopPointerDown}
+            onPointerMove={handleTopPointerMove}
+            onPointerUp={handleTopPointerUp}
             className="blinkora-flip-card"
           >
             <Card
@@ -252,10 +267,6 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
                   blinkoraItem={blinkoraItem}
                   blinkora={blinkora}
                   isExpanded={defaultExpanded}
-                  onTopPointerDown={handleTopPointerDown}
-                  onTopPointerMove={handleTopPointerMove}
-                  onTopPointerUp={handleTopPointerUp}
-                  onTopClick={handleTopClick}
                 />
               ) : (
                 <div className="w-full">
@@ -263,10 +274,6 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
                     blinkoraItem={blinkoraItem}
                     blinkora={blinkora}
                     isExpanded={defaultExpanded}
-                    onTopPointerDown={handleTopPointerDown}
-                    onTopPointerMove={handleTopPointerMove}
-                    onTopPointerUp={handleTopPointerUp}
-                    onTopClick={handleTopClick}
                   />
 
                   {blinkoraItem.isBlog && (
