@@ -25,6 +25,8 @@ import { CardBack } from "./CardBack";
 const TOP_CLICK_MAX_DURATION_MS = 230;
 const TOP_CLICK_MAX_MOVE_PX = 6;
 const CARD_TOP_ZONE_HEIGHT = 40;
+const CARD_FLIP_SWITCH_MS = 125;
+const CARD_FLIP_TOTAL_MS = 260;
 const CARD_TOP_INTERACTIVE_SELECTOR = [
   '[data-drag-ignore="true"]',
   'a',
@@ -129,13 +131,13 @@ export const BlinkoraCard = observer(({ blinkoraItem, glassEffect = false, force
       setIsBackVisible(value => !value);
       setFlipPhase('in');
       flipPhaseRef.current = 'in';
-    }, 100);
+    }, CARD_FLIP_SWITCH_MS);
 
     const doneTimer = window.setTimeout(() => {
       setFlipPhase('idle');
       flipPhaseRef.current = 'idle';
       flipTimerRef.current = [];
-    }, 210);
+    }, CARD_FLIP_TOTAL_MS);
 
     flipTimerRef.current = [switchTimer, doneTimer];
   };

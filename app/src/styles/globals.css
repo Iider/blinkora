@@ -53,11 +53,11 @@
 }
 
 .blinkora-card-flip-out {
-  animation: blinkora-card-flip-out 100ms ease-in forwards;
+  animation: blinkora-card-flip-out 125ms ease-in forwards;
 }
 
 .blinkora-card-flip-in {
-  animation: blinkora-card-flip-in 110ms ease-out both;
+  animation: blinkora-card-flip-in 135ms ease-out both;
 }
 
 @keyframes blinkora-card-flip-out {
