@@ -12,11 +12,6 @@ type CardBackProps = {
   isExpanded?: boolean;
 };
 
-type InfoItem = {
-  label: string;
-  value: React.ReactNode;
-};
-
 const typeIconMap: Record<number, { icon: string; className: string; labelKey: string }> = {
   [NoteType.BLINKORA]: {
     icon: 'basil:lightning-solid',
@@ -35,16 +30,6 @@ const typeIconMap: Record<number, { icon: string; className: string; labelKey: s
   },
 };
 
-const normalizeTagName = (tagItem: any) => {
-  const tag = tagItem?.tag ?? tagItem;
-  return tag?.name;
-};
-
-const getTagPaths = (tags: Note['tags']) => {
-  const normalizedTags = tags?.map(normalizeTagName).filter(Boolean) ?? [];
-  return Array.from(new Set(normalizedTags)).sort((a, b) => a.localeCompare(b));
-};
-
 const formatTime = (value: Note['createdAt'], timeFormat?: string) => {
   if (!value) return '-';
   return dayjs(value).format(timeFormat && timeFormat !== 'relative' ? timeFormat : 'YYYY-MM-DD HH:mm:ss');
@@ -57,26 +42,6 @@ const Section = ({ title, children }: { title: string; children: React.ReactNode
   </div>
 );
 
-const InfoGrid = ({ items }: { items: InfoItem[] }) => (
-  <div className="grid grid-cols-2 gap-2">
-    {items.map(item => (
-      <div key={item.label} className="min-w-0 rounded-md bg-background/70 px-2.5 py-2 dark:bg-default-50/5">
-        <div className="text-[11px] leading-4 text-default-400">{item.label}</div>
-        <div className="mt-0.5 truncate text-xs font-medium text-default-700 dark:text-default-300">
-          {item.value}
-        </div>
-      </div>
-    ))}
-  </div>
-);
-
-const CountPill = ({ label, count }: { label: string; count: number }) => (
-  <div className="flex items-center justify-between rounded-md bg-background/70 px-2.5 py-2 dark:bg-default-50/5">
-    <span className="text-xs text-default-500">{label}</span>
-    <span className="text-sm font-semibold text-default-700 dark:text-default-300">{count}</span>
-  </div>
-);
-
 export const CardBack = ({
   blinkoraItem,
   blinkora,
@@ -85,7 +50,11 @@ export const CardBack = ({
   const { t } = useTranslation();
   const typeOption = typeIconMap[blinkoraItem.type ?? NoteType.BLINKORA] ?? typeIconMap[NoteType.BLINKORA];
   const timeFormat = blinkora.config.value?.timeFormat;
-  const tags = getTagPaths(blinkoraItem.tags);
+  const isFrontUsingCreateTime = !!blinkora.config.value?.isOrderByCreateTime;
+  const headerTime = formatTime(
+    isFrontUsingCreateTime ? blinkoraItem.updatedAt : blinkoraItem.createdAt,
+    timeFormat,
+  );
   const customProperties = blinkoraItem.metadata?.properties;
   const propertyRows = customProperties && typeof customProperties === 'object'
     ? Object.keys(customProperties).sort((a, b) => a.localeCompare(b)).map(key => ({
@@ -100,10 +69,7 @@ export const CardBack = ({
     blinkoraItem.isReviewed ? t('reviewed') : null,
     blinkoraItem.isOffline ? t('offline') : null,
     blinkoraItem.metadata?.expireAt ? `${t('expiry-time')}: ${formatTime(blinkoraItem.metadata.expireAt, timeFormat)}` : null,
-  ].filter(Boolean);
-  const referencesCount = blinkoraItem.references?.length ?? 0;
-  const referencedByCount = blinkoraItem.referencedBy?.length ?? 0;
-  const commentsCount = (blinkoraItem as any)._count?.comments ?? blinkoraItem.comments?.length ?? 0;
+  ].filter((item): item is string => Boolean(item));
 
   return (
     <div className={`w-full ${isExpanded ? 'min-h-[220px]' : ''}`}>
@@ -111,59 +77,25 @@ export const CardBack = ({
         className={`mb-3 flex min-h-8 cursor-pointer items-center gap-2 ${isExpanded ? 'text-base' : 'text-sm'}`}
         title={t('flip-to-front')}
       >
-        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-default-100 text-default-600 dark:bg-default-100/20 dark:text-default-300">
-          <Icon icon="ri:exchange-2-line" width={15} height={15} />
+        <div className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10">
+          <Icon className={typeOption.className} icon={typeOption.icon} width={15} height={15} />
         </div>
-        <div className="flex min-w-0 flex-col">
-          <span className="text-sm font-semibold text-foreground">{t('card-back')}</span>
-          <span className="text-xs text-default-400">{t('properties')}</span>
-        </div>
-        <Icon className="ml-auto text-default-400" icon="ri:corner-up-left-line" width={17} height={17} />
+        <div className="min-w-0 truncate text-sm font-semibold text-foreground">{t(typeOption.labelKey)}</div>
+        <div className="ml-auto whitespace-nowrap text-xs text-default-400">{headerTime}</div>
       </div>
 
       <div className="flex flex-col gap-3">
-        <Section title={t('card-status')}>
-          <div className="flex flex-wrap gap-1.5">
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-              <Icon className={typeOption.className} icon={typeOption.icon} width={13} height={13} />
-              {t(typeOption.labelKey)}
-            </div>
-            {statusItems.length > 0 ? statusItems.map(item => (
-              <span key={String(item)} className="rounded-full bg-default-100 px-2.5 py-1 text-xs text-default-600 dark:bg-default-100/20 dark:text-default-300">
-                {item}
-              </span>
-            )) : (
-              <span className="rounded-full bg-default-100 px-2.5 py-1 text-xs text-default-500 dark:bg-default-100/20">
-                -
-              </span>
-            )}
-          </div>
-        </Section>
-
-        <Section title={t('card-relations')}>
-          <div className="grid grid-cols-2 gap-2">
-            <CountPill label={t('attachment')} count={blinkoraItem.attachments?.length ?? 0} />
-            <CountPill label={t('comment')} count={commentsCount} />
-            <CountPill label={t('reference')} count={referencesCount} />
-            <CountPill label={t('reference-by')} count={referencedByCount} />
-          </div>
-          {tags.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {tags.map(tag => (
-                <span key={tag} className="blinkora-tag rounded px-1.5 py-0.5 text-xs font-semibold text-default-700 dark:text-default-200">
-                  #{tag}
+        {statusItems.length > 0 && (
+          <Section title={t('card-status')}>
+            <div className="flex flex-wrap gap-1.5">
+              {statusItems.map(item => (
+                <span key={item} className="rounded-full bg-default-100 px-2.5 py-1 text-xs text-default-600 dark:bg-default-100/20 dark:text-default-300">
+                  {item}
                 </span>
               ))}
             </div>
-          )}
-        </Section>
-
-        <Section title={t('card-time')}>
-          <InfoGrid items={[
-            { label: t('created-time'), value: formatTime(blinkoraItem.createdAt, timeFormat) },
-            { label: t('updated-time'), value: formatTime(blinkoraItem.updatedAt, timeFormat) },
-          ]} />
-        </Section>
+          </Section>
+        )}
 
         <Section title={t('properties')}>
           {propertyRows.length > 0 ? (
