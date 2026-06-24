@@ -4,7 +4,6 @@ mod auth;
 mod config;
 mod db;
 mod handlers;
-mod rag;
 mod s3;
 mod static_files;
 mod trpc;

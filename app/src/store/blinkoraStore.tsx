@@ -104,7 +104,6 @@ export class BlinkoraStore implements Store {
     withoutTag: false,
     withFile: false,
     withLink: false,
-    isUseAiQuery: false,
     startDate: null as Date | null,
     endDate: null as Date | null,
     hasTodo: false
@@ -651,12 +650,6 @@ export class BlinkoraStore implements Store {
         loadList(this.blinkoraList);
       }
     }, [this.forceQuery, location.pathname, searchParams])
-  }
-
-  excludeEmbeddingTagId: number | null = null;
-
-  setExcludeEmbeddingTagId(tagId: number | null) {
-    this.excludeEmbeddingTagId = tagId;
   }
 
   settingsSearchText: string = '';

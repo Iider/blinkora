@@ -80,8 +80,6 @@ const exactErrorKeys: Record<string, string> = {
   "unsupported export format": "error.unsupported-export-format",
   "unsupported export scope": "error.unsupported-export-scope",
   "backup manifest not found": "error.backup-manifest-not-found",
-  "Azure embedding baseURL is required": "error.azure-embedding-base-url-required",
-  "embedding response does not include vectors": "error.embedding-response-missing-vectors",
   "PromisePageState function must return array": "error.promise-page-state-array-required",
   "Failed to fetch": "error.network-request-failed",
   "NetworkError when attempting to fetch resource.": "error.network-request-failed",
@@ -187,14 +185,6 @@ export const localizeErrorMessage = (
     return i18n.t("error.action-http-failed", {
       action: translatedActionLabel(actionHttpMatch[1]),
       status: actionHttpMatch[2],
-    });
-  }
-
-  const embeddingProviderMatch = message.match(/^embedding provider returned\s+(.+)$/);
-  if (embeddingProviderMatch) {
-    if (!isEnglishLocale()) return i18n.t("error.embedding-provider-failed");
-    return i18n.t("error.embedding-provider-returned", {
-      detail: embeddingProviderMatch[1],
     });
   }
 

@@ -192,11 +192,6 @@ const RightContent = ({ blinkoraItem }: { blinkoraItem: Note }) => {
   return (
     <div data-drag-ignore="true" className="ml-auto flex items-center gap-2">
       <AnnotationCountBadge blinkoraItem={blinkoraItem} />
-      {blinkoraItem?.metadata?.isIndexed && (
-        <Tooltip content={'Indexed'} delay={1500}>
-          <Icon className="!text-ignore opacity-50" icon="hugeicons:ai-beautify" width="16" height="16" />
-        </Tooltip>
-      )}
     </div>
   );
 };

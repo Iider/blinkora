@@ -42,9 +42,6 @@ struct NoteListFilters<'a> {
     with_file: bool,
     without_tag: bool,
     metadata_filter: Option<Value>,
-    is_use_ai_query: bool,
-    ai_terms: &'a [String],
-    vector_ids: &'a [i32],
     search: &'a str,
     with_link: bool,
     has_todo: bool,
@@ -94,30 +91,7 @@ fn push_note_list_filters(query: &mut QueryBuilder<'_, Postgres>, filters: &Note
         query.push_bind(metadata_filter);
         query.push("::jsonb");
     }
-    if filters.is_use_ai_query && (!filters.ai_terms.is_empty() || !filters.vector_ids.is_empty()) {
-        query.push(" AND (");
-        let mut has_condition = false;
-        if !filters.vector_ids.is_empty() {
-            query
-                .push("n.id=ANY(")
-                .push_bind(filters.vector_ids.to_vec())
-                .push(")");
-            has_condition = true;
-        }
-        for (idx, term) in filters.ai_terms.iter().enumerate() {
-            if has_condition || idx > 0 {
-                query.push(" OR ");
-            }
-            let pattern = format!("%{term}%");
-            query.push("n.content ILIKE ");
-            query.push_bind(pattern.clone());
-            query.push(r#" OR EXISTS (SELECT 1 FROM attachments a3 WHERE a3."noteId"=n.id AND a3.path ILIKE "#);
-            query.push_bind(pattern);
-            query.push(")");
-            has_condition = true;
-        }
-        query.push(")");
-    } else if !filters.search.is_empty() {
+    if !filters.search.is_empty() {
         let pattern = format!("%{}%", filters.search);
         query.push(" AND (n.content ILIKE ");
         query.push_bind(pattern.clone());
@@ -169,29 +143,10 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         } else {
             "DESC"
         };
-        let is_use_ai_query = input.get("isUseAiQuery").and_then(Value::as_bool).unwrap_or(false);
         let include_page_info = input.get("includePageInfo").and_then(Value::as_bool).unwrap_or(false);
-        let cleaned_ai_search;
-        let search = if is_use_ai_query {
-            cleaned_ai_search = normalize_ai_query(raw_search);
-            cleaned_ai_search.as_str()
-        } else {
-            raw_search
-        };
-        let ai_terms = if is_use_ai_query { ai_query_terms(search) } else { Vec::new() };
+        let search = raw_search;
         let offset = (page - 1) * size;
 
-        let vector_matches = if is_use_ai_query && !search.is_empty() {
-            crate::rag::query_note_ids(ctx.state.pool(), search, user.id, ws, 1000.max(page * size)).await?
-        } else {
-            Vec::new()
-        };
-        let vector_match_by_id = vector_matches
-            .iter()
-            .enumerate()
-            .map(|(idx, item)| (item.note_id, (idx, item.score)))
-            .collect::<HashMap<_, _>>();
-        let vector_ids = vector_matches.iter().map(|item| item.note_id).collect::<Vec<_>>();
         let filters = NoteListFilters {
             user_id: user.id,
             workspace_id: ws,
@@ -202,9 +157,6 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             with_file,
             without_tag,
             metadata_filter,
-            is_use_ai_query,
-            ai_terms: &ai_terms,
-            vector_ids: &vector_ids,
             search,
             with_link,
             has_todo,
@@ -225,39 +177,17 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             r#"n."updatedAt""#
         };
         query.push(r#" ORDER BY n."isTop" DESC, "#);
-        if is_use_ai_query && !ai_terms.is_empty() {
-            query.push("(");
-            if !search.is_empty() {
-                query.push("CASE WHEN n.content ILIKE ");
-                query.push_bind(format!("%{search}%"));
-                query.push(" THEN 100 ELSE 0 END + ");
-            }
-            for (idx, term) in ai_terms.iter().enumerate() {
-                if idx > 0 {
-                    query.push(" + ");
-                }
-                query.push("CASE WHEN n.content ILIKE ");
-                query.push_bind(format!("%{term}%"));
-                query.push(" THEN 10 ELSE 0 END");
-                query.push(" + CASE WHEN EXISTS (SELECT 1 FROM attachments a_rank WHERE a_rank.\"noteId\"=n.id AND a_rank.path ILIKE ");
-                query.push_bind(format!("%{term}%"));
-                query.push(") THEN 5 ELSE 0 END");
-            }
-            query.push(") DESC, ");
-        }
         query
             .push(r#"n."sortOrder" ASC, "#)
             .push(time_order_column)
             .push(" ")
             .push(order_dir);
-        if !is_use_ai_query {
-            query
-                .push(" LIMIT ")
-                .push_bind(size)
-                .push(" OFFSET ")
-                .push_bind(offset);
-        }
-        let total = if include_page_info && !is_use_ai_query {
+        query
+            .push(" LIMIT ")
+            .push_bind(size)
+            .push(" OFFSET ")
+            .push_bind(offset);
+        let total = if include_page_info {
             let mut count_query = QueryBuilder::<Postgres>::new(r#"SELECT COUNT(*) FROM notes n WHERE "#);
             push_note_list_filters(&mut count_query, &filters);
             count_query.build_query_scalar::<i64>().fetch_one(ctx.state.pool()).await?
@@ -267,53 +197,11 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let rows = query.build().fetch_all(ctx.state.pool()).await?;
         let mut items = Vec::new();
         for row in rows {
-            let id: i32 = row.get("id");
-            let mut item = note_json(&ctx, row).await?;
-            if is_use_ai_query {
-                let content = item.get("content").and_then(Value::as_str).unwrap_or("");
-                let keyword = keyword_score(content, &ai_terms, search);
-                let vector = vector_match_by_id.get(&id).map(|(_, score)| *score).unwrap_or(0.0);
-                item["score"] = json!(hybrid_score(keyword, vector));
-            }
-            items.push(item);
-        }
-        let mut total = if include_page_info && is_use_ai_query {
-            items.len() as i64
-        } else {
-            total
-        };
-        if is_use_ai_query {
-            items.sort_by(|left, right| {
-                right
-                    .get("score")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0)
-                    .partial_cmp(&left.get("score").and_then(Value::as_f64).unwrap_or(0.0))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| {
-                        right
-                            .get("isTop")
-                            .and_then(Value::as_bool)
-                            .unwrap_or(false)
-                            .cmp(&left.get("isTop").and_then(Value::as_bool).unwrap_or(false))
-                    })
-                    .then_with(|| {
-                        left.get("sortOrder")
-                            .and_then(Value::as_i64)
-                            .unwrap_or(0)
-                            .cmp(&right.get("sortOrder").and_then(Value::as_i64).unwrap_or(0))
-                    })
-            });
-            let start = offset.max(0) as usize;
-            let end = (start + size.max(0) as usize).min(items.len());
-            items = if start < items.len() {
-                items[start..end].to_vec()
-            } else {
-                Vec::new()
-            };
+            items.push(note_json(&ctx, row).await?);
         }
         if include_page_info {
-            if !is_use_ai_query && total < 0 {
+            let mut total = total;
+            if total < 0 {
                 total = 0;
             }
             Ok(json!({
@@ -669,8 +557,6 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         }
 
         tx.commit().await?;
-        crate::rag::delete_note_vectors(ctx.state.pool(), &note_ids, user.id, source_workspace_id)
-            .await?;
 
         Ok(json!({
             "success": true,
@@ -1316,62 +1202,6 @@ fn extract_attachment_paths(content: &str) -> HashSet<String> {
         .collect()
 }
 
-fn normalize_ai_query(query: &str) -> String {
-    query
-        .replace('@', " ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn ai_query_terms(query: &str) -> Vec<String> {
-    let mut seen = HashSet::new();
-    query
-        .split(|ch: char| {
-            ch.is_whitespace()
-                || matches!(
-                    ch,
-                    ',' | '.'
-                        | ';'
-                        | ':'
-                        | '!'
-                        | '?'
-                        | '"'
-                        | '\''
-                        | '('
-                        | ')'
-                        | '['
-                        | ']'
-                        | '{'
-                        | '}'
-                )
-        })
-        .map(str::trim)
-        .filter(|term| term.chars().count() >= 2)
-        .map(str::to_lowercase)
-        .filter(|term| seen.insert(term.clone()))
-        .take(12)
-        .collect()
-}
-
-fn keyword_score(content: &str, terms: &[String], search: &str) -> f64 {
-    let lower = content.to_lowercase();
-    let mut score = 0.0;
-    if !search.is_empty() && lower.contains(&search.to_lowercase()) {
-        score += 1.0;
-    }
-    for term in terms {
-        if lower.contains(term) {
-            score += 0.1;
-        }
-    }
-    score
-}
-
-fn hybrid_score(keyword_score: f64, vector_score: f64) -> f64 {
-    keyword_score * 10.0 + vector_score
-}
-
 fn normalize_attachment_path(path: &str) -> String {
     let without_query = path.split(['?', '#']).next().unwrap_or(path);
     without_query
@@ -1641,6 +1471,5 @@ async fn delete_note_ids(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    crate::rag::delete_note_vectors(ctx.state.pool(), &ids, account_id, workspace_id).await?;
     Ok(json!(true))
 }

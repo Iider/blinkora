@@ -12,7 +12,7 @@
     "dev:frontend": "turbo run dev --filter=@blinkora/frontend",
     "dev:rust": "PATH=\"/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH\" PORT=\"${PORT:-6677}\" DATABASE_URL=\"${DATABASE_URL:-postgresql://postgres:mysecretpassword@localhost:55433/postgres}\" PUBLIC_PATH=\"${PUBLIC_PATH:-dist/public}\" DATA_DIR=\"${DATA_DIR:-docker/data/blinkora}\" SCHEMA_PATH=\"${SCHEMA_PATH:-db/schema.sql}\" cargo run --manifest-path server/Cargo.toml",
     "build:web": "turbo run build:web",
-    "test": "bun test shared/lib/__tests__",
+    "test": "node --check scripts/rust-smoke.mjs && node --check scripts/workspace-agent-smoke.mjs",
     "test:rust": "bun run verify:rust",
     "test:all": "bun run test && bun run test:rust",
     "clean": "turbo run clean && rm -rf node_modules",

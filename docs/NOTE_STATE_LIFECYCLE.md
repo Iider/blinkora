@@ -26,7 +26,7 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - 单条卡片的类型转换也走 `notes.upsert`，只写 `type`，不提交正文。
 - 多选归档、恢复和置顶走 `notes.updateMany`。
 - 移入回收站走 `notes.trashMany`。
-- 彻底删除走 `notes.deleteMany`，同时清理引用、评论、附件关系、孤立标签和 RAG 向量。
+- 彻底删除走 `notes.deleteMany`，同时清理引用、评论、附件关系和孤立标签。
 - 跨工作区移动走 `notes.moveToWorkspace`。它不改变 `type`、`isArchived`、`isTop`、`isReviewed`，回收站卡片不允许移动；批量移动也复用这个接口。
 
 状态更新必须支持“只改状态，不改正文”。前端按钮不应该为了归档或恢复额外提交正文。
@@ -67,7 +67,7 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - 卡背顶部展示类型、一条到分钟的时间和三点菜单：如果正面展示更新时间，卡背展示创建时间；如果正面展示创建时间，卡背展示更新时间。
 - 卡背只展示特殊状态：置顶、归档、回收站、已回顾、离线、待办截止时间。没有特殊状态时不显示状态区，也不放占位符。
 - 卡背展示 `metadata.properties` 自定义属性；不展示标签、附件数、评论数、引用数、被引用数，也不单独展示时间区块。
-- 卡背不展示 `id`、`accountId`、`workspaceId`、索引状态、导入来源等内部或维护字段。
+- 卡背不展示 `id`、`accountId`、`workspaceId`、导入来源等内部或维护字段。
 - 卡背只读；自定义属性的编辑仍在全屏阅读底部的属性表格里完成。
 
 ## 引用展示
@@ -96,7 +96,7 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 约定：
 
 - 只支持扁平值：`string`、`number`、`boolean`、`null`、`string[]`。
-- 保存属性时只替换 `metadata.properties`，不能覆盖 `metadata` 下的索引状态、导入来源等系统字段。
+- 保存属性时只替换 `metadata.properties`，不能覆盖 `metadata` 下的导入来源等系统字段。
 - 属性编辑区使用两列表格填写“属性 / 内容”；空白行不保存，清空所有行后从 `metadata` 中移除 `properties`。
 - 属性内容按单个 YAML 值解析，普通文字直接保存，`4`、`true`、`null`、`[自媒体, IP]` 会保存成对应类型。
 - 卡片正面列表、普通摘要和引用摘要都不展示属性；列表卡片的卡背会只读展示属性。
@@ -112,7 +112,6 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - `server/src/handlers/common.rs`：接口返回 JSON。
 - `server/src/handlers/backup.rs`：备份导出和恢复。
 - `server/src/handlers/mcp.rs`：MCP 工具入参 schema。
-- `server/src/rag.rs`：索引元数据和查询过滤。
 - `app/src/store/blinkoraStore.tsx`：各页面列表筛选。
 - `app/src/components/BlinkoraCard/index.tsx`：文章预览判定、全屏打开交互和普通卡片渲染分流。
 - `app/src/components/BlinkoraCard/cardHeader.tsx`：卡片顶部区域、时间入口、操作按钮和三点菜单。

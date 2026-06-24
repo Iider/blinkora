@@ -1,6 +1,6 @@
 # Blinkora
 
-Blinkora is a Docker-first Web-only private note and memory base for long-term notes, wiki-style memory, tags, attachments, references, review, search/RAG, export, and private annotations.
+Blinkora is a Docker-first Web-only private note and memory base for long-term notes, wiki-style memory, tags, attachments, references, review, search, export, and private annotations.
 
 Blinkora is served as a browser app by the Rust backend. Default deployment uses Docker; personal macOS machines can also run the Rust service locally with Docker only keeping PostgreSQL. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
 
@@ -15,6 +15,8 @@ Blinkora is served as a browser app by the Rust backend. Default deployment uses
 | Docker deployment | `docker/` | Default full Docker entry and PostgreSQL compose entry |
 
 The Rust backend serves REST APIs, tRPC-compatible endpoints, file APIs, MCP SSE, health checks, first-run database initialization, and React/Vite static assets from one binary.
+
+Blinkora currently provides ordinary keyword, metadata, type, tag, attachment, link, TODO, and date filtering. It does not include built-in RAG, embedding, vector search, or semantic search. Workspace Agent/MCP tokens are an external agent access path, not a RAG index.
 
 ## Docker Deployment
 
@@ -114,6 +116,6 @@ S3 settings are global configuration and require a superadmin account. Endpoint,
 
 The “Save and validate” action uploads, reads, and deletes a temporary validation object. S3 is enabled only after validation succeeds. If validation fails, active storage stays local while the S3 form remains open for correction.
 
-Deleting a non-default Workspace also deletes its note data, resource records, linked local/S3 attachment files, and RAG vectors. See `docs/WORKSPACE_DATA_LIFECYCLE.md` for the cleanup contract and residual checks.
+Deleting a non-default Workspace also deletes its note data, resource records, linked local/S3 attachment files, configuration, and workspace tokens. See `docs/WORKSPACE_DATA_LIFECYCLE.md` for the cleanup contract and residual checks.
 
 Keep export and backup paths working before schema or storage changes.

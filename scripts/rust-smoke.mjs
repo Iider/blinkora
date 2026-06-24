@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import http from 'node:http';
-import { execFileSync } from 'node:child_process';
 
 const base = process.env.BLINKORA_BASE_URL || 'http://127.0.0.1:6676';
 const user = process.env.BLINKORA_SMOKE_USER || '';
@@ -17,33 +16,8 @@ const s3SmokeBucket = process.env.BLINKORA_S3_SMOKE_BUCKET || '';
 const s3SmokeAccessKey = process.env.BLINKORA_S3_SMOKE_ACCESS_KEY || '';
 const s3SmokeSecretKey = process.env.BLINKORA_S3_SMOKE_SECRET_KEY || '';
 const s3SmokeCustomPath = process.env.BLINKORA_S3_SMOKE_CUSTOM_PATH || `smoke-${stamp}/`;
-const mockEmbeddingSmoke = process.env.BLINKORA_MOCK_EMBEDDING_SMOKE === '1';
-const mockEmbeddingPort = Number(process.env.BLINKORA_MOCK_EMBEDDING_PORT || 55987);
-const mockEmbeddingBaseURL = process.env.BLINKORA_MOCK_EMBEDDING_BASE_URL || `http://host.docker.internal:${mockEmbeddingPort}/v1`;
-const realEmbeddingSmoke = process.env.BLINKORA_REAL_EMBEDDING_SMOKE === '1';
-const realEmbeddingUseLocalMock = process.env.BLINKORA_REAL_EMBEDDING_USE_LOCAL_MOCK === '1';
-const realEmbeddingProvider = process.env.BLINKORA_REAL_EMBEDDING_PROVIDER || 'custom';
-const realEmbeddingBaseURL = process.env.BLINKORA_REAL_EMBEDDING_BASE_URL || (realEmbeddingUseLocalMock ? mockEmbeddingBaseURL : '');
-const realEmbeddingApiKey = process.env.BLINKORA_REAL_EMBEDDING_API_KEY || (realEmbeddingUseLocalMock ? 'real-smoke-mock-key' : '');
-const realEmbeddingModelKey = process.env.BLINKORA_REAL_EMBEDDING_MODEL_KEY || (realEmbeddingUseLocalMock ? `blinkora-real-smoke-mock-${stamp}` : '');
-const realEmbeddingApiVersion = process.env.BLINKORA_REAL_EMBEDDING_API_VERSION || '';
 const uploadByUrlPort = Number(process.env.BLINKORA_UPLOAD_BY_URL_PORT || 55988);
 const uploadByUrlSourceURL = process.env.BLINKORA_UPLOAD_BY_URL_SOURCE_URL || `http://host.docker.internal:${uploadByUrlPort}/upload-by-url-${stamp}.txt`;
-const dockerDbContainer = process.env.BLINKORA_DOCKER_DB_CONTAINER || 'blinkora-db';
-
-if (mockEmbeddingSmoke && realEmbeddingSmoke) {
-  fail('Only one embedding smoke mode can be enabled at a time', {
-    BLINKORA_MOCK_EMBEDDING_SMOKE: mockEmbeddingSmoke,
-    BLINKORA_REAL_EMBEDDING_SMOKE: realEmbeddingSmoke,
-  });
-}
-
-if (realEmbeddingSmoke) {
-  assert(realEmbeddingBaseURL, 'BLINKORA_REAL_EMBEDDING_BASE_URL is required for real embedding smoke');
-  assert(realEmbeddingModelKey, 'BLINKORA_REAL_EMBEDDING_MODEL_KEY is required for real embedding smoke');
-  const needsKey = !['ollama'].includes(realEmbeddingProvider.toLowerCase());
-  assert(!needsKey || realEmbeddingApiKey, 'BLINKORA_REAL_EMBEDDING_API_KEY is required for this provider');
-}
 
 function fail(message, details) {
   console.error(`\nFAIL: ${message}`);
@@ -61,71 +35,6 @@ function assert(condition, message, details) {
 
 function isListLike(value) {
   return Array.isArray(value) || Array.isArray(value?.items);
-}
-
-function denseVectorForText(text) {
-  const lower = String(text || '').toLowerCase();
-  let rust = 0;
-  let smoke = 0;
-  let note = 0;
-  let edited = 0;
-  let chars = 0;
-  for (const token of lower.match(/[a-z0-9]+/g) || []) {
-    if (token === 'rust' || token === 'oxidized') rust += 1;
-    if (token === 'smoke') smoke += 1;
-    if (token === 'note') note += 1;
-    if (token === 'edited' || token === 'revised') edited += 1;
-    chars += token.length;
-  }
-  return [rust, smoke, note, edited, chars / 1000];
-}
-
-function startMockEmbeddingServer() {
-  let requestCount = 0;
-  const server = http.createServer((req, res) => {
-    if (req.method !== 'POST' || !req.url.endsWith('/embeddings')) {
-      res.writeHead(404, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'not found' }));
-      return;
-    }
-    let body = '';
-    req.setEncoding('utf8');
-    req.on('data', (chunk) => {
-      body += chunk;
-    });
-    req.on('end', () => {
-      requestCount += 1;
-      let input = [];
-      try {
-        const parsed = JSON.parse(body || '{}');
-        input = Array.isArray(parsed.input) ? parsed.input : [parsed.input || ''];
-      } catch {
-        input = [''];
-      }
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({
-        object: 'list',
-        data: input.map((text, index) => ({
-          object: 'embedding',
-          index,
-          embedding: denseVectorForText(text),
-        })),
-      }));
-    });
-  });
-
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(mockEmbeddingPort, '0.0.0.0', () => {
-      server.off('error', reject);
-      resolve({
-        close: () => new Promise((done) => server.close(() => done())),
-        get requestCount() {
-          return requestCount;
-        },
-      });
-    });
-  });
 }
 
 function startUploadByUrlServer() {
@@ -150,123 +59,6 @@ function startUploadByUrlServer() {
       });
     });
   });
-}
-
-function runPsql(sql) {
-  execFileSync('docker', [
-    'exec',
-    '-i',
-    dockerDbContainer,
-    'psql',
-    '-U',
-    'postgres',
-    '-d',
-    'postgres',
-    '-v',
-    'ON_ERROR_STOP=1',
-    '-c',
-    sql,
-  ], { stdio: ['ignore', 'pipe', 'pipe'] });
-}
-
-function sqlString(value) {
-  return `'${String(value).replaceAll("'", "''")}'`;
-}
-
-function configureEmbeddingProvider({
-  accountId,
-  workspaceId,
-  provider,
-  baseURL,
-  apiKey,
-  modelKey,
-  providerConfig = {},
-  titlePrefix,
-}) {
-  const providerTitle = `${titlePrefix} provider ${stamp}`;
-  const modelTitle = `${titlePrefix} model ${stamp}`;
-  runPsql(`
-    DELETE FROM config
-    WHERE key='embeddingModelId'
-      AND "userId"=${Number(accountId)}
-      AND "workspaceId"=${Number(workspaceId)};
-
-    WITH provider AS (
-      INSERT INTO "aiProviders" (title, provider, "baseURL", "apiKey", config, "createdAt", "updatedAt")
-      VALUES (${sqlString(providerTitle)}, ${sqlString(provider)}, ${sqlString(baseURL)}, ${sqlString(apiKey)}, ${sqlString(JSON.stringify(providerConfig))}::json, NOW(), NOW())
-      RETURNING id
-    ), model AS (
-      INSERT INTO "aiModels" ("providerId", title, "modelKey", capabilities, config, "createdAt", "updatedAt")
-      SELECT id, ${sqlString(modelTitle)}, ${sqlString(modelKey)}, '["embedding"]'::json, '{}'::json, NOW(), NOW()
-      FROM provider
-      RETURNING id
-    )
-    INSERT INTO config (key, config, "userId", "workspaceId")
-    SELECT 'embeddingModelId', to_json(id)::json, ${Number(accountId)}, ${Number(workspaceId)}
-    FROM model
-    RETURNING id;
-  `);
-}
-
-function configureMockEmbeddingProvider(accountId, workspaceId) {
-  configureEmbeddingProvider({
-    accountId,
-    workspaceId,
-    provider: 'custom',
-    baseURL: mockEmbeddingBaseURL,
-    apiKey: 'mock-key',
-    modelKey: `rust-smoke-embedding-${stamp}`,
-    titlePrefix: 'Rust smoke mock embedding',
-  });
-}
-
-function configureRealEmbeddingProvider(accountId, workspaceId) {
-  configureEmbeddingProvider({
-    accountId,
-    workspaceId,
-    provider: realEmbeddingProvider,
-    baseURL: realEmbeddingBaseURL,
-    apiKey: realEmbeddingApiKey,
-    modelKey: realEmbeddingModelKey,
-    providerConfig: realEmbeddingApiVersion ? { apiVersion: realEmbeddingApiVersion } : {},
-    titlePrefix: `Rust smoke real ${realEmbeddingProvider} embedding`,
-  });
-}
-
-function readVectorKinds(accountId, workspaceId) {
-  const output = execFileSync('docker', [
-    'exec',
-    '-i',
-    dockerDbContainer,
-    'psql',
-    '-U',
-    'postgres',
-    '-d',
-    'postgres',
-    '-t',
-    '-A',
-    '-c',
-    `SELECT COALESCE(string_agg(DISTINCT vector->>'kind', ',' ORDER BY vector->>'kind'), '') FROM "_blinkora_rust_vectors" WHERE "accountId"=${Number(accountId)} AND "workspaceId"=${Number(workspaceId)};`,
-  ], { encoding: 'utf8' });
-  return output.trim().split(',').filter(Boolean);
-}
-
-function readVectorMetadata(noteId, accountId, workspaceId) {
-  const output = execFileSync('docker', [
-    'exec',
-    '-i',
-    dockerDbContainer,
-    'psql',
-    '-U',
-    'postgres',
-    '-d',
-    'postgres',
-    '-t',
-    '-A',
-    '-c',
-    `SELECT COALESCE(metadata::text, '{}') FROM "_blinkora_rust_vectors" WHERE "noteId"=${Number(noteId)} AND "accountId"=${Number(accountId)} AND "workspaceId"=${Number(workspaceId)} ORDER BY id DESC LIMIT 1;`,
-  ], { encoding: 'utf8' });
-  return JSON.parse(output.trim() || '{}');
 }
 
 async function request(path, options = {}) {
@@ -619,14 +411,6 @@ const workspaceId = workspaces[0].id;
 const defaultWorkspace = await trpc('workspaces.getDefault', {}, token, 'GET');
 assert(defaultWorkspace?.id === workspaceId && defaultWorkspace.isDefault === true, 'workspaces.getDefault', defaultWorkspace);
 
-const localEmbeddingServer = (mockEmbeddingSmoke || realEmbeddingUseLocalMock) ? await startMockEmbeddingServer() : null;
-if (mockEmbeddingSmoke) {
-  configureMockEmbeddingProvider(userDetail.id, workspaceId);
-}
-if (realEmbeddingSmoke) {
-  configureRealEmbeddingProvider(userDetail.id, workspaceId);
-}
-
 const smokeWorkspace = await trpc('workspaces.create', {
   name: `Rust smoke workspace ${stamp}`,
   description: 'temporary smoke workspace',
@@ -918,16 +702,6 @@ assert(configUpdate === true, 'config.update', configUpdate);
 const configList = await trpc('config.list', {}, token, 'GET');
 assert(configList && typeof configList === 'object', 'config.list', configList);
 
-const aiConfigWithoutModel = await trpc('config.ai', { type: 'embeddingModel' }, token, 'GET');
-assert(aiConfigWithoutModel === null || aiConfigWithoutModel?.modelKey, 'config.ai embedding model shape', aiConfigWithoutModel);
-if (mockEmbeddingSmoke) {
-  assert(aiConfigWithoutModel?.provider?.provider === 'custom', 'config.ai mock embedding provider shape', aiConfigWithoutModel);
-}
-if (realEmbeddingSmoke) {
-  assert(aiConfigWithoutModel?.provider?.provider === realEmbeddingProvider, 'config.ai real embedding provider shape', aiConfigWithoutModel);
-  assert(aiConfigWithoutModel?.modelKey === realEmbeddingModelKey, 'config.ai real embedding model shape', aiConfigWithoutModel);
-}
-
 const s3Validation = await trpc('config.saveAndValidateS3', {
   s3Endpoint: '',
   s3Region: '',
@@ -1050,17 +824,17 @@ assert(linkNote?.id && linkNote.content.includes('https://'), 'notes.upsert link
 const todoPatternNote = await trpc('notes.upsert', { content: `Rust smoke checklist ${stamp}\n- [ ] follow up`, type: 0 }, token);
 assert(todoPatternNote?.id && todoPatternNote.content.includes('- [ ]'), 'notes.upsert todo-pattern note', todoPatternNote);
 
-const archivedAiDecoy = await trpc('notes.upsert', { content: `Rust smoke note edited ${stamp} archived decoy`, type: 0 }, token);
-assert(archivedAiDecoy?.id, 'notes.upsert archived AI decoy', archivedAiDecoy);
+const archivedSearchDecoy = await trpc('notes.upsert', { content: `Rust smoke note edited ${stamp} archived decoy`, type: 0 }, token);
+assert(archivedSearchDecoy?.id, 'notes.upsert archived search decoy', archivedSearchDecoy);
 
-const archiveAiDecoyResult = await trpc('notes.updateMany', { ids: [archivedAiDecoy.id], isArchived: true }, token);
-assert(archiveAiDecoyResult === true, 'notes.updateMany archived AI decoy', archiveAiDecoyResult);
+const archiveSearchDecoyResult = await trpc('notes.updateMany', { ids: [archivedSearchDecoy.id], isArchived: true }, token);
+assert(archiveSearchDecoyResult === true, 'notes.updateMany archived search decoy', archiveSearchDecoyResult);
 
-const recycledAiDecoy = await trpc('notes.upsert', { content: `Rust smoke note edited ${stamp} recycled decoy`, type: 0 }, token);
-assert(recycledAiDecoy?.id, 'notes.upsert recycled AI decoy', recycledAiDecoy);
+const recycledSearchDecoy = await trpc('notes.upsert', { content: `Rust smoke note edited ${stamp} recycled decoy`, type: 0 }, token);
+assert(recycledSearchDecoy?.id, 'notes.upsert recycled search decoy', recycledSearchDecoy);
 
-const recycleAiDecoyResult = await trpc('notes.trashMany', { ids: [recycledAiDecoy.id] }, token);
-assert(recycleAiDecoyResult === true, 'notes.trashMany recycled AI decoy', recycleAiDecoyResult);
+const recycleSearchDecoyResult = await trpc('notes.trashMany', { ids: [recycledSearchDecoy.id] }, token);
+assert(recycleSearchDecoyResult === true, 'notes.trashMany recycled search decoy', recycleSearchDecoyResult);
 
 const withLinkList = await trpc('notes.list', { page: 1, size: 20, withLink: true, searchText: `Rust smoke link ${stamp}` }, token);
 assert(Array.isArray(withLinkList) && withLinkList.some((item) => item.id === linkNote.id), 'notes.list withLink filter', withLinkList);
@@ -1073,172 +847,73 @@ const endDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
 const dateList = await trpc('notes.list', { page: 1, size: 20, startDate, endDate, searchText: `Rust smoke note edited ${stamp}` }, token);
 assert(Array.isArray(dateList) && dateList.some((item) => item.id === note.id), 'notes.list date filter', dateList);
 
-const aiFallbackList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, searchText: `Rust smoke note edited ${stamp}` }, token);
+const keywordList = await trpc('notes.list', { page: 1, size: 20, searchText: `Rust smoke note edited ${stamp}` }, token);
 assert(
-  Array.isArray(aiFallbackList)
-    && aiFallbackList.some((item) => item.id === note.id)
-    && !aiFallbackList.some((item) => item.id === archivedAiDecoy.id || item.id === recycledAiDecoy.id),
-  'notes.list AI query local fallback finds note',
-  aiFallbackList,
+  Array.isArray(keywordList)
+    && keywordList.some((item) => item.id === note.id)
+    && !keywordList.some((item) => item.id === archivedSearchDecoy.id || item.id === recycledSearchDecoy.id),
+  'notes.list keyword search finds active note only',
+  keywordList,
 );
 
-const aiHybridFallbackList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, searchText: `@edited ${stamp}` }, token);
+const atLiteralNote = await trpc('notes.upsert', { content: `Rust smoke @literal ${stamp}`, type: 0 }, token);
+assert(atLiteralNote?.id, 'notes.upsert at-literal note', atLiteralNote);
+
+const atLiteralList = await trpc('notes.list', { page: 1, size: 20, searchText: `@literal ${stamp}` }, token);
 assert(
-  Array.isArray(aiHybridFallbackList) && aiHybridFallbackList.some((item) => item.id === note.id),
-  'notes.list AI query local fallback token search finds note',
-  aiHybridFallbackList,
+  Array.isArray(atLiteralList) && atLiteralList.some((item) => item.id === atLiteralNote.id),
+  'notes.list treats @ as an ordinary search character',
+  atLiteralList,
 );
 
-const aiTagFilterList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, tagId: rustSmokeTag.id, searchText: `Rust smoke note edited ${stamp}` }, token);
+const tagFilterSearchList = await trpc('notes.list', { page: 1, size: 20, tagId: rustSmokeTag.id, searchText: `Rust smoke note edited ${stamp}` }, token);
 assert(
-  Array.isArray(aiTagFilterList) && aiTagFilterList.some((item) => item.id === note.id),
-  'notes.list AI query respects tagId filter positive',
-  aiTagFilterList,
+  Array.isArray(tagFilterSearchList) && tagFilterSearchList.some((item) => item.id === note.id),
+  'notes.list keyword search respects tagId filter positive',
+  tagFilterSearchList,
 );
 
-const aiTagFilterNegativeList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, tagId: rustSmokeTag.id, searchText: `Rust smoke link ${stamp}` }, token);
+const tagFilterNegativeList = await trpc('notes.list', { page: 1, size: 20, tagId: rustSmokeTag.id, searchText: `Rust smoke link ${stamp}` }, token);
 assert(
-  Array.isArray(aiTagFilterNegativeList) && !aiTagFilterNegativeList.some((item) => item.id === linkNote.id),
-  'notes.list AI query respects tagId filter negative',
-  aiTagFilterNegativeList,
+  Array.isArray(tagFilterNegativeList) && !tagFilterNegativeList.some((item) => item.id === linkNote.id),
+  'notes.list keyword search respects tagId filter negative',
+  tagFilterNegativeList,
 );
 
-const aiWithoutTagList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, withoutTag: true, searchText: `Rust smoke link ${stamp}` }, token);
+const withoutTagList = await trpc('notes.list', { page: 1, size: 20, withoutTag: true, searchText: `Rust smoke link ${stamp}` }, token);
 assert(
-  Array.isArray(aiWithoutTagList) && aiWithoutTagList.some((item) => item.id === linkNote.id),
-  'notes.list AI query respects withoutTag filter positive',
-  aiWithoutTagList,
+  Array.isArray(withoutTagList) && withoutTagList.some((item) => item.id === linkNote.id),
+  'notes.list keyword search respects withoutTag filter positive',
+  withoutTagList,
 );
 
-const aiWithoutTagNegativeList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, withoutTag: true, searchText: `Rust smoke note edited ${stamp}` }, token);
+const withoutTagNegativeList = await trpc('notes.list', { page: 1, size: 20, withoutTag: true, searchText: `Rust smoke note edited ${stamp}` }, token);
 assert(
-  Array.isArray(aiWithoutTagNegativeList) && !aiWithoutTagNegativeList.some((item) => item.id === note.id),
-  'notes.list AI query respects withoutTag filter negative',
-  aiWithoutTagNegativeList,
+  Array.isArray(withoutTagNegativeList) && !withoutTagNegativeList.some((item) => item.id === note.id),
+  'notes.list keyword search respects withoutTag filter negative',
+  withoutTagNegativeList,
 );
 
-const aiWithLinkList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, withLink: true, searchText: `Rust smoke link ${stamp}` }, token);
+const withLinkNegativeList = await trpc('notes.list', { page: 1, size: 20, withLink: true, searchText: `Rust smoke note edited ${stamp}` }, token);
 assert(
-  Array.isArray(aiWithLinkList) && aiWithLinkList.some((item) => item.id === linkNote.id),
-  'notes.list AI query respects withLink filter positive',
-  aiWithLinkList,
+  Array.isArray(withLinkNegativeList) && !withLinkNegativeList.some((item) => item.id === note.id),
+  'notes.list keyword search respects withLink filter negative',
+  withLinkNegativeList,
 );
 
-const aiWithLinkNegativeList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, withLink: true, searchText: `Rust smoke note edited ${stamp}` }, token);
+const hasTodoNegativeList = await trpc('notes.list', { page: 1, size: 20, hasTodo: true, searchText: `Rust smoke note edited ${stamp}` }, token);
 assert(
-  Array.isArray(aiWithLinkNegativeList) && !aiWithLinkNegativeList.some((item) => item.id === note.id),
-  'notes.list AI query respects withLink filter negative',
-  aiWithLinkNegativeList,
+  Array.isArray(hasTodoNegativeList) && !hasTodoNegativeList.some((item) => item.id === note.id),
+  'notes.list keyword search respects hasTodo filter negative',
+  hasTodoNegativeList,
 );
 
-const aiHasTodoList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, hasTodo: true, searchText: `Rust smoke checklist ${stamp}` }, token);
+const dateFilterSearchList = await trpc('notes.list', { page: 1, size: 20, startDate, endDate, searchText: `Rust smoke note edited ${stamp}` }, token);
 assert(
-  Array.isArray(aiHasTodoList) && aiHasTodoList.some((item) => item.id === todoPatternNote.id),
-  'notes.list AI query respects hasTodo filter positive',
-  aiHasTodoList,
+  Array.isArray(dateFilterSearchList) && dateFilterSearchList.some((item) => item.id === note.id),
+  'notes.list keyword search respects date filter positive',
+  dateFilterSearchList,
 );
-
-const aiHasTodoNegativeList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, hasTodo: true, searchText: `Rust smoke note edited ${stamp}` }, token);
-assert(
-  Array.isArray(aiHasTodoNegativeList) && !aiHasTodoNegativeList.some((item) => item.id === note.id),
-  'notes.list AI query respects hasTodo filter negative',
-  aiHasTodoNegativeList,
-);
-
-const aiDateList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, startDate, endDate, searchText: `Rust smoke note edited ${stamp}` }, token);
-assert(
-  Array.isArray(aiDateList) && aiDateList.some((item) => item.id === note.id),
-  'notes.list AI query respects date filter positive',
-  aiDateList,
-);
-
-const embeddingBefore = await trpc('task.embeddingProgress', {}, token, 'GET');
-assert(embeddingBefore && typeof embeddingBefore.isRunning === 'boolean', 'task.embeddingProgress before rebuild', embeddingBefore);
-
-const embeddingRebuild = await trpc('task.rebuildEmbedding', { force: true }, token);
-assert(
-  embeddingRebuild?.isRunning === false
-    && typeof embeddingRebuild.total === 'number'
-    && Array.isArray(embeddingRebuild.results),
-  'task.rebuildEmbedding completes with progress shape',
-  embeddingRebuild,
-);
-
-const embeddingAfter = await trpc('task.embeddingProgress', {}, token, 'GET');
-assert(
-  embeddingAfter?.isRunning === false
-    && embeddingAfter.lastUpdate === embeddingRebuild.lastUpdate
-    && Array.isArray(embeddingAfter.processedNoteIds)
-    && Array.isArray(embeddingAfter.skippedNoteIds),
-  'task.embeddingProgress after rebuild',
-  embeddingAfter,
-);
-
-const indexedDetail = await trpc('notes.detail', { id: note.id }, token, 'GET');
-const wasProcessedOrSkipped = embeddingAfter.processedNoteIds.includes(note.id) || embeddingAfter.skippedNoteIds.includes(note.id);
-assert(wasProcessedOrSkipped, 'task.rebuildEmbedding tracks smoke note id', embeddingAfter);
-if (embeddingAfter.processedNoteIds.includes(note.id)) {
-  assert(indexedDetail?.metadata?.isIndexed === true, 'task.rebuildEmbedding marks note metadata indexed', indexedDetail);
-}
-
-const vectorMetadata = readVectorMetadata(note.id, userDetail.id, workspaceId);
-assert(
-  vectorMetadata.noteId === note.id
-    && vectorMetadata.accountId === userDetail.id
-    && vectorMetadata.workspaceId === workspaceId
-    && vectorMetadata.type === 0
-    && vectorMetadata.isArchived === false
-    && vectorMetadata.isRecycle === false
-    && Array.isArray(vectorMetadata.tagIds)
-    && vectorMetadata.tagIds.includes(rustSmokeTag.id)
-    && Array.isArray(vectorMetadata.tags)
-    && vectorMetadata.tags.includes('rust-smoke')
-    && typeof vectorMetadata.updatedAt === 'string'
-    && vectorMetadata.updatedAt.length > 0,
-  'rust vector metadata includes note filters and workspace fields',
-  vectorMetadata,
-);
-
-const vectorAiList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, searchText: `Rust smoke note edited ${stamp}` }, token);
-const vectorAiNote = Array.isArray(vectorAiList) ? vectorAiList.find((item) => item.id === note.id) : null;
-assert(
-  vectorAiNote && typeof vectorAiNote.score === 'number' && vectorAiNote.score > 0,
-  'notes.list AI query uses rebuilt rust vector index',
-  vectorAiList,
-);
-assert(
-  Array.isArray(vectorAiList)
-    && vectorAiList[0]?.id === note.id
-    && !vectorAiList.some((item) => item.id === archivedAiDecoy.id || item.id === recycledAiDecoy.id),
-  'notes.list AI query hybrid ranking excludes archived and recycled decoys',
-  vectorAiList,
-);
-let mockEmbeddingRequestCount = null;
-let vectorKinds = null;
-if (mockEmbeddingSmoke) {
-  mockEmbeddingRequestCount = localEmbeddingServer.requestCount;
-  vectorKinds = readVectorKinds(userDetail.id, workspaceId);
-  assert(mockEmbeddingRequestCount > 0, 'mock embedding provider was called', { mockEmbeddingRequestCount });
-  assert(vectorKinds.includes('dense'), 'mock embedding smoke stores dense vectors', { vectorKinds });
-  const vectorOnlyAiList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, searchText: 'revised' }, token);
-  const vectorOnlyNote = Array.isArray(vectorOnlyAiList) ? vectorOnlyAiList.find((item) => item.id === note.id) : null;
-  assert(
-    vectorOnlyNote
-      && typeof vectorOnlyNote.score === 'number'
-      && vectorOnlyNote.score > 0
-      && !String(vectorOnlyNote.content || '').toLowerCase().includes('revised'),
-    'notes.list AI query can recall via dense vector without keyword match',
-    vectorOnlyAiList,
-  );
-}
-if (realEmbeddingSmoke) {
-  const realEmbeddingRequestCount = localEmbeddingServer?.requestCount ?? null;
-  vectorKinds = readVectorKinds(userDetail.id, workspaceId);
-  if (realEmbeddingUseLocalMock) {
-    assert(realEmbeddingRequestCount > 0, 'real embedding local mock provider was called', { realEmbeddingRequestCount });
-  }
-  assert(vectorKinds.includes('dense'), 'real embedding smoke stores dense vectors', { provider: realEmbeddingProvider, vectorKinds });
-}
 
 const comment = await trpc('comments.create', {
   noteId: note.id,
@@ -1446,18 +1121,11 @@ assert(
   retainedWithFileList,
 );
 
-const aiWithFileList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, withFile: true, searchText: retainedUploadJson.path.split('/').pop() }, token);
+const withFileNegativeList = await trpc('notes.list', { page: 1, size: 20, withFile: true, searchText: `Rust smoke note edited ${stamp}` }, token);
 assert(
-  Array.isArray(aiWithFileList) && aiWithFileList.some((item) => item.id === retainedNote.id),
-  'notes.list AI query respects withFile filter positive',
-  aiWithFileList,
-);
-
-const aiWithFileNegativeList = await trpc('notes.list', { page: 1, size: 20, isUseAiQuery: true, withFile: true, searchText: `Rust smoke note edited ${stamp}` }, token);
-assert(
-  Array.isArray(aiWithFileNegativeList) && !aiWithFileNegativeList.some((item) => item.id === note.id),
-  'notes.list AI query respects withFile filter negative',
-  aiWithFileNegativeList,
+  Array.isArray(withFileNegativeList) && !withFileNegativeList.some((item) => item.id === note.id),
+  'notes.list withFile filter negative',
+  withFileNegativeList,
 );
 
 const movableContent = `hello rust movable upload ${stamp}`;
@@ -1642,22 +1310,8 @@ console.log(JSON.stringify({
   uploadPath: uploadJson.path,
   retainedUploadPath: retainedUploadJson.path,
   s3Smoke,
-  mockEmbeddingSmoke: mockEmbeddingSmoke ? {
-    requestCount: mockEmbeddingRequestCount,
-    vectorKinds,
-  } : null,
-  realEmbeddingSmoke: realEmbeddingSmoke ? {
-    provider: realEmbeddingProvider,
-    modelKey: realEmbeddingModelKey,
-    localMock: realEmbeddingUseLocalMock,
-    requestCount: localEmbeddingServer?.requestCount ?? null,
-    vectorKinds,
-  } : null,
   exportPath,
 }, null, 2));
-if (localEmbeddingServer) {
-  await localEmbeddingServer.close();
-}
 
 async function runS3Smoke(token, workspaceId) {
   const s3Config = await trpc('config.saveAndValidateS3', {

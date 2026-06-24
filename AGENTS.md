@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Blinkora is a Docker-first Web-only private note and memory base. The target product is a clean single-user foundation for long-term notes, wiki-style memory, tags, attachments, references, review, search/RAG, export, and private annotations.
+Blinkora is a Docker-first Web-only private note and memory base. The target product is a clean single-user foundation for long-term notes, wiki-style memory, tags, attachments, references, review, search, export, and private annotations.
 
 Blinkora is shipped as a browser app served by the Rust backend. Default deployment is full Docker. Personal macOS machines may use the local persistent mode: Docker only runs PostgreSQL, while the Rust Web service runs locally through `launchd`. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
 
@@ -13,7 +13,7 @@ Blinkora is shipped as a browser app served by the Rust backend. Default deploym
 - **Database**: PostgreSQL
 - **Package Manager**: Bun (v1.2.8+)
 - **Build Tool**: Turbo
-- **AI Scope**: Embedding/RAG provider support only
+- **AI Scope**: No built-in RAG, embedding, semantic search, or conversational AI runtime. Workspace Agent/MCP is only an external access path for authorized agents to read and write Blinkora data.
 
 ## Project Structure
 
@@ -61,12 +61,12 @@ bun run verify:rust
 - **Files**: Local filesystem by default; S3-compatible storage is global superadmin configuration and must pass validation before becoming active.
 - **Memory Base**: `notes` remains the core fact source; `BLINKORA`, `NOTE`, and `TODO` are the core note types.
 - **Annotations**: `comments` are retained as private annotations for user instructions, TODO candidates, wiki update strategy, and filtering hints.
-- **Search/RAG**: Keep minimal embedding/vector search infrastructure; improve hybrid search in Rust.
+- **Search**: Keep ordinary keyword, metadata, type, tag, attachment, link, TODO, and date filtering clear and predictable. RAG/vector/embedding search is not part of the current runtime.
 
 ## Development Boundaries
 
 - Keep the product Web-only and Docker-first. Local persistent deployment is allowed for personal macOS use, but should stay small and reuse the same Rust backend.
-- Keep AI work limited to embedding/RAG configuration and indexing.
+- Do not reintroduce RAG, embedding, semantic search, or conversational AI behavior without a fresh design and explicit implementation plan.
 - Prefer hard deletion over feature flags for features outside the current product scope.
 - Keep export as a data-safety baseline.
 - Keep repository docs in `docs/` updated for each substantial change.
@@ -80,7 +80,7 @@ DATABASE_URL=postgresql://postgres:mysecretpassword@localhost:55433/postgres
 BLINKORA_SECRET=your-secret-key
 ```
 
-Docker deployment runs from `docker/`; `docker/compose.yml` has local defaults and can optionally read `docker/.env` for production secrets. Local persistent deployment stores its generated runtime env in `~/.blinkora/local/blinkora.env`. Storage credentials and embedding provider API keys are configured in the app settings and stored in application config, not required root `.env` keys.
+Docker deployment runs from `docker/`; `docker/compose.yml` has local defaults and can optionally read `docker/.env` for production secrets. Local persistent deployment stores its generated runtime env in `~/.blinkora/local/blinkora.env`. Storage credentials are configured in the app settings and stored in application config, not required root `.env` keys.
 
 ## Deployment
 

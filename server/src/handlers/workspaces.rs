@@ -117,7 +117,6 @@ fn delete(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         .bind(id)
         .fetch_all(ctx.state.pool())
         .await?;
-        crate::rag::delete_workspace_vectors(ctx.state.pool(), user.id, id).await?;
         for path in &attachment_paths {
             crate::attachment_files::delete_physical_attachment(&ctx, path)
                 .await

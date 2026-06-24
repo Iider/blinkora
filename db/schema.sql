@@ -101,80 +101,6 @@ ALTER SEQUENCE public."agentAccessTokens_id_seq" OWNED BY public."agentAccessTok
 
 
 --
--- Name: aiModels; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."aiModels" (
-    id integer NOT NULL,
-    "providerId" integer NOT NULL,
-    title character varying(255) NOT NULL,
-    "modelKey" character varying(255) NOT NULL,
-    capabilities json NOT NULL,
-    config json,
-    "sortOrder" integer DEFAULT 0 NOT NULL,
-    "createdAt" timestamp(6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(6) with time zone NOT NULL
-);
-
-
---
--- Name: aiModels_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public."aiModels_id_seq"
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: aiModels_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public."aiModels_id_seq" OWNED BY public."aiModels".id;
-
-
---
--- Name: aiProviders; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public."aiProviders" (
-    id integer NOT NULL,
-    title character varying(255) NOT NULL,
-    provider character varying(50) NOT NULL,
-    "baseURL" character varying(500),
-    "apiKey" character varying(500),
-    config json,
-    "sortOrder" integer DEFAULT 0 NOT NULL,
-    "createdAt" timestamp(6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    "updatedAt" timestamp(6) with time zone NOT NULL
-);
-
-
---
--- Name: aiProviders_id_seq; Type: SEQUENCE; Schema: public; Owner: -
---
-
-CREATE SEQUENCE public."aiProviders_id_seq"
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
---
--- Name: aiProviders_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
---
-
-ALTER SEQUENCE public."aiProviders_id_seq" OWNED BY public."aiProviders".id;
-
-
---
 -- Name: attachments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -590,20 +516,6 @@ ALTER TABLE ONLY public."agentAccessTokens" ALTER COLUMN id SET DEFAULT nextval(
 
 
 --
--- Name: aiModels id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."aiModels" ALTER COLUMN id SET DEFAULT nextval('public."aiModels_id_seq"'::regclass);
-
-
---
--- Name: aiProviders id; Type: DEFAULT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."aiProviders" ALTER COLUMN id SET DEFAULT nextval('public."aiProviders_id_seq"'::regclass);
-
-
---
 -- Name: attachments id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -694,22 +606,6 @@ ALTER TABLE ONLY public.accounts
 
 ALTER TABLE ONLY public."agentAccessTokens"
     ADD CONSTRAINT "agentAccessTokens_pkey" PRIMARY KEY (id);
-
-
---
--- Name: aiModels aiModels_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."aiModels"
-    ADD CONSTRAINT "aiModels_pkey" PRIMARY KEY (id);
-
-
---
--- Name: aiProviders aiProviders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."aiProviders"
-    ADD CONSTRAINT "aiProviders_pkey" PRIMARY KEY (id);
 
 
 --
@@ -826,13 +722,6 @@ CREATE UNIQUE INDEX "agentAccessTokens_tokenHash_key" ON public."agentAccessToke
 --
 
 CREATE INDEX "agentAccessTokens_workspaceId_idx" ON public."agentAccessTokens" USING btree ("workspaceId");
-
-
---
--- Name: aiModels_providerId_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX "aiModels_providerId_idx" ON public."aiModels" USING btree ("providerId");
 
 
 --
@@ -1003,14 +892,6 @@ ALTER TABLE ONLY public."agentAccessTokens"
 
 ALTER TABLE ONLY public."agentAccessTokens"
     ADD CONSTRAINT "agentAccessTokens_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES public.workspaces(id) ON UPDATE CASCADE ON DELETE CASCADE;
-
-
---
--- Name: aiModels aiModels_providerId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public."aiModels"
-    ADD CONSTRAINT "aiModels_providerId_fkey" FOREIGN KEY ("providerId") REFERENCES public."aiProviders"(id) ON UPDATE CASCADE ON DELETE CASCADE;
 
 
 --

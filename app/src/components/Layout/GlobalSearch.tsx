@@ -6,7 +6,6 @@ import { RootStore } from '@/store';
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { observer } from 'mobx-react-lite';
 import { _ } from '@/lib/lodash';
-import { cn } from '@/lib/utils';
 import { Note, ResourceType, Tag } from '@shared/lib/types';
 import { ScrollArea } from '../Common/ScrollArea';
 import { ResourceItemPreview } from '@/components/BlinkoraResource/ResourceItem';
@@ -82,7 +81,6 @@ export const GlobalSearch = observer(({ isOpen, onOpenChange }: GlobalSearchProp
   // Move all state management to RootStore.Local
   const store = RootStore.Local(() => ({
     searchQuery: '',
-    isAiQuestion: false,
     isSearching: false,
     searchResults: {
       notes: [] as Note[],
@@ -95,14 +93,6 @@ export const GlobalSearch = observer(({ isOpen, onOpenChange }: GlobalSearchProp
     setSearchQuery(value: string) {
       this.searchQuery = value;
 
-      // Auto-detect @AI syntax
-      if (value.startsWith('@') && !this.isAiQuestion) {
-        this.isAiQuestion = true;
-      } else if (!value.startsWith('@')) {
-        this.isAiQuestion = false;
-      }
-
-      // Trigger search with loading state
       if (value) {
         this.isSearching = true;
         debouncedSearch.current(value);
@@ -142,11 +132,6 @@ export const GlobalSearch = observer(({ isOpen, onOpenChange }: GlobalSearchProp
     }
   }, [isOpen]);
 
-  useEffect(() => {
-    blinkoraStore.noteListFilterConfig.isUseAiQuery = store.isAiQuestion;
-  }, [store.isAiQuestion]);
-
-  // Create debounced search function - properly update search results after typing stops
   const debouncedSearch = useRef(
     _.debounce(async (query) => {
       if (!query) {
@@ -159,35 +144,20 @@ export const GlobalSearch = observer(({ isOpen, onOpenChange }: GlobalSearchProp
       blinkoraStore.globalSearchTerm = query;
 
       try {
-        // Ensure AI retrieval flag is in sync for this call
-        // Detect "@" prefix proactively to avoid timing issues with the effect
-        const isAiQuery = query.trim().startsWith('@') || store.isAiQuestion;
-        blinkoraStore.noteListFilterConfig.isUseAiQuery = isAiQuery;
-
-        // 2. Search for notes using the API
-        // Set search text in the store and call the API through the store
         blinkoraStore.searchText = query;
-        // type: -1 means search all types (Memo, Note, Todo)
-        // isArchived: null means search both archived and non-archived
         const notes = await blinkoraStore.noteList.resetAndCall({ page: 1, size: 20, type: -1, isArchived: null });
-        // await blinkoraStore.blinkoraList.resetAndCall({ page: 1, size: 20 });
-        // 3. Search for resources using the API
         const resources = await blinkoraStore.resourceList.resetAndCall({
           page: 1,
           size: 20,
-          // Strip leading @/# so regular resource search still works with prefixes
-          searchText: query.replace(/^[@#]/, ''),
+          searchText: query.replace(/^#/, ''),
           folder: undefined,
         });
 
-        // 4. Search settings using the imported allSettings array
-        // Filter settings that match the search query
         const matchingSettings = allSettingMetas
           .filter((setting) => setting.title.toLowerCase().includes(query.toLowerCase()) || setting.keywords?.some((kw) => kw.toLowerCase().includes(query.toLowerCase())))
           .filter((setting) => setting.key !== 'all')
           .slice(0, 5);
 
-        // 5. Update search results (filter out .folder placeholder files)
         store.searchResults = {
           notes: notes || [],
           resources: (resources || []).filter(r => r.name !== '.folder'),
@@ -320,9 +290,7 @@ export const GlobalSearch = observer(({ isOpen, onOpenChange }: GlobalSearchProp
             <Input
               ref={searchInputRef}
               aria-label="global-search"
-              className={cn("mt-4", {
-                'input-highlight': store.isAiQuestion,
-              })}
+              className="mt-4"
               placeholder={t('search')}
               value={store.searchQuery}
               onChange={(e) => {
@@ -409,7 +377,7 @@ export const GlobalSearch = observer(({ isOpen, onOpenChange }: GlobalSearchProp
 
             <div className="text-xs text-default-500 flex justify-between items-center">
               <div>
-                {t('press-enter-to-select-first-result')} • <span className="text-primary">@</span> {t('semantic-search')} • <span className="text-primary">#</span> {t('to-search-tags')}
+                {t('press-enter-to-select-first-result')} • <span className="text-primary">#</span> {t('to-search-tags')}
               </div>
               <div className="flex items-center gap-1">
                 <kbd className="px-2 py-1 bg-default-100 rounded text-default-600 text-xs">Ctrl</kbd>

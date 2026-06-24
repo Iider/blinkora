@@ -10,13 +10,12 @@
 
 - 默认 Workspace 禁止删除。
 - 删除前先收集该 Workspace 的附件路径。
-- 删除该 Workspace 的 RAG 向量索引。
 - 按附件路径删除物理文件：
   - `/api/file/...` 删除本地 `DATA_DIR/files` 下的文件。
   - `/api/s3file/...` 调用当前 S3 配置删除对象。
 - 删除数据库记录：评论、历史、引用关系、标签关系、附件记录、标签、笔记、配置、工作区令牌和 Workspace 本身。
 
-删除成功后，Blinkora 不再保留该 Workspace 的可见内容、关系边、RAG 向量和附件记录。
+删除成功后，Blinkora 不再保留该 Workspace 的可见内容、关系边和附件记录。
 
 ## 卡片移动到其他 Workspace
 
@@ -30,7 +29,6 @@
 - 附件只改数据库归属，不复制、不删除本地文件或 S3 对象。
 - 标签会按卡片正文中的 `#标签` 在目标 Workspace 重建，源 Workspace 中不再使用的标签会清理。
 - 跨 Workspace 引用不保留；批量移动时所选卡片内部引用会保留，指向移动集合外的引用会删除，避免详情页出现“当前工作区找不到引用卡片”。
-- 源 Workspace 的 RAG 向量会删除；目标 Workspace 需要等待后续重建/索引流程重新写入向量。
 
 ## 注意事项
 
@@ -94,17 +92,11 @@ docker compose exec -T db psql -U postgres -d postgres -c \
   WHERE t.\"workspaceId\" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.id=t.\"workspaceId\");"
 ```
 
-检查 RAG 向量和关系表断链：
+检查关系表断链：
 
 ```bash
 docker compose exec -T db psql -U postgres -d postgres -c \
-"SELECT 'vectors_text_or_metadata_match' AS check_name, COUNT(*) FROM \"_blinkora_rust_vectors\"
-  WHERE text ILIKE '%关键词%' OR COALESCE(metadata::text,'') ILIKE '%关键词%'
- UNION ALL SELECT 'vectors_orphan_workspace', COUNT(*) FROM \"_blinkora_rust_vectors\" v
-  WHERE NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.id=v.\"workspaceId\")
- UNION ALL SELECT 'vectors_orphan_note', COUNT(*) FROM \"_blinkora_rust_vectors\" v
-  WHERE NOT EXISTS (SELECT 1 FROM notes n WHERE n.id=v.\"noteId\")
- UNION ALL SELECT 'tagsToNote_orphan_note', COUNT(*) FROM \"tagsToNote\" ttn
+"SELECT 'tagsToNote_orphan_note' AS check_name, COUNT(*) FROM \"tagsToNote\" ttn
   WHERE NOT EXISTS (SELECT 1 FROM notes n WHERE n.id=ttn.\"noteId\")
  UNION ALL SELECT 'tagsToNote_orphan_tag', COUNT(*) FROM \"tagsToNote\" ttn
   WHERE NOT EXISTS (SELECT 1 FROM tag t WHERE t.id=ttn.\"tagId\")
@@ -128,6 +120,6 @@ docker compose exec -T db psql -U postgres -d postgres -c \
 
 - 目标 Workspace 查询结果为 0 行。
 - 核心表关键词命中为 0。
-- Workspace、RAG、标签关系、引用关系没有 orphan 记录。
+- Workspace、标签关系、引用关系没有 orphan 记录。
 - 剩余附件都归属于现存 Workspace。
 - 本地 `docker/data/blinkora` 或 `~/.blinkora/local/data` 下没有目标业务关键词文件名。

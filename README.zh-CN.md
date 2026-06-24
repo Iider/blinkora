@@ -1,6 +1,6 @@
 # Blinkora
 
-Blinkora 是一个 Docker 部署的 Web-only 私人笔记和记忆底座，聚焦长期笔记、wiki 式记忆、标签、附件、引用、回顾、搜索/RAG、导出和私有批注。
+Blinkora 是一个 Docker 部署的 Web-only 私人笔记和记忆底座，聚焦长期笔记、wiki 式记忆、标签、附件、引用、回顾、搜索、导出和私有批注。
 
 Blinkora 由 Rust 后端直接托管浏览器应用。原生客户端、离线安装/运行时壳、公开分享、社交功能和对话式 AI 功能都不在当前产品范围内。
 
@@ -15,6 +15,8 @@ Blinkora 由 Rust 后端直接托管浏览器应用。原生客户端、离线�
 | Docker 部署 | `docker/` | 默认部署入口 |
 
 Rust 后端以单二进制承接 REST API、tRPC 兼容入口、文件接口、MCP SSE、健康检查、首启建表和 React/Vite 静态资源托管。
+
+当前搜索只提供关键词、metadata、类型、标签、附件、链接、TODO 和日期筛选；不内置 RAG、embedding、向量检索或语义检索。Workspace Agent/MCP 令牌只是给外部 Agent 的授权读写入口，不等同于 RAG 索引。
 
 ## Docker 部署
 

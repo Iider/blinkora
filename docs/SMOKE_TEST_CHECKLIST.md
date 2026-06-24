@@ -6,7 +6,7 @@
 
 - 当前统一入口：`http://localhost:6676`。
 - 当前主运行栈：Rust，统一入口为 `6676`。完整 Docker 部署使用 `blinkora-web` / `blinkora-db`；本机持久化部署只保留 Docker `blinkora-db`，Rust Web 服务由 macOS `launchd` 运行。
-- Rust 后端固定 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_SMOKE_USER=<test-user> BLINKORA_SMOKE_PASSWORD=<test-password> bun run smoke:rust`，覆盖健康检查、静态资源、登录/注册、用户详情、Public、字体、Workspace、配置、笔记编辑、只改类型不丢正文、历史版本/引用/排序、标签、评论/回复/更新/删除/转 TODO、附件资源页文件夹创建/列表/重命名/移动/删除、文件上传、错误 workspace 文件读/删拒绝、同前缀兄弟文件夹不误删、导出、备份导入为新 Workspace、导入后附件路径替换与恢复文件读取、回收站、批量删除、MCP SSE 未鉴权拒绝、握手、工具清单、note/comment/tag tree 工具调用主路径、Workspace Agent token 创建/列表回显/资源下载/越权拒绝/撤销失效。设置 `BLINKORA_S3_SMOKE_*` 环境变量后，还会验证真实 S3 配置、`/api/s3file/*` 上传读取、资源移动和对象删除。
+- Rust 后端固定 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_SMOKE_USER=<test-user> BLINKORA_SMOKE_PASSWORD=<test-password> bun run smoke:rust`，覆盖健康检查、静态资源、登录/注册、用户详情、Public、字体、Workspace、配置、普通关键词/筛选检索、笔记编辑、只改类型不丢正文、历史版本/引用/排序、标签、评论/回复/更新/删除/转 TODO、附件资源页文件夹创建/列表/重命名/移动/删除、文件上传、错误 workspace 文件读/删拒绝、同前缀兄弟文件夹不误删、导出、备份导入为新 Workspace、导入后附件路径替换与恢复文件读取、回收站、批量删除、MCP SSE 未鉴权拒绝、握手、工具清单、note/comment/tag tree 工具调用主路径、Workspace Agent token 创建/列表回显/资源下载/越权拒绝/撤销失效。设置 `BLINKORA_S3_SMOKE_*` 环境变量后，还会验证真实 S3 配置、`/api/s3file/*` 上传读取、资源移动和对象删除。
 - Workspace Agent 专项 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_ACCOUNT_TOKEN=<account_jwt> bun run smoke:agent`，只覆盖工作区令牌、MCP 工具、Skill/指南下载、Workspace 隔离、越权拒绝和刷新失效。
 - Web 端口固定使用 `6676`，避免 Chromium / Edge 的 unsafe port 限制。
 - 优先使用浏览器真实交互验证，必要时再补充容器日志和接口检查。
@@ -69,7 +69,7 @@ Docker compose 文件：
 | [ ] | 管理弹窗内创建 | 打开 `管理工作区` 后点击 `创建工作区`，输入 `烟测工作区 YYYY-MM-DD` 并创建 | 创建弹窗关闭，管理弹窗仍保留，新工作区自动成为当前工作区 |
 | [ ] | Workspace 切换 | 在下拉或管理弹窗中切换测试 Workspace / 默认 Workspace | 页面数据按 Workspace 刷新，无串数据 |
 | [ ] | 删除非当前 Workspace | 在管理弹窗删除一个非默认、非当前 Workspace | 二次确认关闭，Workspace 从列表消失，当前 Workspace 不变 |
-| [ ] | 删除当前 Workspace | 切到带测试附件的临时 Workspace 后在管理弹窗删除它 | 二次确认明确提示会删除关联本地/S3 文件和 RAG 索引；删除后自动回到默认 Workspace，请求不再携带已删除的 `x-workspace-id`，测试附件对象和索引无残留 |
+| [ ] | 删除当前 Workspace | 切到带测试附件的临时 Workspace 后在管理弹窗删除它 | 二次确认明确提示会删除关联本地/S3 文件；删除后自动回到默认 Workspace，请求不再携带已删除的 `x-workspace-id`，测试附件对象无残留 |
 | [ ] | 默认 Workspace 保护 | 尝试删除默认 Workspace | 删除入口禁用或拒绝，不删除默认 Workspace |
 
 ## 3. 笔记核心路径
@@ -158,6 +158,8 @@ Docker compose 文件：
 | [ ] | 标签列表 | 侧栏或标签面板查看测试标签 | 标签显示正常，点击后能筛选 |
 | [ ] | 未使用标签清理 | 创建只被一张测试卡片使用的唯一标签，再彻底删除该卡片 | 标签不再被任何卡片引用后从标签列表消失 |
 | [ ] | 搜索卡片 | 使用顶部搜索搜索 `烟测` | 返回测试卡片 |
+| [ ] | 普通检索边界 | 搜索包含 `@` 的普通文本，并组合标签、附件、链接、TODO 或日期筛选 | `@` 作为普通字符处理；筛选条件仍生效；结果仍是普通笔记列表 |
+| [ ] | 无 RAG 设计入口 | 检查搜索框、设置页和接口返回 | 当前项目只提供普通关键词/metadata 检索，不提供 RAG、embedding、语义检索、索引状态或模型配置入口 |
 | [ ] | 类型筛选 | 切换闪念 / 笔记 / 待办 / 归档 / 回收站 | 各列表数据隔离正确 |
 | [ ] | 日期或高级筛选 | 若筛选面板可用，设置简单条件 | 列表按条件刷新，无前端错误 |
 
@@ -198,7 +200,7 @@ Docker compose 文件：
 | [ ] | 删除测试资源 | 对仅测试使用的附件选择连同资源删除 | 资源页无测试文件残留 |
 | [ ] | 删除测试标签 | 若创建了测试标签，清理标签 | 标签面板无测试标签残留 |
 | [ ] | 删除测试 Workspace | 若创建了临时 Workspace 且 UI 支持删除，删除它 | 默认 Workspace 保留，临时 Workspace 不再出现在下拉 |
-| [ ] | 复查 Workspace 残留 | 按 `docs/WORKSPACE_DATA_LIFECYCLE.md` 执行关键词、orphan 和 RAG 检查 | 临时 Workspace 关键词命中为 0，关系表和向量表无 orphan |
+| [ ] | 复查 Workspace 残留 | 按 `docs/WORKSPACE_DATA_LIFECYCLE.md` 执行关键词和 orphan 检查 | 临时 Workspace 关键词命中为 0，关系表无 orphan |
 | [ ] | 复查日志 | Docker 模式看 `docker compose logs --tail=80 web`；本机持久化模式看 `~/.blinkora/local/logs` | 无烟测期间新增服务端异常 |
 
 ## 通过标准

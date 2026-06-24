@@ -43,7 +43,7 @@ openssl rand -hex 32
 
 | 路径 | 容器路径 | 用途 |
 | --- | --- | --- |
-| `data/blinkora` | `/app/.blinkora` | 附件、图片、临时上传和向量文件 |
+| `data/blinkora` | `/app/.blinkora` | 附件、图片和临时上传 |
 | `data/backup` | `/app/backup` | 导出备份目录 |
 | `data/postgres` | `/var/lib/postgresql/data` | PostgreSQL 数据目录 |
 
@@ -51,7 +51,7 @@ Postgres 官方镜像初始化数据库时要求数据目录为空；首次启�
 
 ## 存储
 
-默认附件存储在 `data/blinkora/files`。切换到 S3 兼容对象存储后，上传文件写入设置页配置的桶和自定义路径；本地目录仍保留用于临时文件、导出和向量数据。
+默认附件存储在 `data/blinkora/files`。切换到 S3 兼容对象存储后，上传文件写入设置页配置的桶和自定义路径；本地目录仍保留用于临时文件和导出。
 
 S3 配置在应用设置页维护，不写入 `docker/.env`。填写端点、访问密钥 ID、访问密钥、桶、地区后执行“保存并验证”。验证通过才启用 S3；验证失败时运行时继续使用本地存储，设置页保留 S3 表单以便继续修改。
 

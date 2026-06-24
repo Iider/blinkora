@@ -10,7 +10,6 @@ pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
     registry.insert("config.list", list);
     registry.insert("config.update", update);
     registry.insert("config.saveAndValidateS3", save_and_validate_s3);
-    registry.insert("config.ai", ai);
 }
 
 fn list(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
@@ -131,89 +130,6 @@ fn save_and_validate_s3(ctx: ProcedureContext, input: Value) -> ProcedureFuture 
         }
     }
     .boxed()
-}
-
-fn ai(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
-    async move {
-        let config_type = input.get("type").and_then(Value::as_str).unwrap_or("embeddingModel");
-        if config_type != "embeddingModel" {
-            return Ok(Value::Null);
-        }
-
-        let user_id = ctx.user.as_ref().map(|user| user.id).unwrap_or_default();
-        let workspace_id = resolve_workspace_id(&ctx, user_id).await.unwrap_or_default();
-        let model_id = config_value(&ctx, "embeddingModelId", user_id, workspace_id)
-            .await?
-            .and_then(|value| value.as_i64())
-            .map(|value| value as i32);
-        let Some(model_id) = model_id else {
-            return Ok(Value::Null);
-        };
-
-        let Some(row) = sqlx::query(
-            r#"SELECT
-                   m.title AS model_title,
-                   m."modelKey" AS model_key,
-                   m.capabilities AS capabilities,
-                   p.id AS provider_id,
-                   p.title AS provider_title,
-                   p.provider AS provider,
-                   p."baseURL" AS base_url,
-                   p."apiKey" AS api_key
-               FROM "aiModels" m
-               JOIN "aiProviders" p ON p.id=m."providerId"
-               WHERE m.id=$1"#,
-        )
-        .bind(model_id)
-        .fetch_optional(ctx.state.pool())
-        .await?
-        else {
-            return Ok(Value::Null);
-        };
-
-        Ok(json!({
-            "title": row.get::<String, _>("model_title"),
-            "modelKey": row.get::<String, _>("model_key"),
-            "capabilities": row.get::<Value, _>("capabilities"),
-            "provider": {
-                "id": row.get::<i32, _>("provider_id"),
-                "title": row.get::<String, _>("provider_title"),
-                "provider": row.get::<String, _>("provider"),
-                "baseURL": row.get::<Option<String>, _>("base_url"),
-                "apiKey": row.get::<Option<String>, _>("api_key")
-            }
-        }))
-    }
-    .boxed()
-}
-
-async fn config_value(
-    ctx: &ProcedureContext,
-    key: &str,
-    user_id: i32,
-    workspace_id: i32,
-) -> anyhow::Result<Option<Value>> {
-    let row = if user_id > 0 && workspace_id > 0 {
-        sqlx::query(
-            r#"SELECT config FROM config
-               WHERE key=$1 AND ("userId" IS NULL OR ("userId"=$2 AND "workspaceId"=$3))
-               ORDER BY CASE WHEN "userId"=$2 AND "workspaceId"=$3 THEN 0 ELSE 1 END
-               LIMIT 1"#,
-        )
-        .bind(key)
-        .bind(user_id)
-        .bind(workspace_id)
-        .fetch_optional(ctx.state.pool())
-        .await?
-    } else {
-        sqlx::query(r#"SELECT config FROM config WHERE key=$1 AND "userId" IS NULL LIMIT 1"#)
-            .bind(key)
-            .fetch_optional(ctx.state.pool())
-            .await?
-    };
-    Ok(row
-        .and_then(|row| row.try_get::<Option<Value>, _>("config").ok().flatten())
-        .map(|value| unwrap_config_value(Some(value))))
 }
 
 async fn resolve_workspace_id(ctx: &ProcedureContext, user_id: i32) -> anyhow::Result<i32> {
