@@ -460,6 +460,22 @@ async function main() {
     got,
   );
 
+  const contentOnlyUpdate = await mcp.rpc("tools/call", {
+    name: "updateBlinkora",
+    arguments: {
+      id: noteValue.id,
+      content: `Agent smoke content-only note ${stamp} #agent-smoke-${stamp}`,
+    },
+  });
+  assert(
+    contentOnlyUpdate.result?.structuredContent?.type === 1 &&
+      contentOnlyUpdate.result?.structuredContent?.content.includes(
+        "content-only",
+      ),
+    "MCP updateBlinkora preserves omitted type",
+    contentOnlyUpdate,
+  );
+
   const updated = await mcp.rpc("tools/call", {
     name: "updateBlinkora",
     arguments: {
@@ -474,6 +490,29 @@ async function main() {
       updated.result?.structuredContent?.metadata?.kind === "updated",
     "MCP updateBlinkora",
     updated,
+  );
+
+  const propertyUpdate = await mcp.rpc("tools/call", {
+    name: "updateBlinkora",
+    arguments: {
+      id: noteValue.id,
+      metadata: {
+        smokeKey: stamp,
+        kind: "updated",
+        properties: {
+          status: "open",
+          rating: 4,
+          labels: ["agent-smoke"],
+        },
+      },
+    },
+  });
+  assert(
+    propertyUpdate.result?.structuredContent?.type === 1 &&
+      propertyUpdate.result?.structuredContent?.metadata?.properties?.status ===
+        "open",
+    "MCP updateBlinkora writes custom properties",
+    propertyUpdate,
   );
 
   const metadataSearch = await mcp.rpc("tools/call", {
@@ -491,6 +530,24 @@ async function main() {
     ),
     "MCP metadata search",
     metadataSearch,
+  );
+
+  const propertySearch = await mcp.rpc("tools/call", {
+    name: "searchBlinkora",
+    arguments: {
+      metadata: { properties: { status: "open" } },
+      includePageInfo: true,
+      page: 1,
+      size: 20,
+      type: "note",
+    },
+  });
+  assert(
+    propertySearch.result?.structuredContent?.notes?.some(
+      (item) => item.id === noteValue.id,
+    ) && propertySearch.result?.structuredContent?.pageInfo?.page === 1,
+    "MCP metadata.properties search with page info",
+    propertySearch,
   );
 
   const addedReference = await mcp.rpc("tools/call", {

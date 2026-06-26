@@ -183,10 +183,10 @@ Docker compose 文件：
 | --- | --- | --- | --- |
 | [ ] | 未鉴权拒绝 | 不携带 token 请求 `GET /sse` | 返回 `401`，不会建立 SSE 连接 |
 | [ ] | SSE 握手 | 使用经授权的测试 token 通过 `@modelcontextprotocol/sdk` 的 `SSEClientTransport` 连接 `/sse` | 客户端完成 `connect()`，服务端建立对应 session |
-| [ ] | 工具清单 | 在已连接客户端调用 `tools/list` | 返回 note、comment 和 tag tree 相关工具：`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listComments`、`createComment`、`updateComment`、`listTagTree` |
-| [ ] | Workspace Agent 工具清单 | 使用 Workspace Agent token 连接 `/sse` 后调用 `tools/list` | 返回 `searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listComments`、`createComment`、`updateComment`、`listTagTree` |
+| [ ] | 工具清单 | 在已连接客户端调用 `tools/list` | 返回 workspace context、note、reference、comment 和 tag tree 相关工具：`getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree` |
+| [ ] | Workspace Agent 工具清单 | 使用 Workspace Agent token 连接 `/sse` 后调用 `tools/list` | 返回 `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree` |
 | [ ] | Workspace Agent 越权拒绝 | 用 Workspace A 的 Agent token 携带 Workspace B 的 `x-workspace-id` 或调用 `workspaces.list` / `config.list` | 错误 workspace 被 `401` 拒绝；非白名单 tRPC 返回 `403` |
-| [ ] | Workspace Agent 数据隔离 | Workspace A/B 各写一条测试笔记，用 Workspace A 的 Agent token 搜索 | 可读写 A 的闪念、笔记、待办和评论，可读 A 标签树，不能读到 B 的内容 |
+| [ ] | Workspace Agent 数据隔离 | Workspace A/B 各写一条测试笔记，用 Workspace A 的 Agent token 搜索 | 可读写 A 的闪念、笔记、待办、评论、引用和自定义属性，可读 A 标签树，不能读到 B 的内容 |
 | [ ] | Workspace Agent 资源下载 | 使用任意有效 Workspace Agent token 读取 `/api/agent/mcp-guide.md`、`/api/agent/blinkora-workspace/SKILL.md`、`/api/agent/blinkora-workspace.zip` | 返回只读安装资源，包含 MCP/Skill 使用说明，不暴露其他 Workspace 数据 |
 | [ ] | 只读工具回路 | 调用小页查询的 `searchBlinkora` | 返回 `success=true`，GET SSE 与 POST `/messages` 回到同一连接 |
 | [ ] | 连接关闭日志 | 关闭 MCP 客户端后复查 web 日志 | 无新增 MCP 错误，transport 能正常关闭 |

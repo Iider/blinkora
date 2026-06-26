@@ -333,12 +333,18 @@ curl -fsSL \\
 
 权限边界：
 - 仅限工作区：${workspaceName}
-- 可创建、读取、修改闪念、笔记、待办和评论
+- 可创建、读取、修改闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性
 - 可读取标签树
 - 不允许访问其他工作区、文件、备份、配置和管理接口
 
 推荐 MCP 工具：
-searchBlinkora、getBlinkora、upsertBlinkora、updateBlinkora、deleteBlinkora、listComments、createComment、updateComment、listTagTree
+getWorkspaceContext、searchBlinkora、getBlinkora、upsertBlinkora、updateBlinkora、deleteBlinkora、listReferences、addReference、removeReference、setReferences、listComments、createComment、updateComment、listTagTree
+
+写入提醒：
+- 搜索是普通关键词 / metadata 检索，不是语义、向量、embedding 或 RAG 搜索。
+- metadata.properties 是自定义属性；修改 metadata 前先读原笔记并合并，避免覆盖导入键、来源、哈希等维护字段。
+- updateBlinkora 不传 content、type 或状态字段时保持原值。
+- 不能通过工作区令牌读写附件文件、彻底删除笔记或跨 Workspace 移动卡片。
 
 注意：
 ${statusLine}`

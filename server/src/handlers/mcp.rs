@@ -186,7 +186,16 @@ fn tool_list(user: &CurrentUser) -> Value {
                         "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": -1 },
                         "isArchived": { "type": ["boolean", "null"], "default": false },
                         "isRecycle": { "type": "boolean", "default": false },
-                        "metadata": { "type": ["object", "null"], "description": "Top-level metadata subset to match exactly." },
+                        "tagId": { "type": ["number", "null"] },
+                        "withoutTag": { "type": "boolean", "default": false },
+                        "withFile": { "type": "boolean", "default": false },
+                        "withLink": { "type": "boolean", "default": false },
+                        "hasTodo": { "type": "boolean", "default": false },
+                        "startDate": { "type": "string", "description": "ISO timestamp or date string. Used only with endDate." },
+                        "endDate": { "type": "string", "description": "ISO timestamp or date string. Used only with startDate." },
+                        "orderBy": { "type": "string", "enum": ["asc", "desc"], "default": "desc" },
+                        "includePageInfo": { "type": "boolean", "default": false },
+                        "metadata": { "type": ["object", "null"], "description": "Metadata JSON subset to match with containment, for example {\"properties\":{\"status\":\"open\"}}." },
                         "metadataContains": { "type": ["object", "null"], "description": "Alias for metadata." }
                     }
                 }
@@ -214,8 +223,12 @@ fn tool_list(user: &CurrentUser) -> Value {
                     "properties": {
                         "content": { "type": "string" },
                         "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": "blinkora" },
-                        "metadata": { "type": ["object", "null"] },
-                        "references": { "type": ["array", "null"], "items": { "oneOf": [{ "type": "number" }, { "type": "object" }] } }
+                        "isArchived": { "type": "boolean", "default": false },
+                        "isRecycle": { "type": "boolean", "default": false },
+                        "isTop": { "type": "boolean", "default": false },
+                        "isReviewed": { "type": "boolean", "default": false },
+                        "metadata": { "type": ["object", "null"], "description": "Complete metadata object. Store human-readable custom properties under metadata.properties." },
+                        "references": { "type": ["array", "null"], "items": { "oneOf": [{ "type": "number" }, { "type": "object" }] }, "description": "Complete outgoing reference set when provided." }
                     },
                     "required": ["content"]
                 }
@@ -230,9 +243,13 @@ fn tool_list(user: &CurrentUser) -> Value {
                     "properties": {
                         "id": { "type": "number" },
                         "content": { "type": "string" },
-                        "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": "blinkora" },
-                        "metadata": { "type": ["object", "null"] },
-                        "references": { "type": ["array", "null"], "items": { "oneOf": [{ "type": "number" }, { "type": "object" }] } }
+                        "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "description": "Omit to preserve the current note type." },
+                        "isArchived": { "type": "boolean", "description": "Omit to preserve the current archived state." },
+                        "isRecycle": { "type": "boolean", "description": "Omit to preserve the current recycle-bin state." },
+                        "isTop": { "type": "boolean", "description": "Omit to preserve the current pinned state." },
+                        "isReviewed": { "type": "boolean", "description": "Omit to preserve the current review state." },
+                        "metadata": { "type": ["object", "null"], "description": "Complete metadata object. Read, merge, then write when changing only metadata.properties." },
+                        "references": { "type": ["array", "null"], "items": { "oneOf": [{ "type": "number" }, { "type": "object" }] }, "description": "Complete outgoing reference set when provided." }
                     },
                     "required": ["id"]
                 }
@@ -491,25 +508,37 @@ async fn search_blinkora(
     user: CurrentUser,
     mut arguments: Value,
 ) -> anyhow::Result<Value> {
-    normalize_note_type(&mut arguments, -1);
+    normalize_note_type(&mut arguments, Some(-1));
     let result = crate::trpc::execute_procedure(state, user, "notes.list", arguments).await?;
-    let notes = if result.is_array() {
-        result
+    let (notes, page_info) = if result.is_array() {
+        (result, None)
     } else {
-        result
-            .get("items")
-            .cloned()
-            .unwrap_or_else(|| Value::Array(Vec::new()))
+        let info = json!({
+            "total": result.get("total").cloned().unwrap_or(Value::Null),
+            "page": result.get("page").cloned().unwrap_or(Value::Null),
+            "size": result.get("size").cloned().unwrap_or(Value::Null)
+        });
+        (
+            result
+                .get("items")
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new())),
+            Some(info),
+        )
     };
     let count = notes
         .as_array()
         .map(|items| items.len())
         .unwrap_or_default();
-    Ok(json!({
+    let mut response = json!({
         "success": true,
         "notes": notes,
         "message": format!("Found {count} notes matching your search criteria")
-    }))
+    });
+    if let Some(page_info) = page_info {
+        response["pageInfo"] = page_info;
+    }
+    Ok(response)
 }
 
 async fn upsert_blinkora(
@@ -518,7 +547,7 @@ async fn upsert_blinkora(
     mut arguments: Value,
     id: Option<i32>,
 ) -> anyhow::Result<Value> {
-    normalize_note_type(&mut arguments, 0);
+    normalize_note_type(&mut arguments, if id.is_some() { None } else { Some(0) });
     if let Some(id) = id {
         arguments["id"] = json!(id);
     }
@@ -549,21 +578,22 @@ fn build_tag_tree(tags: &[Value], parent: i64) -> Vec<Value> {
         .collect()
 }
 
-fn normalize_note_type(arguments: &mut Value, default_type: i32) {
-    let type_value = arguments
-        .get("type")
-        .cloned()
-        .unwrap_or_else(|| json!(default_type));
+fn normalize_note_type(arguments: &mut Value, default_type: Option<i32>) {
+    let type_value = match (arguments.get("type").cloned(), default_type) {
+        (Some(value), _) => value,
+        (None, Some(value)) => json!(value),
+        (None, None) => return,
+    };
     let normalized = match type_value {
         Value::String(value) => match value.to_lowercase().as_str() {
             "all" | "-1" => -1,
             "note" | "1" => 1,
             "todo" | "2" => 2,
             "blinkora" | "0" => 0,
-            _ => default_type,
+            _ => default_type.unwrap_or(0),
         },
         Value::Number(value) => value.as_i64().unwrap_or(0) as i32,
-        _ => default_type,
+        _ => default_type.unwrap_or(0),
     };
     arguments["type"] = json!(normalized);
 }
@@ -601,4 +631,35 @@ fn json_rpc_error(id: Option<Value>, code: i32, message: &str) -> Value {
             "message": message
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_note_type;
+    use serde_json::json;
+
+    #[test]
+    fn normalize_note_type_applies_default_for_create_and_search() {
+        let mut create_args = json!({});
+        normalize_note_type(&mut create_args, Some(0));
+        assert_eq!(create_args["type"], json!(0));
+
+        let mut search_args = json!({});
+        normalize_note_type(&mut search_args, Some(-1));
+        assert_eq!(search_args["type"], json!(-1));
+    }
+
+    #[test]
+    fn normalize_note_type_preserves_missing_update_type() {
+        let mut update_args = json!({ "id": 1, "content": "keep current type" });
+        normalize_note_type(&mut update_args, None);
+        assert!(update_args.get("type").is_none());
+    }
+
+    #[test]
+    fn normalize_note_type_still_accepts_update_type_aliases() {
+        let mut update_args = json!({ "id": 1, "type": "todo" });
+        normalize_note_type(&mut update_args, None);
+        assert_eq!(update_args["type"], json!(2));
+    }
 }

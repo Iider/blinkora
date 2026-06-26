@@ -101,11 +101,19 @@ export BLINKORA_AGENT_TOKEN="bkws_xxx"
 - `updateComment`
 - `listTagTree`
 
+要点：
+
+- `searchBlinkora` 是普通关键词和 metadata 检索，不提供语义、向量、embedding 或 RAG 搜索。
+- 常用筛选：`searchText`、`type`、`isArchived`、`isRecycle`、`tagId`、`withoutTag`、`withFile`、`withLink`、`hasTodo`、`startDate`、`endDate`、`metadata` / `metadataContains`。
+- `isArchived` 默认只查未归档；传 `true` 查归档，传 `null` 同时查普通和归档。`isRecycle: true` 查回收站。
+- `metadata.properties` 是给人看的自定义属性，只放扁平值：字符串、数字、布尔、`null` 或字符串数组。修改属性前先读原笔记并合并完整 `metadata`，不要覆盖导入键、来源、哈希等维护字段。
+- `deleteBlinkora` 只移入回收站；MCP 不暴露彻底删除、附件文件读写或跨 Workspace 移动。
+
 ## 使用边界
 
 - MCP 和 Skill 只描述 Blinkora 的通用读写能力、安全边界和数据字段。
 - 具体工作区怎么写、怎么分类、保留什么内容、如何使用标签和引用，应写在该工作区或项目自己的 `AGENTS.md`。
-- `metadata` 可保存导入键、外部 ID、来源路径、哈希、schema 或工作流状态；具体字段语义由对应 `AGENTS.md` 约定。
+- `metadata` 可保存导入键、外部 ID、来源路径、哈希、schema、自定义属性或工作流状态；具体字段语义由对应 `AGENTS.md` 约定。
 
 ## 下载 Skill
 
@@ -137,7 +145,7 @@ curl -fsSL \
 ## 安全边界
 
 - 工作区令牌只能访问被绑定的单个 Workspace。
-- 可读写闪念、笔记、待办、评论和笔记引用。
+- 可读写闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性。
 - 可读取标签树；通过正文 hashtag 自动同步标签。
 - 不能访问其他 Workspace、文件、备份、配置和管理接口。
 - 不要把 token 写进仓库、脚本、提交记录或公开日志。
@@ -145,12 +153,12 @@ curl -fsSL \
 
 const BLINKORA_WORKSPACE_SKILL_MD: &str = r#"---
 name: blinkora-workspace
-description: Use when an agent needs workspace-scoped access to Blinkora notes, blinkoras, todos, comments, and the tag tree through Blinkora MCP with BLINKORA_BASE_URL and BLINKORA_AGENT_TOKEN.
+description: Use when an agent needs workspace-scoped access to Blinkora notes, blinkoras, todos, comments, note references, custom note properties, and the tag tree through Blinkora MCP with BLINKORA_BASE_URL and BLINKORA_AGENT_TOKEN.
 ---
 
 # Blinkora Workspace
 
-Use this skill to operate one authorized Blinkora workspace from an external Agent such as Codex, OpenClaw, Pi Agent, or Hermes.
+Operate one authorized Blinkora workspace from an external Agent such as Codex, OpenClaw, Pi Agent, or Hermes.
 
 ## Environment
 
@@ -159,7 +167,7 @@ Require these environment variables:
 - `BLINKORA_BASE_URL`: Blinkora Web/API base URL, for example `http://localhost:6676`.
 - `BLINKORA_AGENT_TOKEN`: Workspace-scoped token created in Blinkora settings.
 
-Never write the token into a repo file, script, skill, shell history snippet, or log. Treat it as a secret. The skill does not provide security isolation; Blinkora backend enforces workspace scope.
+Never write the token into a repo file, script, skill, shell history snippet, or log. Treat it as a secret. Local instructions do not provide security isolation; Blinkora backend enforces workspace scope.
 
 ## Install / Refresh
 
@@ -210,10 +218,19 @@ Prefer these MCP tools:
 - `updateComment`: update a comment by `id`.
 - `listTagTree`: read the current workspace tag tree.
 
-`upsertBlinkora` and `updateBlinkora` accept optional `metadata` and `references`.
+Returned notes include `id`, `type`, `content`, status flags, `metadata`, tags, attachment metadata, outgoing `references`, incoming `referencedBy`, and timestamps.
+
+`searchBlinkora` supports ordinary keyword and metadata search only; do not assume semantic, vector, embedding, or RAG search exists. Useful filters include `searchText`, `type`, `isArchived`, `isRecycle`, `tagId`, `withoutTag`, `withFile`, `withLink`, `hasTodo`, `startDate`, `endDate`, `metadata` / `metadataContains`, and `includePageInfo`.
+
+`isArchived` defaults to `false`; pass `true` for archived notes and `null` to search both normal and archived notes. Pass `isRecycle: true` for recycle-bin notes. `deleteBlinkora` only moves notes to the recycle bin; MCP does not expose hard deletion.
+
+`upsertBlinkora` and `updateBlinkora` accept optional status flags, `metadata`, and `references`. On update, omit `content`, `type`, `isArchived`, `isRecycle`, `isTop`, or `isReviewed` to keep the current value.
+
 Use `metadata` for machine-readable maintenance fields such as `importSourceKey`, `sourcePath`, `sourceUrl`, `sha256`, `originalType`, `originalTitle`, `externalId`, `schema`, or workflow-specific state.
+Use `metadata.properties` for human-readable custom properties shown in Blinkora. Keep properties flat: `string`, `number`, `boolean`, `null`, or `string[]`.
+When changing only properties, read the note first and merge into the full existing `metadata`; writing `metadata` replaces the whole metadata object.
 Use `references` as an array of target note ids when the complete outgoing reference set is known.
-Use `searchBlinkora` with `metadata` or `metadataContains` for top-level exact metadata matching.
+Use `searchBlinkora` with `metadata` or `metadataContains` for JSON subset matching, for example `{ "properties": { "status": "open" } }`.
 
 ## Write Rules
 
@@ -223,6 +240,7 @@ Before writing:
 - Confirm note ids and comment ids by reading them first when the user did not provide exact ids.
 - For large edits, read the current object first and preserve fields not being changed.
 - Do not try to read or write attachment files; only use attachment metadata already returned with notes.
+- Do not move notes between workspaces; workspace-scoped tokens cannot call workspace management or move endpoints.
 - Do not modify the tag tree directly. To assign tags, write hashtags in content, for example `#项目/类型/概念`; Blinkora will create and sync the tag tree.
 - For idempotent imports, use a stable `metadata.importSourceKey` or another stable workflow key, then search by that metadata before creating a new note.
 - For migrations or graph-style writes, create or update notes first, then run a second pass to call `setReferences` after all target ids are known.

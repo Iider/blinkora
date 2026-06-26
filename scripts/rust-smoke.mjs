@@ -294,11 +294,16 @@ const mcpTools = await mcp.rpc('tools/list', {});
 const mcpToolNames = mcpTools.result?.tools?.map((tool) => tool.name) || [];
 assert(
   [
+    'getWorkspaceContext',
     'searchBlinkora',
     'getBlinkora',
     'upsertBlinkora',
     'updateBlinkora',
     'deleteBlinkora',
+    'listReferences',
+    'addReference',
+    'removeReference',
+    'setReferences',
     'listComments',
     'createComment',
     'updateComment',
@@ -558,11 +563,16 @@ const agentTools = await agentMcp.rpc('tools/list', {});
 const agentToolNames = agentTools.result?.tools?.map((tool) => tool.name) || [];
 assert(
   [
+    'getWorkspaceContext',
     'searchBlinkora',
     'getBlinkora',
     'upsertBlinkora',
     'updateBlinkora',
     'deleteBlinkora',
+    'listReferences',
+    'addReference',
+    'removeReference',
+    'setReferences',
     'listComments',
     'createComment',
     'updateComment',

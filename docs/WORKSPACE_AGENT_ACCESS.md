@@ -21,7 +21,7 @@ Blinkora 的工作区令牌用于把单个 Workspace 授权给外部 Agent，例
 - 数据库备份要按敏感数据处理。
 - 不要把 token 写进仓库、脚本、提交记录、公开日志或 Skill 文件。
 - 工作区令牌只能访问绑定的单个 Workspace。
-- 允许：闪念、笔记、待办、评论和笔记引用读写；标签树可读，标签通过正文 hashtag 自动同步。
+- 允许：闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性读写；标签树可读，标签通过正文 hashtag 自动同步。
 - 禁止：其他 Workspace、文件、备份、配置、工作区管理和 admin 类接口。
 
 ## MCP 使用
@@ -67,10 +67,17 @@ Authorization: Bearer ${BLINKORA_AGENT_TOKEN}
 Agent 批量导入或维护时建议：
 
 - 先调用 `getWorkspaceContext` 确认 token 绑定的 Workspace。
+- `searchBlinkora` 是普通关键词和 metadata 检索，不提供语义、向量、embedding 或 RAG 搜索。
+- 常用筛选：`searchText`、`type`、`isArchived`、`isRecycle`、`tagId`、`withoutTag`、`withFile`、`withLink`、`hasTodo`、`startDate`、`endDate`、`metadata` / `metadataContains`。
+- `isArchived` 默认只查未归档；传 `true` 查归档，传 `null` 同时查普通和归档。`isRecycle: true` 查回收站。
 - 用 `metadata.importSourceKey`、`metadata.sha256` 或其他稳定 workflow key 做幂等导入。
-- 用 `searchBlinkora` 的 `metadata` / `metadataContains` 做顶层 metadata 精确匹配，避免靠全文搜索猜记录。
+- 用 `searchBlinkora` 的 `metadata` / `metadataContains` 做 JSON 子集匹配，避免靠全文搜索猜记录。
+- `metadata.properties` 是给人看的自定义属性，只放扁平值：字符串、数字、布尔、`null` 或字符串数组。
+- 修改 `metadata.properties` 前先读原笔记并合并完整 `metadata`；`updateBlinkora` 传入 `metadata` 时会替换整个 metadata 对象，不要丢掉导入键、来源、哈希等维护字段。
+- `updateBlinkora` 未传 `content`、`type`、`isArchived`、`isRecycle`、`isTop`、`isReviewed` 时保持原值。
 - 先创建全部笔记，再用 `setReferences` 第二轮写入笔记间引用。
 - 通过正文写 `#父/子` 形式的标签，不直接写标签树。
+- 工作区令牌不能读写附件文件，不能彻底删除笔记，也不能跨 Workspace 移动卡片。
 - 具体工作区的内容保留策略、标签语义、metadata 字段语义、卡片或 wiki 写法，放到该工作区或项目的 `AGENTS.md`。
 
 ## Skill 和文档资源

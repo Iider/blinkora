@@ -92,7 +92,7 @@ Frontend dev uses `http://localhost:5173` and proxies API requests to the Rust d
 - 页面下拉框选择要授权的 Workspace，刷新按钮只更新这个下拉框选中的 Workspace token，不受页面顶栏当前 Workspace 影响。
 - 刷新会撤销该 Workspace 旧的可用 Agent token，并生成新的可回显 token；页面底部会给出一段可直接复制给 AI 的调用指南。
 - 任意有效工作区令牌都能读取只读安装资源：`${BLINKORA_BASE_URL}/api/agent/mcp-guide.md`、`${BLINKORA_BASE_URL}/api/agent/blinkora-workspace/SKILL.md`、`${BLINKORA_BASE_URL}/api/agent/blinkora-workspace.zip`。
-- 默认权限：闪念、笔记、待办读写；评论读写；标签树只读。
+- 默认权限：闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性读写；标签树只读，标签通过正文 hashtag 同步。
 - scoped token 只能访问 MCP 和 notes/comments/tags 白名单 tRPC，不能访问 workspaces、config、backup、files、admin 类接口。
 - 使用环境变量传给 Agent：`BLINKORA_BASE_URL=http://localhost:6676`、`BLINKORA_AGENT_TOKEN=<bkws_token>`。
 - MCP 入口优先用 `${BLINKORA_BASE_URL}/sse`，后续消息地址由 SSE 的 `endpoint` 事件返回。
