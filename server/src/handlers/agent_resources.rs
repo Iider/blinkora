@@ -109,6 +109,33 @@ export BLINKORA_AGENT_TOKEN="bkws_xxx"
 - `metadata.properties` 是给人看的自定义属性，只放扁平值：字符串、数字、布尔、`null` 或字符串数组。修改属性前先读原笔记并合并完整 `metadata`，不要覆盖导入键、来源、哈希等维护字段。
 - `deleteBlinkora` 只移入回收站；MCP 不暴露彻底删除、附件文件读写或跨 Workspace 移动。
 
+自定义属性写入示例：
+
+```json
+{
+  "id": 123,
+  "metadata": {
+    "importSourceKey": "保留原有维护字段",
+    "properties": {
+      "status": "open",
+      "rating": 4,
+      "tags": ["AI", "workflow"]
+    }
+  }
+}
+```
+
+卡片关联写入示例：
+
+```json
+{
+  "fromNoteId": 123,
+  "toNoteIds": [456, 789]
+}
+```
+
+单条增删用 `addReference` / `removeReference`；完整替换某张卡片的出链时才用 `setReferences`。
+
 ## 使用边界
 
 - MCP 和 Skill 只描述 Blinkora 的通用读写能力、安全边界和数据字段。
@@ -231,6 +258,33 @@ Use `metadata.properties` for human-readable custom properties shown in Blinkora
 When changing only properties, read the note first and merge into the full existing `metadata`; writing `metadata` replaces the whole metadata object.
 Use `references` as an array of target note ids when the complete outgoing reference set is known.
 Use `searchBlinkora` with `metadata` or `metadataContains` for JSON subset matching, for example `{ "properties": { "status": "open" } }`.
+
+Custom property update pattern:
+
+```json
+{
+  "id": 123,
+  "metadata": {
+    "importSourceKey": "keep-existing-maintenance-fields",
+    "properties": {
+      "status": "open",
+      "rating": 4,
+      "tags": ["AI", "workflow"]
+    }
+  }
+}
+```
+
+Reference update pattern:
+
+```json
+{
+  "fromNoteId": 123,
+  "toNoteIds": [456, 789]
+}
+```
+
+Use `addReference` or `removeReference` for one reference. Use `setReferences` only when replacing the complete outgoing reference set for `fromNoteId`.
 
 ## Write Rules
 

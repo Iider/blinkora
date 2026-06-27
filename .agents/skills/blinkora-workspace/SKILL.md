@@ -79,6 +79,33 @@ When changing only properties, read the note first and merge into the full exist
 Use `references` as an array of target note ids when the complete outgoing reference set is known.
 Use `searchBlinkora` with `metadata` or `metadataContains` for JSON subset matching, for example `{ "properties": { "status": "open" } }`.
 
+Custom property update pattern:
+
+```json
+{
+  "id": 123,
+  "metadata": {
+    "importSourceKey": "keep-existing-maintenance-fields",
+    "properties": {
+      "status": "open",
+      "rating": 4,
+      "tags": ["AI", "workflow"]
+    }
+  }
+}
+```
+
+Reference update pattern:
+
+```json
+{
+  "fromNoteId": 123,
+  "toNoteIds": [456, 789]
+}
+```
+
+Use `addReference` or `removeReference` for one reference. Use `setReferences` only when replacing the complete outgoing reference set for `fromNoteId`.
+
 ## Write Rules
 
 Before writing:

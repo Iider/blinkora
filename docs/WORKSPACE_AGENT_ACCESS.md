@@ -80,6 +80,35 @@ Agent 批量导入或维护时建议：
 - 工作区令牌不能读写附件文件，不能彻底删除笔记，也不能跨 Workspace 移动卡片。
 - 具体工作区的内容保留策略、标签语义、metadata 字段语义、卡片或 wiki 写法，放到该工作区或项目的 `AGENTS.md`。
 
+常见写法：
+
+自定义属性写到 `metadata.properties`。先读原笔记，再把原有 `metadata` 合并回去：
+
+```json
+{
+  "id": 123,
+  "metadata": {
+    "importSourceKey": "保留原有维护字段",
+    "properties": {
+      "status": "open",
+      "rating": 4,
+      "tags": ["AI", "workflow"]
+    }
+  }
+}
+```
+
+卡片关联用笔记 id 写有向引用。完整替换某张卡片的出链时调用 `setReferences`：
+
+```json
+{
+  "fromNoteId": 123,
+  "toNoteIds": [456, 789]
+}
+```
+
+只增删一条引用时，用 `addReference` 或 `removeReference`，不要为了单条修改误用 `setReferences` 覆盖整组出链。
+
 ## Skill 和文档资源
 
 这些只读资源用于让 AI 安装或加载 Blinkora Workspace Skill。任意有效工作区令牌都可以访问这些资源，但业务数据仍按 token 绑定的 Workspace 隔离。
