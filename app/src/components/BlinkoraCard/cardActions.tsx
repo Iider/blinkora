@@ -5,12 +5,15 @@ import { useTranslation } from 'react-i18next';
 import { Copy } from "../Common/Copy";
 import { Icon } from '@/components/Common/Iconify/icons';
 import { Note } from '@shared/lib/types';
+import { RootStore } from '@/store';
 import { BlinkoraStore } from '@/store/blinkoraStore';
+import { ToastPlugin } from '@/store/module/Toast/Toast';
 import { AnnotationTriggerButton } from './annotationButton';
 import { HistoryButton } from '../BlinkoraNoteHistory/HistoryButton';
 import { confirmDeleteNotes } from '@/lib/noteDeletion';
 import { PromiseCall } from '@/store/standard/PromiseState';
 import { api } from '@/lib/trpc';
+import { downloadNoteMarkdown } from './cardMarkdownExport';
 
 interface CardActionButtonsProps {
   blinkoraItem: Note;
@@ -18,6 +21,7 @@ interface CardActionButtonsProps {
   iconSize?: number | string;
   className?: string;
   itemClassName?: string;
+  showMarkdownExport?: boolean;
   showHistory?: boolean;
   onDeleted?: () => void;
   onTrashed?: () => void;
@@ -37,12 +41,25 @@ export const CardActionButtons = observer(({
   iconSize = 16,
   className = '',
   itemClassName = '',
+  showMarkdownExport = false,
   showHistory = true,
   onDeleted,
   onTrashed,
 }: CardActionButtonsProps) => {
   const { t } = useTranslation();
   const actionItemClassName = `inline-flex items-center justify-center ${itemClassName}`;
+
+  const handleExportMarkdown = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+
+    try {
+      downloadNoteMarkdown(blinkoraItem);
+      RootStore.Get(ToastPlugin).success(t('download-success'));
+    } catch (error) {
+      console.error('Failed to export markdown:', error);
+      RootStore.Get(ToastPlugin).error(t('download-failed'));
+    }
+  };
 
   const handleDelete = (e: MouseEvent) => {
     e.stopPropagation();
@@ -59,6 +76,24 @@ export const CardActionButtons = observer(({
 
   return (
     <div data-drag-ignore="true" className={`flex items-center gap-2 ${className}`}>
+      {showMarkdownExport && (
+        <Tooltip content={t('export-markdown')} delay={1000}>
+          <button
+            type="button"
+            aria-label={t('export-markdown')}
+            data-drag-ignore="true"
+            className={`cursor-pointer border-0 bg-transparent p-0 leading-none text-desc hover:text-primary ${actionItemClassName}`}
+            onClick={handleExportMarkdown}
+          >
+            <Icon
+              icon="tabler:file-export"
+              width={iconSize}
+              height={iconSize}
+            />
+          </button>
+        </Tooltip>
+      )}
+
       <div className={actionItemClassName}>
         <Copy
           size={Number(iconSize)}

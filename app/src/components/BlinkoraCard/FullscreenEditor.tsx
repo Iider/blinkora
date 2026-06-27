@@ -203,6 +203,7 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
       iconSize={20}
       className="rounded-full bg-background/80 px-1 py-0.5 shadow-sm backdrop-blur"
       itemClassName="h-8 w-8 justify-center"
+      showMarkdownExport
       showHistory={false}
       onDeleted={handleClose}
       onTrashed={handleClose}

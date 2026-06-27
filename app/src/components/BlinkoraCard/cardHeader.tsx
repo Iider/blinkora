@@ -104,6 +104,7 @@ export const CardHeader = observer(({
           blinkora={blinkora}
           iconSize={iconSize}
           className={`ml-auto ${actionVisibleClass}`}
+          showMarkdownExport
         />
 
         {blinkoraItem.isTop && (
