@@ -245,27 +245,28 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
             e.stopPropagation();
           }}
         >
-          {/* Top header with back button and toolbar (PC only) */}
-          {isPc && (
-            <div className="flex items-center justify-between py-4 flex-shrink-0 border-b border-border">
-              <Button
-                isIconOnly
-                variant="light"
-                size="sm"
-                onPress={handleClose}
-                className="text-foreground hover:bg-default-100"
-              >
-                <Icon icon="tabler:arrow-left" width={20} height={20} />
-              </Button>
-              <div className="flex-1 flex justify-end ml-2 gap-2">
-                {renderPreviewActions()}
-                {renderModeButton()}
-                {editorMode === 'edit' && (
-                  <div id={`editor-top-toolbar-${blinkoraItem.id}`} className="flex justify-end"></div>
-                )}
-              </div>
+          {/* Top header with back button and toolbar */}
+          <div
+            className={`flex items-center justify-between flex-shrink-0 border-b border-border bg-background ${isPc ? 'py-4' : 'px-1 pb-2 pt-2'}`}
+            style={!isPc ? { paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' } : undefined}
+          >
+            <Button
+              isIconOnly
+              variant="light"
+              size="sm"
+              onPress={handleClose}
+              className="text-foreground hover:bg-default-100"
+            >
+              <Icon icon="tabler:arrow-left" width={20} height={20} />
+            </Button>
+            <div className="flex-1 flex justify-end ml-2 gap-2">
+              {renderPreviewActions()}
+              {renderModeButton()}
+              {editorMode === 'edit' && (
+                <div id={`editor-top-toolbar-${blinkoraItem.id}`} className="flex justify-end"></div>
+              )}
             </div>
-          )}
+          </div>
           
           {editorMode === 'preview' ? (
             /* Preview mode - render with MarkdownRender */
@@ -301,28 +302,6 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
                 withoutOutline={true}
                 showTopToolbar={true}
               />
-            </div>
-          )}
-
-          {/* Bottom toolbar with back button (Mobile only) */}
-          {!isPc && (
-            <div className="flex items-center justify-between py-3 px-2 flex-shrink-0 border-t border-border bg-background" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
-              <Button
-                isIconOnly
-                variant="light"
-                size="sm"
-                onPress={handleClose}
-                className="text-foreground hover:bg-default-100"
-              >
-                <Icon icon="tabler:arrow-left" width={20} height={20} />
-              </Button>
-              <div className="flex-1 flex justify-end ml-2 gap-2">
-                {renderPreviewActions()}
-                {renderModeButton()}
-                {editorMode === 'edit' && (
-                  <div id={`editor-top-toolbar-${blinkoraItem.id}`} className="flex justify-end"></div>
-                )}
-              </div>
             </div>
           )}
         </div>
