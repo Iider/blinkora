@@ -30,6 +30,8 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
   const [viewMode, setViewMode] = useState<string>('wysiwyg');
   const [editorMode, setEditorMode] = useState<'preview' | 'edit'>('preview');
   const editorContainerRef = useRef<HTMLDivElement>(null);
+  const pointerStartedInsideRef = useRef(false);
+  const ignoreNextOutsideClickRef = useRef(false);
   
   // Clean up fullscreen editor state when closing
   const handleClose = () => {
@@ -137,11 +139,46 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
     };
   }, [isOpen, onClose, editorMode]);
 
+  const isInsideEditorContainer = (target: EventTarget | null) => {
+    return !!(
+      editorContainerRef.current &&
+      target instanceof Node &&
+      editorContainerRef.current.contains(target)
+    );
+  };
+
   const handleOutsideClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (ignoreNextOutsideClickRef.current) {
+      ignoreNextOutsideClickRef.current = false;
+      return;
+    }
+
     // Close if clicking outside the editor container
-    if (editorContainerRef.current && !editorContainerRef.current.contains(e.target as Node)) {
+    if (!isInsideEditorContainer(e.target)) {
       handleClose();
     }
+  };
+
+  const handlePointerDownCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+    const startedInside = isInsideEditorContainer(e.target);
+    pointerStartedInsideRef.current = startedInside;
+
+    // Only stop propagation if event is not from editor container (to prevent drag on background)
+    // Allow events from editor container to work normally
+    if (!startedInside) {
+      e.stopPropagation();
+    }
+  };
+
+  const handlePointerUpCapture = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (pointerStartedInsideRef.current && !isInsideEditorContainer(e.target)) {
+      ignoreNextOutsideClickRef.current = true;
+      window.setTimeout(() => {
+        ignoreNextOutsideClickRef.current = false;
+      }, 250);
+    }
+
+    pointerStartedInsideRef.current = false;
   };
 
   const handleEditorSended = async () => {
@@ -214,17 +251,12 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
     <div 
       className="fixed inset-0 z-[9999] bg-background overflow-hidden"
       onClick={handleOutsideClick}
-      onPointerDownCapture={(e) => {
-        // Only stop propagation if event is not from editor container (to prevent drag on background)
-        // Allow events from editor container to work normally
-        if (editorContainerRef.current && !editorContainerRef.current.contains(e.target as Node)) {
-          e.stopPropagation();
-        }
-      }}
+      onPointerDownCapture={handlePointerDownCapture}
+      onPointerUpCapture={handlePointerUpCapture}
       onTouchStartCapture={(e) => {
         // Only stop propagation if event is not from editor container (to prevent drag on background)
         // Allow events from editor container to work normally
-        if (editorContainerRef.current && !editorContainerRef.current.contains(e.target as Node)) {
+        if (!isInsideEditorContainer(e.target)) {
           e.stopPropagation();
         }
       }}
