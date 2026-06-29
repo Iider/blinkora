@@ -1,6 +1,6 @@
 ---
 name: blinkora-workspace
-description: Use when an agent needs workspace-scoped access to Blinkora notes, blinkoras, todos, comments, note references, custom note properties, and the tag tree through Blinkora MCP with BLINKORA_BASE_URL and BLINKORA_AGENT_TOKEN.
+description: Use when an agent needs workspace-scoped access to Blinkora notes, blinkoras, todos, comments, note references, custom note properties, operation logs, and the tag tree through Blinkora MCP with BLINKORA_BASE_URL and BLINKORA_AGENT_TOKEN.
 ---
 
 # Blinkora Workspace
@@ -64,6 +64,7 @@ Prefer these MCP tools:
 - `createComment`: create a comment for a note.
 - `updateComment`: update a comment by `id`.
 - `listTagTree`: read the current workspace tag tree.
+- `listOperationLogs`: read note operation logs. Use `afterId` as a cursor for incremental sync.
 
 Returned notes include `id`, `type`, `content`, status flags, `metadata`, tags, attachment metadata, outgoing `references`, incoming `referencedBy`, and timestamps.
 
@@ -71,7 +72,9 @@ Returned notes include `id`, `type`, `content`, status flags, `metadata`, tags, 
 
 `isArchived` defaults to `false`; pass `true` for archived notes and `null` to search both normal and archived notes. Pass `isRecycle: true` for recycle-bin notes. `deleteBlinkora` only moves notes to the recycle bin; MCP does not expose hard deletion.
 
-`upsertBlinkora` and `updateBlinkora` accept optional status flags, `metadata`, and `references`. On update, omit `content`, `type`, `isArchived`, `isRecycle`, `isTop`, or `isReviewed` to keep the current value.
+`upsertBlinkora` and `updateBlinkora` accept optional status flags, `metadata`, and `references`. On update, omit `content`, `type`, `isArchived`, `isRecycle`, `isTop`, or `isReviewed` to keep the current value. `isReviewed` means daily-review status, not moderation or approval.
+
+Use `listOperationLogs({ afterId, actorType: "user", noteTypes: [1], orderBy: "asc" })` before maintenance work when you need to see user changes since the last agent pass. Operation log actions `markDailyReviewed` and `markDailyUnreviewed` mean daily-review state changes, not approval or content audit.
 
 Use `metadata` for machine-readable maintenance fields such as `importSourceKey`, `sourcePath`, `sourceUrl`, `sha256`, `originalType`, `originalTitle`, `externalId`, `schema`, or workflow-specific state.
 Use `metadata.properties` for human-readable custom properties shown in Blinkora. Keep properties flat: `string`, `number`, `boolean`, `null`, or `string[]`.

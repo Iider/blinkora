@@ -107,9 +107,10 @@ export BLINKORA_AGENT_TOKEN="bkws_xxx"
 - `searchBlinkora` 是普通关键词和 metadata 检索，不提供语义、向量、embedding 或 RAG 搜索。
 - 常用筛选：`searchText`、`type`、`isArchived`、`isRecycle`、`tagId`、`withoutTag`、`withFile`、`withLink`、`hasTodo`、`startDate`、`endDate`、`metadata` / `metadataContains`。
 - `isArchived` 默认只查未归档；传 `true` 查归档，传 `null` 同时查普通和归档。`isRecycle: true` 查回收站。
+- `isReviewed` 表示每日回顾状态，不表示审核、审批或内容审计。
 - `metadata.properties` 是给人看的自定义属性，只放扁平值：字符串、数字、布尔、`null` 或字符串数组。修改属性前先读原笔记并合并完整 `metadata`，不要覆盖导入键、来源、哈希等维护字段。
 - `deleteBlinkora` 只移入回收站；MCP 不暴露彻底删除、附件文件读写或跨 Workspace 移动。
-- `listOperationLogs` 读取系统级操作日志；Agent 可用 `afterId` 做增量同步，默认建议筛选 `actorType: "user"`。
+- `listOperationLogs` 读取系统级操作日志；Agent 可用 `afterId` 做增量同步，默认建议筛选 `actorType: "user"`。日志 action `markDailyReviewed` / `markDailyUnreviewed` 表示每日回顾状态变化，不是审核。
 
 自定义属性写入示例：
 
@@ -256,7 +257,7 @@ Returned notes include `id`, `type`, `content`, status flags, `metadata`, tags, 
 
 `upsertBlinkora` and `updateBlinkora` accept optional status flags, `metadata`, and `references`. On update, omit `content`, `type`, `isArchived`, `isRecycle`, `isTop`, or `isReviewed` to keep the current value. `isReviewed` means daily-review status, not moderation or approval.
 
-Use `listOperationLogs({ afterId, actorType: "user", noteTypes: [1], orderBy: "asc" })` before maintenance work when you need to see user changes since the last agent pass.
+Use `listOperationLogs({ afterId, actorType: "user", noteTypes: [1], orderBy: "asc" })` before maintenance work when you need to see user changes since the last agent pass. Operation log actions `markDailyReviewed` and `markDailyUnreviewed` mean daily-review state changes, not approval or content audit.
 
 Use `metadata` for machine-readable maintenance fields such as `importSourceKey`, `sourcePath`, `sourceUrl`, `sha256`, `originalType`, `originalTitle`, `externalId`, `schema`, or workflow-specific state.
 Use `metadata.properties` for human-readable custom properties shown in Blinkora. Keep properties flat: `string`, `number`, `boolean`, `null`, or `string[]`.
