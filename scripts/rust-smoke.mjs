@@ -17,7 +17,8 @@ const s3SmokeAccessKey = process.env.BLINKORA_S3_SMOKE_ACCESS_KEY || '';
 const s3SmokeSecretKey = process.env.BLINKORA_S3_SMOKE_SECRET_KEY || '';
 const s3SmokeCustomPath = process.env.BLINKORA_S3_SMOKE_CUSTOM_PATH || `smoke-${stamp}/`;
 const uploadByUrlPort = Number(process.env.BLINKORA_UPLOAD_BY_URL_PORT || 55988);
-const uploadByUrlSourceURL = process.env.BLINKORA_UPLOAD_BY_URL_SOURCE_URL || `http://host.docker.internal:${uploadByUrlPort}/upload-by-url-${stamp}.txt`;
+const uploadByUrlHost = process.env.BLINKORA_UPLOAD_BY_URL_HOST || 'host.docker.internal';
+const uploadByUrlSourceURL = process.env.BLINKORA_UPLOAD_BY_URL_SOURCE_URL || `http://${uploadByUrlHost}:${uploadByUrlPort}/upload-by-url-${stamp}.txt`;
 
 function fail(message, details) {
   console.error(`\nFAIL: ${message}`);
@@ -833,7 +834,7 @@ const referencedNote = await trpc('notes.upsert', { content: `Rust smoke referen
 assert(referencedNote?.id && referencedNote.content.includes(String(stamp)), 'notes.upsert reference', referencedNote);
 
 const addReferenceResult = await trpc('notes.addReference', { fromNoteId: note.id, toNoteId: referencedNote.id }, token);
-assert(addReferenceResult === true, 'notes.addReference', addReferenceResult);
+assert(addReferenceResult === true || addReferenceResult?.success === true, 'notes.addReference', addReferenceResult);
 
 const references = await trpc('notes.noteReferenceList', { noteId: note.id }, token, 'GET');
 assert(Array.isArray(references) && references.some((item) => item.toNoteId === referencedNote.id), 'notes.noteReferenceList', references);
