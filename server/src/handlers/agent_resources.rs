@@ -109,7 +109,8 @@ export BLINKORA_AGENT_TOKEN="bkws_xxx"
 - `isArchived` 默认只查未归档；传 `true` 查归档，传 `null` 同时查普通和归档。`isRecycle: true` 查回收站。
 - `isReviewed` 表示每日回顾状态，不表示审核、审批或内容审计。
 - `metadata.properties` 是给人看的自定义属性，只放扁平值：字符串、数字、布尔、`null` 或字符串数组。修改属性前先读原笔记并合并完整 `metadata`，不要覆盖导入键、来源、哈希等维护字段。
-- `deleteBlinkora` 只移入回收站；MCP 不暴露彻底删除、附件文件读写或跨 Workspace 移动。
+- `deleteBlinkora` 只移入回收站；MCP 不暴露彻底删除、附件写入/管理或跨 Workspace 移动。
+- 笔记返回的附件路径可以用工作区令牌读取：`GET ${BLINKORA_BASE_URL}/api/file/...` 或 `/api/s3file/...`，请求继续携带 `Authorization: Bearer ${BLINKORA_AGENT_TOKEN}`。
 - `listOperationLogs` 读取系统级操作日志；Agent 可用 `afterId` 做增量同步，默认建议筛选 `actorType: "user"`。日志 action `markDailyReviewed` / `markDailyUnreviewed` 表示每日回顾状态变化，不是审核。
 
 自定义属性写入示例：
@@ -177,13 +178,13 @@ curl -fsSL \
 - 工作区令牌只能访问被绑定的单个 Workspace。
 - 可读写闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性。
 - 可读取标签树；通过正文 hashtag 自动同步标签。
-- 不能访问其他 Workspace、文件、备份、配置和管理接口。
+- 不能访问其他 Workspace、附件写入/管理、备份、配置和管理接口。
 - 不要把 token 写进仓库、脚本、提交记录或公开日志。
 "#;
 
 const BLINKORA_WORKSPACE_SKILL_MD: &str = r#"---
 name: blinkora-workspace
-description: Use when an agent needs workspace-scoped access to Blinkora notes, blinkoras, todos, comments, note references, custom note properties, and the tag tree through Blinkora MCP with BLINKORA_BASE_URL and BLINKORA_AGENT_TOKEN.
+description: Use when an agent needs workspace-scoped access to Blinkora notes, blinkoras, todos, comments, note references, custom note properties, operation logs, read-only attachment files, and the tag tree through Blinkora MCP with BLINKORA_BASE_URL and BLINKORA_AGENT_TOKEN.
 ---
 
 # Blinkora Workspace
@@ -251,6 +252,8 @@ Prefer these MCP tools:
 
 Returned notes include `id`, `type`, `content`, status flags, `metadata`, tags, attachment metadata, outgoing `references`, incoming `referencedBy`, and timestamps.
 
+Attachment metadata may include `/api/file/...` or `/api/s3file/...` paths. To read the file bytes, send a `GET` request to `${BLINKORA_BASE_URL}${path}` with `Authorization: Bearer ${BLINKORA_AGENT_TOKEN}`. Workspace tokens cannot upload, delete, move, or rename attachment files.
+
 `searchBlinkora` supports ordinary keyword and metadata search only; do not assume semantic, vector, embedding, or RAG search exists. Useful filters include `searchText`, `type`, `isArchived`, `isRecycle`, `tagId`, `withoutTag`, `withFile`, `withLink`, `hasTodo`, `startDate`, `endDate`, `metadata` / `metadataContains`, and `includePageInfo`.
 
 `isArchived` defaults to `false`; pass `true` for archived notes and `null` to search both normal and archived notes. Pass `isRecycle: true` for recycle-bin notes. `deleteBlinkora` only moves notes to the recycle bin; MCP does not expose hard deletion.
@@ -299,7 +302,7 @@ Before writing:
 - Confirm the target type: `blinkora`, `note`, or `todo`.
 - Confirm note ids and comment ids by reading them first when the user did not provide exact ids.
 - For large edits, read the current object first and preserve fields not being changed.
-- Do not try to read or write attachment files; only use attachment metadata already returned with notes.
+- You may read attachment file bytes from attachment paths returned by Blinkora. Do not upload, delete, move, or rename attachment files.
 - Do not move notes between workspaces; workspace-scoped tokens cannot call workspace management or move endpoints.
 - Do not modify the tag tree directly. To assign tags, write hashtags in content, for example `#项目/类型/概念`; Blinkora will create and sync the tag tree.
 - For idempotent imports, use a stable `metadata.importSourceKey` or another stable workflow key, then search by that metadata before creating a new note.

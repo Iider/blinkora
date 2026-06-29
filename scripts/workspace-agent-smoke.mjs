@@ -348,6 +348,102 @@ async function main() {
   );
   pass("agent resources");
 
+  const readableAttachmentBody = `agent-readable-attachment-${stamp}`;
+  const readableAttachmentForm = new FormData();
+  readableAttachmentForm.append(
+    "file",
+    new Blob([readableAttachmentBody], { type: "text/plain" }),
+    `agent-readable-${stamp}.txt`,
+  );
+  const readableAttachmentUpload = await fetch(base + "/api/file/upload", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accountToken}`,
+      "x-workspace-id": String(workspaceA.id),
+    },
+    body: readableAttachmentForm,
+  });
+  const readableAttachment = await readableAttachmentUpload
+    .json()
+    .catch(() => null);
+  assert(
+    readableAttachmentUpload.ok && readableAttachment?.path,
+    "account can seed readable attachment",
+    readableAttachment,
+  );
+
+  const agentAttachmentRead = await request(readableAttachment.path, {
+    headers: { Authorization: `Bearer ${agentToken}` },
+  });
+  assert(
+    agentAttachmentRead.response.status === 200 &&
+      agentAttachmentRead.text === readableAttachmentBody,
+    "workspace token can read bound attachment file",
+    {
+      status: agentAttachmentRead.response.status,
+      body: agentAttachmentRead.text,
+    },
+  );
+
+  const agentAttachmentWrongWorkspaceRead = await request(
+    readableAttachment.path,
+    {
+      headers: {
+        Authorization: `Bearer ${agentToken}`,
+        "x-workspace-id": String(workspaceB.id),
+      },
+    },
+  );
+  assert(
+    agentAttachmentWrongWorkspaceRead.response.status === 401,
+    "workspace token cannot read attachment with mismatched workspace header",
+    {
+      status: agentAttachmentWrongWorkspaceRead.response.status,
+      body:
+        agentAttachmentWrongWorkspaceRead.json ||
+        agentAttachmentWrongWorkspaceRead.text,
+    },
+  );
+
+  const deniedAttachmentForm = new FormData();
+  deniedAttachmentForm.append(
+    "file",
+    new Blob(["denied"], { type: "text/plain" }),
+    `agent-denied-${stamp}.txt`,
+  );
+  const agentAttachmentUpload = await fetch(base + "/api/file/upload", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${agentToken}` },
+    body: deniedAttachmentForm,
+  });
+  assert(
+    agentAttachmentUpload.status === 401,
+    "workspace token cannot upload attachment files",
+    {
+      status: agentAttachmentUpload.status,
+      body: await agentAttachmentUpload.text(),
+    },
+  );
+
+  const agentAttachmentDelete = await request("/api/file/delete", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${agentToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ attachment_path: readableAttachment.path }),
+  });
+  assert(
+    agentAttachmentDelete.response.status === 401,
+    "workspace token cannot delete attachment files",
+    {
+      status: agentAttachmentDelete.response.status,
+      body: agentAttachmentDelete.json || agentAttachmentDelete.text,
+    },
+  );
+  await expectForbidden("attachments.list", {}, agentToken, "GET");
+  pass("attachment read boundary");
+
   const wrongWorkspaceHeader = await trpcRaw(
     "notes.list",
     { page: 1, size: 10 },

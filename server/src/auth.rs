@@ -1,7 +1,7 @@
 use crate::app::AppState;
 use async_trait::async_trait;
 use axum::extract::FromRequestParts;
-use axum::http::{request::Parts, StatusCode};
+use axum::http::{request::Parts, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use hmac::{Hmac, Mac};
@@ -229,7 +229,7 @@ async fn authenticate_agent_token(
     state: &AppState,
     token: &str,
 ) -> Result<CurrentUser, String> {
-    if !agent_endpoint_allowed(parts.uri.path()) {
+    if !agent_endpoint_allowed(&parts.method, parts.uri.path()) {
         return Err("Agent token is not allowed for this endpoint".to_string());
     }
 
@@ -286,7 +286,11 @@ async fn authenticate_agent_token(
     })
 }
 
-fn agent_endpoint_allowed(path: &str) -> bool {
+fn agent_endpoint_allowed(method: &Method, path: &str) -> bool {
+    if method == Method::GET && is_agent_readable_file_path(path) {
+        return true;
+    }
+
     path.starts_with("/api/trpc/")
         || path.starts_with("/trpc/")
         || is_trpc_procedure_path(path)
@@ -299,6 +303,14 @@ fn agent_endpoint_allowed(path: &str) -> bool {
         || path == "/api/messages"
         || path == "/sse"
         || path == "/messages"
+}
+
+fn is_agent_readable_file_path(path: &str) -> bool {
+    (path.starts_with("/api/file/")
+        && path != "/api/file/upload"
+        && path != "/api/file/upload-by-url"
+        && path != "/api/file/delete")
+        || path.starts_with("/api/s3file/")
 }
 
 fn is_trpc_procedure_path(path: &str) -> bool {
@@ -542,6 +554,7 @@ mod tests {
         agent_endpoint_allowed, generate_agent_token, hash_agent_token, hash_password,
         verify_password, AgentPermissions,
     };
+    use axum::http::Method;
 
     #[test]
     fn verifies_node_compatible_pbkdf2() {
@@ -566,6 +579,7 @@ mod tests {
         assert!(permissions.allows_procedure("notes.setReferences"));
         assert!(permissions.allows_procedure("comments.create"));
         assert!(permissions.allows_procedure("tags.list"));
+        assert!(!permissions.allows_procedure("attachments.list"));
         assert!(!permissions.allows_procedure("workspaces.list"));
         assert!(!permissions.allows_procedure("config.list"));
         assert!(!permissions.allows_procedure("notes.deleteMany"));
@@ -573,10 +587,36 @@ mod tests {
 
     #[test]
     fn workspace_agent_auth_allows_nested_trpc_route_paths() {
-        assert!(agent_endpoint_allowed("/api/trpc/notes.list"));
-        assert!(agent_endpoint_allowed("/trpc/notes.list"));
-        assert!(agent_endpoint_allowed("/notes.list"));
-        assert!(agent_endpoint_allowed("/workspaces.list"));
-        assert!(!agent_endpoint_allowed("/api/backup/export"));
+        assert!(agent_endpoint_allowed(&Method::GET, "/api/trpc/notes.list"));
+        assert!(agent_endpoint_allowed(&Method::GET, "/trpc/notes.list"));
+        assert!(agent_endpoint_allowed(&Method::GET, "/notes.list"));
+        assert!(agent_endpoint_allowed(&Method::POST, "/workspaces.list"));
+        assert!(!agent_endpoint_allowed(&Method::GET, "/api/backup/export"));
+    }
+
+    #[test]
+    fn workspace_agent_auth_allows_read_only_attachment_file_paths() {
+        assert!(agent_endpoint_allowed(
+            &Method::GET,
+            "/api/file/example.txt"
+        ));
+        assert!(agent_endpoint_allowed(
+            &Method::GET,
+            "/api/file/folder/example.txt"
+        ));
+        assert!(agent_endpoint_allowed(
+            &Method::GET,
+            "/api/s3file/workspace/example.txt"
+        ));
+        assert!(!agent_endpoint_allowed(
+            &Method::POST,
+            "/api/file/example.txt"
+        ));
+        assert!(!agent_endpoint_allowed(&Method::POST, "/api/file/upload"));
+        assert!(!agent_endpoint_allowed(
+            &Method::POST,
+            "/api/file/upload-by-url"
+        ));
+        assert!(!agent_endpoint_allowed(&Method::POST, "/api/file/delete"));
     }
 }

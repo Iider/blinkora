@@ -168,7 +168,7 @@ Docker compose 文件：
 | 状态 | 检查项 | 操作 | 预期结果 |
 | --- | --- | --- | --- |
 | [ ] | 基本信息 | 打开 `/settings` 基本信息 | 名称、工作区令牌、隐藏 PC 编辑器、双因素验证区域加载正常 |
-| [ ] | 工作区令牌 | 在基本信息里选择测试 Workspace，点击刷新并复制“给 AI 的调用指南” | 指南回显 `BLINKORA_AGENT_TOKEN` 明文，包含 `BLINKORA_BASE_URL`、绑定 Workspace、权限边界、MCP endpoint、Skill 下载命令；刷新只影响下拉框选中的 Workspace |
+| [ ] | 工作区令牌 | 在基本信息里选择测试 Workspace，点击刷新并复制“给 AI 的调用指南” | 指南回显 `BLINKORA_AGENT_TOKEN` 明文，包含 `BLINKORA_BASE_URL`、绑定 Workspace、可读附件/不可写附件权限边界、MCP endpoint、Skill 下载命令；刷新只影响下拉框选中的 Workspace |
 | [ ] | 令牌更新失效 | 再次刷新同一测试 Workspace 的工作区令牌 | 新 token 可用，旧 token 不能再连 MCP 或调用白名单 tRPC |
 | [ ] | 偏好 | 打开偏好页 | 不显示已移除的 Hub 开关，语言显示为简体中文 |
 | [ ] | 存储 | 打开存储页 | 本地 / S3 配置项加载正常，无空白 |
@@ -189,6 +189,7 @@ Docker compose 文件：
 | [ ] | 工具清单 | 在已连接客户端调用 `tools/list` | 返回 workspace context、note、reference、comment、tag tree 和 operation log 相关工具：`getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree`、`listOperationLogs` |
 | [ ] | Workspace Agent 工具清单 | 使用 Workspace Agent token 连接 `/sse` 后调用 `tools/list` | 返回 `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree`、`listOperationLogs` |
 | [ ] | Workspace Agent 操作日志 | 用 Workspace Agent token 调用 `listOperationLogs({ afterId, actorType: "user", noteTypes: [1], orderBy: "asc" })` | 返回当前 Workspace 内按 cursor 增量筛选后的笔记操作日志 |
+| [ ] | Workspace Agent 附件读取 | 用 Workspace Agent token 读取当前 Workspace 笔记返回的 `/api/file/...` 或 `/api/s3file/...` 附件路径，再尝试 `/api/file/upload`、`/api/file/delete` 或 `attachments.*` | 同 Workspace 附件 GET 成功；附件上传、删除、移动、重命名和资源管理接口被拒绝 |
 | [ ] | Workspace Agent 越权拒绝 | 用 Workspace A 的 Agent token 携带 Workspace B 的 `x-workspace-id` 或调用 `workspaces.list` / `config.list` | 错误 workspace 被 `401` 拒绝；非白名单 tRPC 返回 `403` |
 | [ ] | Workspace Agent 数据隔离 | Workspace A/B 各写一条测试笔记，用 Workspace A 的 Agent token 搜索 | 可读写 A 的闪念、笔记、待办、评论、引用和自定义属性，可读 A 标签树，不能读到 B 的内容 |
 | [ ] | Workspace Agent 资源下载 | 使用任意有效 Workspace Agent token 读取 `/api/agent/mcp-guide.md`、`/api/agent/blinkora-workspace/SKILL.md`、`/api/agent/blinkora-workspace.zip` | 返回只读安装资源，包含 MCP/Skill 使用说明，不暴露其他 Workspace 数据 |

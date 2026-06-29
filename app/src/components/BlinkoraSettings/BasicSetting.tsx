@@ -335,7 +335,8 @@ curl -fsSL \\
 - 仅限工作区：${workspaceName}
 - 可创建、读取、修改闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性
 - 可读取标签树
-- 不允许访问其他工作区、文件、备份、配置和管理接口
+- 可读取笔记返回的 /api/file/... 或 /api/s3file/... 附件路径
+- 不允许访问其他工作区、附件上传/删除/移动/重命名、备份、配置和管理接口
 
 推荐 MCP 工具：
 getWorkspaceContext、searchBlinkora、getBlinkora、upsertBlinkora、updateBlinkora、deleteBlinkora、listReferences、addReference、removeReference、setReferences、listComments、createComment、updateComment、listTagTree、listOperationLogs
@@ -345,7 +346,8 @@ getWorkspaceContext、searchBlinkora、getBlinkora、upsertBlinkora、updateBlin
 - metadata.properties 是自定义属性；修改 metadata 前先读原笔记并合并，避免覆盖导入键、来源、哈希等维护字段。
 - updateBlinkora 不传 content、type 或状态字段时保持原值。
 - listOperationLogs 可按 afterId 增量读取用户和 Agent 的笔记操作日志。
-- 不能通过工作区令牌读写附件文件、彻底删除笔记或跨 Workspace 移动卡片。
+- 读取附件文件时继续携带 Authorization: Bearer \${BLINKORA_AGENT_TOKEN}。
+- 不能通过工作区令牌上传、删除、移动或重命名附件文件，不能彻底删除笔记或跨 Workspace 移动卡片。
 
 注意：
 ${statusLine}`

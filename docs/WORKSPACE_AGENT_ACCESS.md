@@ -21,8 +21,8 @@ Blinkora 的工作区令牌用于把单个 Workspace 授权给外部 Agent，例
 - 数据库备份要按敏感数据处理。
 - 不要把 token 写进仓库、脚本、提交记录、公开日志或 Skill 文件。
 - 工作区令牌只能访问绑定的单个 Workspace。
-- 允许：闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性读写；标签树可读，标签通过正文 hashtag 自动同步。
-- 禁止：其他 Workspace、文件、备份、配置、工作区管理和 admin 类接口。
+- 允许：闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性读写；标签树可读；同 Workspace 附件文件可读取。
+- 禁止：其他 Workspace、附件写入和管理、备份、配置、工作区管理和 admin 类接口。
 
 ## MCP 使用
 
@@ -81,7 +81,8 @@ Agent 批量导入或维护时建议：
 - 通过正文写 `#父/子` 形式的标签，不直接写标签树。
 - 维护卡片前需要追踪用户改动时，用 `listOperationLogs` 读取系统级操作日志，不依赖“操作日志”卡片作为事实来源。
 - 推荐增量查询：`listOperationLogs({ "afterId": 上次处理到的日志 id, "actorType": "user", "noteTypes": [1], "orderBy": "asc" })`。
-- 工作区令牌不能读写附件文件，不能彻底删除笔记，也不能跨 Workspace 移动卡片。
+- 工作区令牌可以读取笔记返回的 `/api/file/...` 或 `/api/s3file/...` 附件路径；读取时继续携带 `Authorization: Bearer ${BLINKORA_AGENT_TOKEN}`。
+- 工作区令牌不能上传、删除、移动或重命名附件文件，不能彻底删除笔记，也不能跨 Workspace 移动卡片。
 - 具体工作区的内容保留策略、标签语义、metadata 字段语义、卡片或 wiki 写法，放到该工作区或项目的 `AGENTS.md`。
 
 常见写法：
@@ -167,6 +168,7 @@ bun run smoke:agent
 - 用 Workspace A token 搜索不到 Workspace B 内容。
 - 用 Workspace A token 携带 Workspace B 的 `x-workspace-id` 返回 `401`。
 - 用工作区令牌调用 `workspaces.list` / `config.list` 返回 `403`。
+- 用工作区令牌能读取绑定 Workspace 的附件文件，但不能调用 `/api/file/upload`、`/api/file/delete` 或 `attachments.*` 管理接口。
 - 用工作区令牌连接 MCP 后，工具列表只包含 workspace context、note、reference、comment、tag tree、operation log 相关工具。
 - `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree`、`listOperationLogs` 主路径可用。
 - `listOperationLogs` 支持 `afterId`、`actorType`、`noteTypes`、`actions`、`changedField` 等筛选，默认操作日志设置只记录笔记类型 `1`。

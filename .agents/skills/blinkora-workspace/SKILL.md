@@ -1,6 +1,6 @@
 ---
 name: blinkora-workspace
-description: Use when an agent needs workspace-scoped access to Blinkora notes, blinkoras, todos, comments, note references, custom note properties, operation logs, and the tag tree through Blinkora MCP with BLINKORA_BASE_URL and BLINKORA_AGENT_TOKEN.
+description: Use when an agent needs workspace-scoped access to Blinkora notes, blinkoras, todos, comments, note references, custom note properties, operation logs, read-only attachment files, and the tag tree through Blinkora MCP with BLINKORA_BASE_URL and BLINKORA_AGENT_TOKEN.
 ---
 
 # Blinkora Workspace
@@ -68,6 +68,8 @@ Prefer these MCP tools:
 
 Returned notes include `id`, `type`, `content`, status flags, `metadata`, tags, attachment metadata, outgoing `references`, incoming `referencedBy`, and timestamps.
 
+Attachment metadata may include `/api/file/...` or `/api/s3file/...` paths. To read the file bytes, send a `GET` request to `${BLINKORA_BASE_URL}${path}` with `Authorization: Bearer ${BLINKORA_AGENT_TOKEN}`. Workspace tokens cannot upload, delete, move, or rename attachment files.
+
 `searchBlinkora` supports ordinary keyword and metadata search only; do not assume semantic, vector, embedding, or RAG search exists. Useful filters include `searchText`, `type`, `isArchived`, `isRecycle`, `tagId`, `withoutTag`, `withFile`, `withLink`, `hasTodo`, `startDate`, `endDate`, `metadata` / `metadataContains`, and `includePageInfo`.
 
 `isArchived` defaults to `false`; pass `true` for archived notes and `null` to search both normal and archived notes. Pass `isRecycle: true` for recycle-bin notes. `deleteBlinkora` only moves notes to the recycle bin; MCP does not expose hard deletion.
@@ -116,7 +118,7 @@ Before writing:
 - Confirm the target type: `blinkora`, `note`, or `todo`.
 - Confirm note ids and comment ids by reading them first when the user did not provide exact ids.
 - For large edits, read the current object first and preserve fields not being changed.
-- Do not try to read or write attachment files; only use attachment metadata already returned with notes.
+- You may read attachment file bytes from attachment paths returned by Blinkora. Do not upload, delete, move, or rename attachment files.
 - Do not move notes between workspaces; workspace-scoped tokens cannot call workspace management or move endpoints.
 - Do not modify the tag tree directly. To assign tags, write hashtags in content, for example `#项目/类型/概念`; Blinkora will create and sync the tag tree.
 - For idempotent imports, use a stable `metadata.importSourceKey` or another stable workflow key, then search by that metadata before creating a new note.

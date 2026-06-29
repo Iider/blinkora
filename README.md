@@ -94,7 +94,7 @@ Frontend dev uses `http://localhost:5173` and proxies API requests to the Rust d
 - 任意有效工作区令牌都能读取只读安装资源：`${BLINKORA_BASE_URL}/api/agent/mcp-guide.md`、`${BLINKORA_BASE_URL}/api/agent/blinkora-workspace/SKILL.md`、`${BLINKORA_BASE_URL}/api/agent/blinkora-workspace.zip`。
 - 默认权限：闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性读写；标签树只读，标签通过正文 hashtag 同步。
 - Agent 可用 `listOperationLogs` 增量读取系统级操作日志，追踪用户对笔记的核心变更；默认只记录笔记类型，闪念和待办需在设置页“操作日志”中开启。
-- scoped token 只能访问 MCP 和 notes/comments/tags 白名单 tRPC，不能访问 workspaces、config、backup、files、admin 类接口。
+- scoped token 只能访问 MCP、notes/comments/tags 白名单 tRPC，以及绑定 Workspace 的附件文件读取；不能访问 workspaces、config、backup、附件写入/管理、admin 类接口。
 - 使用环境变量传给 Agent：`BLINKORA_BASE_URL=http://localhost:6676`、`BLINKORA_AGENT_TOKEN=<bkws_token>`。
 - MCP 入口优先用 `${BLINKORA_BASE_URL}/sse`，后续消息地址由 SSE 的 `endpoint` 事件返回。
 - 不要把 token 写进 skill、脚本、README、提交记录或仓库里的任何文件。
