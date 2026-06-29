@@ -14,6 +14,8 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 
 `review`、`reviewed`、`isReviewed` 在 Blinkora 里统一表示“每日回顾/已回顾”。它们不是审核、审批、发布审查或内容安全审计。
 
+操作日志对外 action 使用 `markDailyReviewed` / `markDailyUnreviewed` 表达每日回顾状态变化，避免把回顾误读成审核。
+
 如果以后要做真正的审核流程，需要单独设计状态模型和接口，不要复用 `isReviewed`。
 
 ## 列表筛选

@@ -186,7 +186,9 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 .get("actorType")
                 .and_then(Value::as_str)
                 .filter(|value| !value.is_empty() && *value != "all"),
-            actions: string_values(input.get("actions").or_else(|| input.get("action"))),
+            actions: expand_action_aliases(string_values(
+                input.get("actions").or_else(|| input.get("action")),
+            )),
             note_types: i32_values(input.get("noteTypes").or_else(|| input.get("noteType"))),
             note_id: input
                 .get("noteId")
@@ -383,6 +385,24 @@ fn string_values(value: Option<&Value>) -> Vec<String> {
             .collect(),
         _ => Vec::new(),
     }
+}
+
+fn expand_action_aliases(actions: Vec<String>) -> Vec<String> {
+    let mut expanded = Vec::new();
+    for action in actions {
+        match action.as_str() {
+            "review" | "markDailyReviewed" => {
+                expanded.push("review".to_string());
+                expanded.push("markDailyReviewed".to_string());
+            }
+            "unreview" | "markDailyUnreviewed" => {
+                expanded.push("unreview".to_string());
+                expanded.push("markDailyUnreviewed".to_string());
+            }
+            _ => expanded.push(action),
+        }
+    }
+    unique_strings(&expanded)
 }
 
 fn i32_values(value: Option<&Value>) -> Vec<i32> {

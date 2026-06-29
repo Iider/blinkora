@@ -358,13 +358,13 @@ fn review(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 &mut tx,
                 user,
                 OperationLogDraft {
-                    action: "review".to_string(),
+                    action: "markDailyReviewed".to_string(),
                     note_id: id,
                     note_type: old.note_type,
                     previous_note_type: Some(old.note_type),
                     note_title: title.clone(),
                     changed_fields: vec!["flags".to_string()],
-                    summary: format!("Reviewed note: {title}"),
+                    summary: format!("Marked daily reviewed note: {title}"),
                     details: json!({ "flags": flags }),
                 },
             )
@@ -1208,9 +1208,9 @@ fn action_for_update(changed_fields: &[String], details: &Map<String, Value>) ->
             }
             if let Some(value) = flags.get("isReviewed").and_then(Value::as_object) {
                 return if value.get("after").and_then(Value::as_bool).unwrap_or(false) {
-                    "review"
+                    "markDailyReviewed"
                 } else {
-                    "unreview"
+                    "markDailyUnreviewed"
                 }
                 .to_string();
             }
