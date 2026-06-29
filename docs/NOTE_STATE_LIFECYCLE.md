@@ -10,6 +10,12 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - `isTop`：置顶状态。列表排序先按它倒序，再按排序值和时间。
 - `isReviewed`：每日回顾状态。每日回顾只取未回顾、未归档、未回收的内容。
 
+## 术语边界
+
+`review`、`reviewed`、`isReviewed` 在 Blinkora 里统一表示“每日回顾/已回顾”。它们不是审核、审批、发布审查或内容安全审计。
+
+如果以后要做真正的审核流程，需要单独设计状态模型和接口，不要复用 `isReviewed`。
+
 ## 列表筛选
 
 `notes.list` 的状态筛选规则：
@@ -22,7 +28,7 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 
 ## 状态写入
 
-- 单条卡片的归档、恢复、置顶、回顾状态走 `notes.upsert`。
+- 单条卡片的归档、恢复、置顶、每日回顾状态走 `notes.upsert`。
 - 单条卡片的类型转换也走 `notes.upsert`，只写 `type`，不提交正文。
 - 多选归档、恢复和置顶走 `notes.updateMany`。
 - 移入回收站走 `notes.trashMany`。

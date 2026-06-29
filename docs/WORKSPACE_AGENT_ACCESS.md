@@ -71,6 +71,7 @@ Agent 批量导入或维护时建议：
 - `searchBlinkora` 是普通关键词和 metadata 检索，不提供语义、向量、embedding 或 RAG 搜索。
 - 常用筛选：`searchText`、`type`、`isArchived`、`isRecycle`、`tagId`、`withoutTag`、`withFile`、`withLink`、`hasTodo`、`startDate`、`endDate`、`metadata` / `metadataContains`。
 - `isArchived` 默认只查未归档；传 `true` 查归档，传 `null` 同时查普通和归档。`isRecycle: true` 查回收站。
+- `isReviewed` 表示每日回顾状态，不表示审核、审批或内容审计。
 - 用 `metadata.importSourceKey`、`metadata.sha256` 或其他稳定 workflow key 做幂等导入。
 - 用 `searchBlinkora` 的 `metadata` / `metadataContains` 做 JSON 子集匹配，避免靠全文搜索猜记录。
 - `metadata.properties` 是给人看的自定义属性，只放扁平值：字符串、数字、布尔、`null` 或字符串数组。

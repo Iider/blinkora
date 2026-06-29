@@ -1,6 +1,6 @@
 # Blinkora
 
-Blinkora is a Docker-first Web-only private note and memory base for long-term notes, wiki-style memory, tags, attachments, references, review, search, export, and private annotations.
+Blinkora is a Docker-first Web-only private note and memory base for long-term notes, wiki-style memory, tags, attachments, references, daily review, search, export, and private annotations.
 
 Blinkora is served as a browser app by the Rust backend. Default deployment uses Docker; personal macOS machines can also run the Rust service locally with Docker only keeping PostgreSQL. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
 

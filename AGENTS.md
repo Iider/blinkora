@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Blinkora is a Docker-first Web-only private note and memory base. The target product is a clean single-user foundation for long-term notes, wiki-style memory, tags, attachments, references, review, search, export, and private annotations.
+Blinkora is a Docker-first Web-only private note and memory base. The target product is a clean single-user foundation for long-term notes, wiki-style memory, tags, attachments, references, daily review, search, export, and private annotations.
 
 Blinkora is shipped as a browser app served by the Rust backend. Default deployment is full Docker. Personal macOS machines may use the local persistent mode: Docker only runs PostgreSQL, while the Rust Web service runs locally through `launchd`. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
 
@@ -61,12 +61,14 @@ bun run verify:rust
 - **Files**: Local filesystem by default; S3-compatible storage is global superadmin configuration and must pass validation before becoming active.
 - **Memory Base**: `notes` remains the core fact source; `BLINKORA`, `NOTE`, and `TODO` are the core note types.
 - **Annotations**: `comments` are retained as private annotations for user instructions, TODO candidates, wiki update strategy, and filtering hints.
+- **Daily Review**: `review`, `reviewed`, and `isReviewed` mean personal daily review status. They do not mean moderation, approval, publishing review, or content audit.
 - **Search**: Keep ordinary keyword, metadata, type, tag, attachment, link, TODO, and date filtering clear and predictable. RAG/vector/embedding search is not part of the current runtime.
 
 ## Development Boundaries
 
 - Keep the product Web-only and Docker-first. Local persistent deployment is allowed for personal macOS use, but should stay small and reuse the same Rust backend.
 - Do not reintroduce RAG, embedding, semantic search, or conversational AI behavior without a fresh design and explicit implementation plan.
+- Do not build approval, moderation, publishing-review, or content-audit semantics on top of `isReviewed`; add a separate model if that product need is explicitly designed.
 - Prefer hard deletion over feature flags for features outside the current product scope.
 - Keep export as a data-safety baseline.
 - Keep repository docs in `docs/` updated for each substantial change.

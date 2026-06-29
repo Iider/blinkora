@@ -226,7 +226,7 @@ fn tool_list(user: &CurrentUser) -> Value {
                         "isArchived": { "type": "boolean", "default": false },
                         "isRecycle": { "type": "boolean", "default": false },
                         "isTop": { "type": "boolean", "default": false },
-                        "isReviewed": { "type": "boolean", "default": false },
+                        "isReviewed": { "type": "boolean", "default": false, "description": "Daily-review status, not moderation or approval." },
                         "metadata": { "type": ["object", "null"], "description": "Complete metadata object. Store human-readable custom properties under metadata.properties." },
                         "references": { "type": ["array", "null"], "items": { "oneOf": [{ "type": "number" }, { "type": "object" }] }, "description": "Complete outgoing reference set when provided." }
                     },
@@ -247,7 +247,7 @@ fn tool_list(user: &CurrentUser) -> Value {
                         "isArchived": { "type": "boolean", "description": "Omit to preserve the current archived state." },
                         "isRecycle": { "type": "boolean", "description": "Omit to preserve the current recycle-bin state." },
                         "isTop": { "type": "boolean", "description": "Omit to preserve the current pinned state." },
-                        "isReviewed": { "type": "boolean", "description": "Omit to preserve the current review state." },
+                        "isReviewed": { "type": "boolean", "description": "Omit to preserve the current daily-review state. This is not moderation or approval." },
                         "metadata": { "type": ["object", "null"], "description": "Complete metadata object. Read, merge, then write when changing only metadata.properties." },
                         "references": { "type": ["array", "null"], "items": { "oneOf": [{ "type": "number" }, { "type": "object" }] }, "description": "Complete outgoing reference set when provided." }
                     },
