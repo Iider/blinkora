@@ -335,6 +335,57 @@ async fn import_backup(
             .map_err(internal_error)?;
         }
 
+        for log in item.get("operationLogs").and_then(Value::as_array).into_iter().flatten() {
+            let old_note_id = log.get("noteId").and_then(Value::as_i64).unwrap_or_default() as i32;
+            let new_note_id = note_id_map.get(&old_note_id).copied();
+            let mut details = log.get("details").cloned().unwrap_or_else(|| json!({}));
+            if !details.is_object() {
+                details = json!({ "value": details });
+            }
+            if let Some(object) = details.as_object_mut() {
+                object.insert(
+                    "originalActor".to_string(),
+                    json!({
+                        "accountId": log.get("actorAccountId").cloned().unwrap_or(Value::Null),
+                        "agentTokenId": log.get("actorAgentTokenId").cloned().unwrap_or(Value::Null)
+                    }),
+                );
+                if old_note_id > 0 && new_note_id.is_none() {
+                    object.insert("originalNoteId".to_string(), json!(old_note_id));
+                }
+            }
+            let actor_type = log.get("actorType").and_then(Value::as_str).unwrap_or("user");
+            let actor_label = log.get("actorLabel").and_then(Value::as_str).unwrap_or("");
+            let action = log.get("action").and_then(Value::as_str).unwrap_or("");
+            let note_type = log.get("noteType").and_then(Value::as_i64).map(|value| value as i32);
+            let note_title = log.get("noteTitle").and_then(Value::as_str).unwrap_or("");
+            let changed_fields = log.get("changedFields").cloned().unwrap_or_else(|| json!([]));
+            let summary = log.get("summary").and_then(Value::as_str).unwrap_or("");
+            let created_at = log.get("createdAt").and_then(Value::as_str).map(str::to_string);
+            sqlx::query(
+                r#"INSERT INTO "operationLog"
+                   ("accountId", "workspaceId", "actorType", "actorAccountId", "actorAgentTokenId",
+                    "actorLabel", action, "noteId", "noteType", "noteTitle", "changedFields", summary, details, "createdAt")
+                   VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE($13::timestamptz, NOW()))"#,
+            )
+            .bind(user.id)
+            .bind(new_workspace_id)
+            .bind(actor_type)
+            .bind(Some(user.id))
+            .bind(actor_label)
+            .bind(action)
+            .bind(new_note_id)
+            .bind(note_type)
+            .bind(note_title)
+            .bind(changed_fields)
+            .bind(summary)
+            .bind(details)
+            .bind(created_at)
+            .execute(&mut *tx)
+            .await
+            .map_err(internal_error)?;
+        }
+
         for config in item.get("configs").and_then(Value::as_array).into_iter().flatten() {
             let key = config.get("key").and_then(Value::as_str).unwrap_or("");
             let value = config.get("config").cloned();
@@ -474,6 +525,20 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 .fetch_all(ctx.state.pool())
                 .await?
             };
+            let operation_logs = if format == "json" {
+                sqlx::query(
+                    r#"SELECT id, "actorType", "actorAccountId", "actorAgentTokenId", "actorLabel",
+                              action, "noteId", "noteType", "noteTitle", "changedFields", summary, details, "createdAt"
+                       FROM "operationLog" WHERE "accountId"=$1 AND "workspaceId"=$2
+                       ORDER BY id ASC"#,
+                )
+                .bind(user.id)
+                .bind(workspace_id)
+                .fetch_all(ctx.state.pool())
+                .await?
+            } else {
+                Vec::new()
+            };
             let mut tag_ids_by_note: HashMap<i32, Vec<i32>> = HashMap::new();
             for row in tag_links {
                 tag_ids_by_note
@@ -572,6 +637,21 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                     "content": row.get::<String, _>("content"),
                     "metadata": row.get::<Option<Value>, _>("metadata"),
                     "version": row.get::<i32, _>("version"),
+                    "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("createdAt")
+                })).collect::<Vec<_>>(),
+                "operationLogs": operation_logs.into_iter().map(|row| json!({
+                    "id": row.get::<i32, _>("id"),
+                    "actorType": row.get::<String, _>("actorType"),
+                    "actorAccountId": row.get::<Option<i32>, _>("actorAccountId"),
+                    "actorAgentTokenId": row.get::<Option<i32>, _>("actorAgentTokenId"),
+                    "actorLabel": row.get::<String, _>("actorLabel"),
+                    "action": row.get::<String, _>("action"),
+                    "noteId": row.get::<Option<i32>, _>("noteId"),
+                    "noteType": row.get::<Option<i32>, _>("noteType"),
+                    "noteTitle": row.get::<String, _>("noteTitle"),
+                    "changedFields": row.get::<Option<Value>, _>("changedFields"),
+                    "summary": row.get::<String, _>("summary"),
+                    "details": row.get::<Option<Value>, _>("details"),
                     "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("createdAt")
                 })).collect::<Vec<_>>()
             }));

@@ -7,6 +7,7 @@ import { RootStore } from '@/store';
 import { AboutSetting } from '@/components/BlinkoraSettings/AboutSetting';
 import { StorageSetting } from '@/components/BlinkoraSettings/StorageSetting';
 import { ExportSetting } from '@/components/BlinkoraSettings/ExportSetting';
+import { OperationLogSetting } from '@/components/BlinkoraSettings/OperationLogSetting';
 import { useTranslation } from 'react-i18next';
 import { JSX } from 'react';
 import { ScrollableTabs, TabItem } from '@/components/Common/ScrollableTabs';
@@ -25,6 +26,7 @@ const settingComponents: Record<string, JSX.Element> = {
   prefer: <PerferSetting />,
   storage: <StorageSetting />,
   export: <ExportSetting />,
+  operationLog: <OperationLogSetting />,
   about: <AboutSetting />,
 };
 

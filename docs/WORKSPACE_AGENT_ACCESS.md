@@ -63,6 +63,7 @@ Authorization: Bearer ${BLINKORA_AGENT_TOKEN}
 - `createComment`
 - `updateComment`
 - `listTagTree`
+- `listOperationLogs`
 
 Agent 批量导入或维护时建议：
 
@@ -77,6 +78,8 @@ Agent 批量导入或维护时建议：
 - `updateBlinkora` 未传 `content`、`type`、`isArchived`、`isRecycle`、`isTop`、`isReviewed` 时保持原值。
 - 先创建全部笔记，再用 `setReferences` 第二轮写入笔记间引用。
 - 通过正文写 `#父/子` 形式的标签，不直接写标签树。
+- 维护卡片前需要追踪用户改动时，用 `listOperationLogs` 读取系统级操作日志，不依赖“操作日志”卡片作为事实来源。
+- 推荐增量查询：`listOperationLogs({ "afterId": 上次处理到的日志 id, "actorType": "user", "noteTypes": [1], "orderBy": "asc" })`。
 - 工作区令牌不能读写附件文件，不能彻底删除笔记，也不能跨 Workspace 移动卡片。
 - 具体工作区的内容保留策略、标签语义、metadata 字段语义、卡片或 wiki 写法，放到该工作区或项目的 `AGENTS.md`。
 
@@ -163,6 +166,7 @@ bun run smoke:agent
 - 用 Workspace A token 搜索不到 Workspace B 内容。
 - 用 Workspace A token 携带 Workspace B 的 `x-workspace-id` 返回 `401`。
 - 用工作区令牌调用 `workspaces.list` / `config.list` 返回 `403`。
-- 用工作区令牌连接 MCP 后，工具列表只包含 workspace context、note、reference、comment、tag tree 相关工具。
-- `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree` 主路径可用。
+- 用工作区令牌连接 MCP 后，工具列表只包含 workspace context、note、reference、comment、tag tree、operation log 相关工具。
+- `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree`、`listOperationLogs` 主路径可用。
+- `listOperationLogs` 支持 `afterId`、`actorType`、`noteTypes`、`actions`、`changedField` 等筛选，默认操作日志设置只记录笔记类型 `1`。
 - `/api/agent/mcp-guide.md`、`/api/agent/blinkora-workspace/SKILL.md`、`/api/agent/blinkora-workspace.zip` 能被任意有效工作区令牌读取或下载。

@@ -69,6 +69,35 @@ async fn ensure_runtime_schema(pool: &PgPool) -> anyhow::Result<()> {
             ON public."agentAccessTokens" USING btree ("workspaceId");
         CREATE INDEX IF NOT EXISTS "agentAccessTokens_revokedAt_idx"
             ON public."agentAccessTokens" USING btree ("revokedAt");
+
+        CREATE TABLE IF NOT EXISTS public."operationLog" (
+            id SERIAL PRIMARY KEY,
+            "accountId" integer REFERENCES public.accounts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+            "workspaceId" integer REFERENCES public.workspaces(id) ON UPDATE CASCADE ON DELETE SET NULL,
+            "actorType" character varying DEFAULT 'user'::character varying NOT NULL,
+            "actorAccountId" integer,
+            "actorAgentTokenId" integer,
+            "actorLabel" character varying DEFAULT ''::character varying NOT NULL,
+            action character varying DEFAULT ''::character varying NOT NULL,
+            "noteId" integer,
+            "noteType" integer,
+            "noteTitle" character varying DEFAULT ''::character varying NOT NULL,
+            "changedFields" json DEFAULT '[]'::json NOT NULL,
+            summary text DEFAULT ''::text NOT NULL,
+            details json,
+            "createdAt" timestamp(6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS "operationLog_workspaceId_id_idx"
+            ON public."operationLog" USING btree ("workspaceId", id);
+        CREATE INDEX IF NOT EXISTS "operationLog_workspaceId_createdAt_idx"
+            ON public."operationLog" USING btree ("workspaceId", "createdAt");
+        CREATE INDEX IF NOT EXISTS "operationLog_workspaceId_noteId_idx"
+            ON public."operationLog" USING btree ("workspaceId", "noteId");
+        CREATE INDEX IF NOT EXISTS "operationLog_workspaceId_actorType_idx"
+            ON public."operationLog" USING btree ("workspaceId", "actorType");
+        CREATE INDEX IF NOT EXISTS "operationLog_workspaceId_noteType_idx"
+            ON public."operationLog" USING btree ("workspaceId", "noteType");
         "#,
     )
     .execute(pool)

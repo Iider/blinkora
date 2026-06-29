@@ -308,6 +308,7 @@ assert(
     'createComment',
     'updateComment',
     'listTagTree',
+    'listOperationLogs',
   ].every((name) => mcpToolNames.includes(name)),
   'MCP tools/list',
   mcpTools,
@@ -577,6 +578,7 @@ assert(
     'createComment',
     'updateComment',
     'listTagTree',
+    'listOperationLogs',
   ].every((name) => agentToolNames.includes(name))
     && !agentToolNames.includes('workspaces.list'),
   'workspace agent MCP tools/list scoped tools',
@@ -619,6 +621,20 @@ assert(
     && agentNoteUpdated.result.structuredContent.content.includes('updated'),
   'workspace agent updateBlinkora',
   agentNoteUpdated,
+);
+
+const agentOperationLogs = await agentMcp.rpc('tools/call', {
+  name: 'listOperationLogs',
+  arguments: { afterId: 0, actorType: 'agent', noteTypes: [1], orderBy: 'asc', size: 20 },
+});
+assert(
+  agentOperationLogs.result?.structuredContent?.items?.some?.(
+    (item) => item.target?.noteId === agentNoteValue.id
+      && item.actor?.type === 'agent'
+      && !JSON.stringify(item.details || {}).includes('Agent note updated'),
+  ),
+  'workspace agent listOperationLogs cursor query',
+  agentOperationLogs,
 );
 
 const agentComment = await agentMcp.rpc('tools/call', {

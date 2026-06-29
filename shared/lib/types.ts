@@ -120,6 +120,7 @@ export const ZUserPerferConfigKey = z.union([
   z.literal('maxHomePageWidth'),
   z.literal('hidePcEditor'),
   z.literal('defaultHomePage'),
+  z.literal('operationLogNoteTypes'),
 ]);
 
 export const ZConfigKey = z.union([
@@ -179,6 +180,7 @@ export const ZConfigSchema = z.object({
   maxHomePageWidth: z.number().nullable().optional(),
   hidePcEditor: z.boolean().optional(),
   defaultHomePage: z.string().optional(),
+  operationLogNoteTypes: z.array(z.number()).optional(),
   fontStyle: z.string().optional(),
   signinFooterEnabled: z.boolean().optional(),
   signinFooterText: z.string().optional(),

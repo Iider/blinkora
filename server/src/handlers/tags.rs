@@ -1,4 +1,7 @@
 use super::common::{tag_json, workspace_id};
+use super::operation_logs::{
+    content_change_detail, insert_note_log_if_enabled_tx, note_title, OperationLogDraft,
+};
 use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
 use anyhow::{anyhow, bail};
 use futures::FutureExt;
@@ -72,20 +75,46 @@ fn update_many(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         if ids.is_empty() || tag.is_empty() {
             return Ok(json!(true));
         }
-        let rows = sqlx::query(r#"SELECT id, content FROM notes WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
+        let rows = sqlx::query(r#"SELECT id, type, content FROM notes WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
             .bind(&ids)
             .bind(user.id)
             .bind(ws)
             .fetch_all(ctx.state.pool())
             .await?;
+        let mut tx = ctx.state.pool().begin().await?;
         for row in rows {
-            let content = format!("{} #{}", row.get::<String, _>("content"), tag);
+            let note_id = row.get::<i32, _>("id");
+            let note_type = row.get::<i32, _>("type");
+            let old_content = row.get::<String, _>("content");
+            let content = format!("{} #{}", old_content, tag);
             sqlx::query(r#"UPDATE notes SET content=$1, "updatedAt"=NOW() WHERE id=$2"#)
-                .bind(content)
-                .bind(row.get::<i32, _>("id"))
-                .execute(ctx.state.pool())
+                .bind(&content)
+                .bind(note_id)
+                .execute(&mut *tx)
                 .await?;
+            super::notes::sync_tags(&ctx, &mut tx, note_id, user.id, ws, &content).await?;
+            let title = note_title(&content, note_id);
+            insert_note_log_if_enabled_tx(
+                &ctx,
+                &mut tx,
+                user,
+                OperationLogDraft {
+                    action: "tagUpdate".to_string(),
+                    note_id,
+                    note_type,
+                    previous_note_type: Some(note_type),
+                    note_title: title.clone(),
+                    changed_fields: vec!["content".to_string(), "tags".to_string()],
+                    summary: format!("Updated note tag: {title}"),
+                    details: json!({
+                        "content": content_change_detail(Some(&old_content), &content, None),
+                        "tags": { "addedText": format!("#{tag}") }
+                    }),
+                },
+            )
+            .await?;
         }
+        tx.commit().await?;
         Ok(json!(true))
     }
     .boxed()
@@ -163,7 +192,10 @@ fn delete_only(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
-        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "tagId"=$1"#).bind(id).execute(ctx.state.pool()).await?;
+        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "tagId"=$1"#)
+            .bind(id)
+            .execute(ctx.state.pool())
+            .await?;
         sqlx::query(r#"DELETE FROM tag WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
             .bind(id)
             .bind(user.id)
@@ -180,25 +212,72 @@ fn delete_with_notes(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
-        let note_ids: Vec<i32> = sqlx::query_scalar(r#"SELECT "noteId" FROM "tagsToNote" WHERE "tagId"=$1"#)
+        let note_rows = sqlx::query(
+            r#"SELECT n.id, n.type, n.content, n."isRecycle"
+               FROM "tagsToNote" ttn
+               JOIN notes n ON n.id=ttn."noteId"
+               WHERE ttn."tagId"=$1 AND n."accountId"=$2 AND n."workspaceId"=$3"#,
+        )
             .bind(id)
+            .bind(user.id)
+            .bind(ws)
             .fetch_all(ctx.state.pool())
             .await?;
+        let note_ids = note_rows
+            .iter()
+            .map(|row| row.get::<i32, _>("id"))
+            .collect::<Vec<_>>();
+        let mut tx = ctx.state.pool().begin().await?;
         if !note_ids.is_empty() {
             sqlx::query(r#"UPDATE notes SET "isRecycle"=true, "updatedAt"=NOW() WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
                 .bind(&note_ids)
                 .bind(user.id)
                 .bind(ws)
-                .execute(ctx.state.pool())
+                .execute(&mut *tx)
                 .await?;
         }
-        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "tagId"=$1"#).bind(id).execute(ctx.state.pool()).await?;
+        for row in note_rows {
+            let note_id = row.get::<i32, _>("id");
+            let note_type = row.get::<i32, _>("type");
+            let content = row.get::<String, _>("content");
+            let was_recycle = row.get::<bool, _>("isRecycle");
+            let title = note_title(&content, note_id);
+            let mut changed_fields = vec!["tags".to_string()];
+            let mut details = json!({ "tags": { "deletedTagId": id } });
+            if !was_recycle {
+                changed_fields.insert(0, "flags".to_string());
+                if let Some(object) = details.as_object_mut() {
+                    object.insert(
+                        "flags".to_string(),
+                        json!({ "isRecycle": { "before": false, "after": true } }),
+                    );
+                }
+            }
+            insert_note_log_if_enabled_tx(
+                &ctx,
+                &mut tx,
+                user,
+                OperationLogDraft {
+                    action: "tagDeleteWithNotes".to_string(),
+                    note_id,
+                    note_type,
+                    previous_note_type: Some(note_type),
+                    note_title: title.clone(),
+                    changed_fields,
+                    summary: format!("Deleted tag with note: {title}"),
+                    details,
+                },
+            )
+            .await?;
+        }
+        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "tagId"=$1"#).bind(id).execute(&mut *tx).await?;
         sqlx::query(r#"DELETE FROM tag WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
             .bind(id)
             .bind(user.id)
             .bind(ws)
-            .execute(ctx.state.pool())
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(json!(true))
     }
     .boxed()

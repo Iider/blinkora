@@ -381,6 +381,29 @@ fn tool_list(user: &CurrentUser) -> Value {
                 }
             })
         },
+        {
+            json!({
+                "name": "listOperationLogs",
+                "description": "List workspace operation logs for note changes. Use afterId for cursor-based incremental reads.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "page": { "type": "number", "default": 1 },
+                        "size": { "type": "number", "default": 30 },
+                        "afterId": { "type": "number" },
+                        "beforeId": { "type": "number" },
+                        "startDate": { "type": "string" },
+                        "endDate": { "type": "string" },
+                        "actorType": { "type": "string", "enum": ["all", "user", "agent", "system"], "default": "all" },
+                        "actions": { "type": "array", "items": { "type": "string" } },
+                        "noteTypes": { "type": "array", "items": { "type": "number" } },
+                        "noteId": { "type": "number" },
+                        "changedField": { "type": "string" },
+                        "orderBy": { "type": "string", "enum": ["asc", "desc"], "default": "desc" }
+                    }
+                }
+            })
+        },
     ];
 
     Value::Array(
@@ -439,6 +462,9 @@ async fn call_tool(state: AppState, user: CurrentUser, tool_name: &str, argument
             crate::trpc::execute_procedure(state, user, "comments.update", arguments).await
         }
         "listTagTree" => list_tag_tree(state, user).await,
+        "listOperationLogs" => {
+            crate::trpc::execute_procedure(state, user, "operationLogs.list", arguments).await
+        }
         _ => Err(anyhow::anyhow!("Unknown tool: {tool_name}")),
     };
 

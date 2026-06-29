@@ -17,6 +17,7 @@ pub mod files;
 pub mod fonts;
 pub mod mcp;
 pub mod notes;
+pub mod operation_logs;
 pub mod system;
 pub mod tags;
 pub mod workspaces;
@@ -52,6 +53,7 @@ pub fn register_procedures(registry: &mut HashMap<&'static str, ProcedureHandler
     config::register(registry);
     fonts::register(registry);
     notes::register(registry);
+    operation_logs::register(registry);
     system::register(registry);
     tags::register(registry);
     workspaces::register(registry);

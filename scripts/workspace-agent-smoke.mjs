@@ -390,6 +390,7 @@ async function main() {
     "createComment",
     "updateComment",
     "listTagTree",
+    "listOperationLogs",
   ];
   assert(
     expectedTools.every((name) => toolNames.includes(name)) &&
@@ -490,6 +491,27 @@ async function main() {
       updated.result?.structuredContent?.metadata?.kind === "updated",
     "MCP updateBlinkora",
     updated,
+  );
+
+  const operationLogs = await mcp.rpc("tools/call", {
+    name: "listOperationLogs",
+    arguments: {
+      afterId: 0,
+      actorType: "agent",
+      noteTypes: [1],
+      orderBy: "asc",
+      size: 20,
+    },
+  });
+  assert(
+    operationLogs.result?.structuredContent?.items?.some?.(
+      (item) =>
+        item.target?.noteId === noteValue.id &&
+        item.actor?.type === "agent" &&
+        !JSON.stringify(item.details || {}).includes("Agent smoke updated"),
+    ),
+    "MCP listOperationLogs cursor query",
+    operationLogs,
   );
 
   const propertyUpdate = await mcp.rpc("tools/call", {

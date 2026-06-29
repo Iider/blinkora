@@ -338,12 +338,13 @@ curl -fsSL \\
 - 不允许访问其他工作区、文件、备份、配置和管理接口
 
 推荐 MCP 工具：
-getWorkspaceContext、searchBlinkora、getBlinkora、upsertBlinkora、updateBlinkora、deleteBlinkora、listReferences、addReference、removeReference、setReferences、listComments、createComment、updateComment、listTagTree
+getWorkspaceContext、searchBlinkora、getBlinkora、upsertBlinkora、updateBlinkora、deleteBlinkora、listReferences、addReference、removeReference、setReferences、listComments、createComment、updateComment、listTagTree、listOperationLogs
 
 写入提醒：
 - 搜索是普通关键词 / metadata 检索，不是语义、向量、embedding 或 RAG 搜索。
 - metadata.properties 是自定义属性；修改 metadata 前先读原笔记并合并，避免覆盖导入键、来源、哈希等维护字段。
 - updateBlinkora 不传 content、type 或状态字段时保持原值。
+- listOperationLogs 可按 afterId 增量读取用户和 Agent 的笔记操作日志。
 - 不能通过工作区令牌读写附件文件、彻底删除笔记或跨 Workspace 移动卡片。
 
 注意：

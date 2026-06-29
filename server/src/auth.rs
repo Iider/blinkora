@@ -147,6 +147,7 @@ impl AgentPermissions {
             "notes.list"
             | "notes.listByIds"
             | "notes.detail"
+            | "operationLogs.list"
             | "notes.noteReferenceList"
             | "notes.getNoteHistory"
             | "notes.getNoteVersion" => self.notes_read,
@@ -167,6 +168,7 @@ impl AgentPermissions {
         match tool_name {
             "getWorkspaceContext" => self.notes_read || self.tags_read || self.comments_read,
             "searchBlinkora" | "getBlinkora" | "listReferences" => self.notes_read,
+            "listOperationLogs" => self.notes_read,
             "upsertBlinkora" | "updateBlinkora" | "deleteBlinkora" => self.notes_write,
             "addReference" | "removeReference" | "setReferences" => self.notes_write,
             "listComments" => self.comments_read,

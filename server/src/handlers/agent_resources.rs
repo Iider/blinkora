@@ -100,6 +100,7 @@ export BLINKORA_AGENT_TOKEN="bkws_xxx"
 - `createComment`
 - `updateComment`
 - `listTagTree`
+- `listOperationLogs`
 
 要点：
 
@@ -108,6 +109,7 @@ export BLINKORA_AGENT_TOKEN="bkws_xxx"
 - `isArchived` 默认只查未归档；传 `true` 查归档，传 `null` 同时查普通和归档。`isRecycle: true` 查回收站。
 - `metadata.properties` 是给人看的自定义属性，只放扁平值：字符串、数字、布尔、`null` 或字符串数组。修改属性前先读原笔记并合并完整 `metadata`，不要覆盖导入键、来源、哈希等维护字段。
 - `deleteBlinkora` 只移入回收站；MCP 不暴露彻底删除、附件文件读写或跨 Workspace 移动。
+- `listOperationLogs` 读取系统级操作日志；Agent 可用 `afterId` 做增量同步，默认建议筛选 `actorType: "user"`。
 
 自定义属性写入示例：
 
@@ -244,6 +246,7 @@ Prefer these MCP tools:
 - `createComment`: create a comment for a note.
 - `updateComment`: update a comment by `id`.
 - `listTagTree`: read the current workspace tag tree.
+- `listOperationLogs`: read note operation logs. Use `afterId` as a cursor for incremental sync.
 
 Returned notes include `id`, `type`, `content`, status flags, `metadata`, tags, attachment metadata, outgoing `references`, incoming `referencedBy`, and timestamps.
 
@@ -252,6 +255,8 @@ Returned notes include `id`, `type`, `content`, status flags, `metadata`, tags, 
 `isArchived` defaults to `false`; pass `true` for archived notes and `null` to search both normal and archived notes. Pass `isRecycle: true` for recycle-bin notes. `deleteBlinkora` only moves notes to the recycle bin; MCP does not expose hard deletion.
 
 `upsertBlinkora` and `updateBlinkora` accept optional status flags, `metadata`, and `references`. On update, omit `content`, `type`, `isArchived`, `isRecycle`, `isTop`, or `isReviewed` to keep the current value.
+
+Use `listOperationLogs({ afterId, actorType: "user", noteTypes: [1], orderBy: "asc" })` before maintenance work when you need to see user changes since the last agent pass.
 
 Use `metadata` for machine-readable maintenance fields such as `importSourceKey`, `sourcePath`, `sourceUrl`, `sha256`, `originalType`, `originalTitle`, `externalId`, `schema`, or workflow-specific state.
 Use `metadata.properties` for human-readable custom properties shown in Blinkora. Keep properties flat: `string`, `number`, `boolean`, `null`, or `string[]`.

@@ -356,6 +356,49 @@ ALTER SEQUENCE public."noteReference_id_seq" OWNED BY public."noteReference".id;
 
 
 --
+-- Name: operationLog; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public."operationLog" (
+    id integer NOT NULL,
+    "accountId" integer,
+    "workspaceId" integer,
+    "actorType" character varying DEFAULT 'user'::character varying NOT NULL,
+    "actorAccountId" integer,
+    "actorAgentTokenId" integer,
+    "actorLabel" character varying DEFAULT ''::character varying NOT NULL,
+    action character varying DEFAULT ''::character varying NOT NULL,
+    "noteId" integer,
+    "noteType" integer,
+    "noteTitle" character varying DEFAULT ''::character varying NOT NULL,
+    "changedFields" json DEFAULT '[]'::json NOT NULL,
+    summary text DEFAULT ''::text NOT NULL,
+    details json,
+    "createdAt" timestamp(6) with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+
+--
+-- Name: operationLog_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public."operationLog_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: operationLog_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public."operationLog_id_seq" OWNED BY public."operationLog".id;
+
+
+--
 -- Name: notes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -565,6 +608,13 @@ ALTER TABLE ONLY public."noteReference" ALTER COLUMN id SET DEFAULT nextval('pub
 
 
 --
+-- Name: operationLog id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."operationLog" ALTER COLUMN id SET DEFAULT nextval('public."operationLog_id_seq"'::regclass);
+
+
+--
 -- Name: notes id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -662,6 +712,14 @@ ALTER TABLE ONLY public."noteHistory"
 
 ALTER TABLE ONLY public."noteReference"
     ADD CONSTRAINT "noteReference_pkey" PRIMARY KEY (id);
+
+
+--
+-- Name: operationLog operationLog_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."operationLog"
+    ADD CONSTRAINT "operationLog_pkey" PRIMARY KEY (id);
 
 
 --
@@ -837,6 +895,41 @@ CREATE UNIQUE INDEX "noteReference_fromNoteId_toNoteId_key" ON public."noteRefer
 
 
 --
+-- Name: operationLog_workspaceId_actorType_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "operationLog_workspaceId_actorType_idx" ON public."operationLog" USING btree ("workspaceId", "actorType");
+
+
+--
+-- Name: operationLog_workspaceId_createdAt_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "operationLog_workspaceId_createdAt_idx" ON public."operationLog" USING btree ("workspaceId", "createdAt");
+
+
+--
+-- Name: operationLog_workspaceId_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "operationLog_workspaceId_id_idx" ON public."operationLog" USING btree ("workspaceId", id);
+
+
+--
+-- Name: operationLog_workspaceId_noteId_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "operationLog_workspaceId_noteId_idx" ON public."operationLog" USING btree ("workspaceId", "noteId");
+
+
+--
+-- Name: operationLog_workspaceId_noteType_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX "operationLog_workspaceId_noteType_idx" ON public."operationLog" USING btree ("workspaceId", "noteType");
+
+
+--
 -- Name: notes_accountId_workspaceId_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -996,6 +1089,22 @@ ALTER TABLE ONLY public."noteReference"
 
 ALTER TABLE ONLY public."noteReference"
     ADD CONSTRAINT "noteReference_toNoteId_fkey" FOREIGN KEY ("toNoteId") REFERENCES public.notes(id) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+--
+-- Name: operationLog operationLog_accountId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."operationLog"
+    ADD CONSTRAINT "operationLog_accountId_fkey" FOREIGN KEY ("accountId") REFERENCES public.accounts(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+--
+-- Name: operationLog operationLog_workspaceId_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public."operationLog"
+    ADD CONSTRAINT "operationLog_workspaceId_fkey" FOREIGN KEY ("workspaceId") REFERENCES public.workspaces(id) ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 --

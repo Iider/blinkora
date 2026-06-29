@@ -1,10 +1,14 @@
 use super::common::{note_json, workspace_id};
+use super::operation_logs::{
+    content_change_detail, content_hash, insert_note_log_if_enabled_tx, note_title,
+    OperationLogDraft,
+};
 use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
 use crate::util::unwrap_config_value;
 use anyhow::{anyhow, bail};
 use futures::FutureExt;
 use regex::Regex;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use sqlx::{Postgres, QueryBuilder, Row};
 use std::collections::{HashMap, HashSet};
 
@@ -47,6 +51,18 @@ struct NoteListFilters<'a> {
     has_todo: bool,
     start_date: Option<&'a str>,
     end_date: Option<&'a str>,
+}
+
+#[derive(Clone)]
+struct NoteSnapshot {
+    id: i32,
+    content: String,
+    note_type: i32,
+    metadata: Option<Value>,
+    is_archived: bool,
+    is_recycle: bool,
+    is_top: bool,
+    is_reviewed: bool,
 }
 
 fn push_note_list_filters(query: &mut QueryBuilder<'_, Postgres>, filters: &NoteListFilters<'_>) {
@@ -323,12 +339,38 @@ fn review(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
+        let mut tx = ctx.state.pool().begin().await?;
+        let Some(old) = note_snapshot_tx(&mut tx, id, user.id, ws).await? else {
+            bail!("Note not found");
+        };
         sqlx::query(r#"UPDATE notes SET "isReviewed"=true, "updatedAt"=NOW() WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
             .bind(id)
             .bind(user.id)
             .bind(ws)
-            .execute(ctx.state.pool())
+            .execute(&mut *tx)
             .await?;
+        if !old.is_reviewed {
+            let mut flags = Map::new();
+            flags.insert("isReviewed".to_string(), json!({ "before": false, "after": true }));
+            let title = note_title(&old.content, id);
+            insert_note_log_if_enabled_tx(
+                &ctx,
+                &mut tx,
+                user,
+                OperationLogDraft {
+                    action: "review".to_string(),
+                    note_id: id,
+                    note_type: old.note_type,
+                    previous_note_type: Some(old.note_type),
+                    note_title: title.clone(),
+                    changed_fields: vec!["flags".to_string()],
+                    summary: format!("Reviewed note: {title}"),
+                    details: json!({ "flags": flags }),
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
         Ok(json!(true))
     }
     .boxed()
@@ -351,32 +393,30 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let metadata = input.get("metadata").cloned();
         let mut tx = ctx.state.pool().begin().await?;
         let (note_id, synced_content) = if let Some(id) = id {
-            let old: Option<(String, i32, Option<Value>)> = sqlx::query_as(r#"SELECT content, type, metadata FROM notes WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
-                .bind(id)
-                .bind(user.id)
-                .bind(ws)
-                .fetch_optional(&mut *tx)
-                .await?;
-            if let Some((old_content, old_note_type, old_metadata)) = old {
+            let old = note_snapshot_tx(&mut tx, id, user.id, ws).await?;
+            if let Some(old) = old {
+                let before_tags = note_tag_ids_tx(&mut tx, id).await?;
+                let before_references = note_reference_ids_tx(&mut tx, id).await?;
                 let version: i32 = sqlx::query_scalar(r#"SELECT COALESCE(MAX(version),0)+1 FROM "noteHistory" WHERE "noteId"=$1"#)
                     .bind(id)
                     .fetch_one(&mut *tx)
                     .await?;
                 sqlx::query(r#"INSERT INTO "noteHistory" ("noteId", content, metadata, version, "accountId", "workspaceId") VALUES ($1,$2,$3,$4,$5,$6)"#)
                     .bind(id)
-                    .bind(&old_content)
-                    .bind(old_metadata)
+                    .bind(&old.content)
+                    .bind(old.metadata.clone())
                     .bind(version)
                     .bind(user.id)
                     .bind(ws)
                     .execute(&mut *tx)
                     .await?;
-                let next_content = content.unwrap_or(old_content);
-                let next_note_type = note_type.unwrap_or(old_note_type);
+                let next_content = content.clone().unwrap_or_else(|| old.content.clone());
+                let next_note_type = note_type.unwrap_or(old.note_type);
+                let next_metadata = metadata.clone().or_else(|| old.metadata.clone());
                 sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3::json, metadata), "isArchived"=COALESCE($4, "isArchived"), "isRecycle"=COALESCE($5, "isRecycle"), "isTop"=COALESCE($6, "isTop"), "isReviewed"=COALESCE($7, "isReviewed"), "updatedAt"=NOW() WHERE id=$8 AND "accountId"=$9 AND "workspaceId"=$10"#)
                     .bind(&next_content)
                     .bind(next_note_type)
-                    .bind(metadata)
+                    .bind(metadata.clone())
                     .bind(is_archived)
                     .bind(is_recycle)
                     .bind(is_top)
@@ -386,6 +426,72 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                     .bind(ws)
                     .execute(&mut *tx)
                     .await?;
+                sync_tags(&ctx, &mut tx, id, user.id, ws, &next_content).await?;
+                sync_references(&mut tx, id, user.id, ws, input.get("references")).await?;
+                let after_tags = note_tag_ids_tx(&mut tx, id).await?;
+                let after_references = note_reference_ids_tx(&mut tx, id).await?;
+
+                let mut changed_fields = Vec::new();
+                let mut details = Map::new();
+                if old.content != next_content {
+                    push_changed_field(&mut changed_fields, "content");
+                    details.insert(
+                        "content".to_string(),
+                        content_change_detail(Some(&old.content), &next_content, Some(version)),
+                    );
+                }
+                if old.note_type != next_note_type {
+                    push_changed_field(&mut changed_fields, "type");
+                    details.insert(
+                        "type".to_string(),
+                        json!({ "before": old.note_type, "after": next_note_type }),
+                    );
+                }
+                if metadata.is_some() && old.metadata != next_metadata {
+                    push_changed_field(&mut changed_fields, "metadata");
+                    details.insert("metadata".to_string(), metadata_detail(&old.metadata, &next_metadata));
+                }
+
+                let mut flags = Map::new();
+                add_flag_change(&mut flags, "isArchived", old.is_archived, is_archived);
+                add_flag_change(&mut flags, "isRecycle", old.is_recycle, is_recycle);
+                add_flag_change(&mut flags, "isTop", old.is_top, is_top);
+                add_flag_change(&mut flags, "isReviewed", old.is_reviewed, is_reviewed);
+                if !flags.is_empty() {
+                    push_changed_field(&mut changed_fields, "flags");
+                    details.insert("flags".to_string(), Value::Object(flags));
+                }
+
+                if before_tags != after_tags {
+                    push_changed_field(&mut changed_fields, "tags");
+                    details.insert("tags".to_string(), ids_diff_detail(&before_tags, &after_tags));
+                }
+                if input.get("references").is_some() && before_references != after_references {
+                    push_changed_field(&mut changed_fields, "references");
+                    details.insert(
+                        "references".to_string(),
+                        ids_diff_detail(&before_references, &after_references),
+                    );
+                }
+
+                let action = action_for_update(&changed_fields, &details);
+                let title = note_title(&next_content, id);
+                insert_note_log_if_enabled_tx(
+                    &ctx,
+                    &mut tx,
+                    user,
+                    OperationLogDraft {
+                        action,
+                        note_id: id,
+                        note_type: next_note_type,
+                        previous_note_type: Some(old.note_type),
+                        note_title: title.clone(),
+                        changed_fields,
+                        summary: format!("Updated note: {title}"),
+                        details: Value::Object(details),
+                    },
+                )
+                .await?;
                 (id, next_content)
             } else {
                 bail!("Note not found");
@@ -393,10 +499,10 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         } else {
             let content = content.unwrap_or_default();
             let note_type = note_type.unwrap_or(0);
-            sqlx::query_scalar(r#"INSERT INTO notes (content, type, metadata, "isArchived", "isRecycle", "isTop", "isReviewed", "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()) RETURNING id"#)
+            let note_id: i32 = sqlx::query_scalar(r#"INSERT INTO notes (content, type, metadata, "isArchived", "isRecycle", "isTop", "isReviewed", "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()) RETURNING id"#)
                 .bind(&content)
                 .bind(note_type)
-                .bind(metadata)
+                .bind(metadata.clone())
                 .bind(is_archived.unwrap_or(false))
                 .bind(is_recycle.unwrap_or(false))
                 .bind(is_top.unwrap_or(false))
@@ -404,11 +510,56 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 .bind(user.id)
                 .bind(ws)
                 .fetch_one(&mut *tx)
-                .await
-                .map(|id| (id, content))?
+                .await?;
+            sync_tags(&ctx, &mut tx, note_id, user.id, ws, &content).await?;
+            sync_references(&mut tx, note_id, user.id, ws, input.get("references")).await?;
+            let after_tags = note_tag_ids_tx(&mut tx, note_id).await?;
+            let after_references = note_reference_ids_tx(&mut tx, note_id).await?;
+
+            let mut changed_fields = vec!["content".to_string(), "type".to_string()];
+            let mut details = Map::new();
+            details.insert("content".to_string(), content_change_detail(None, &content, None));
+            details.insert("type".to_string(), json!({ "after": note_type }));
+            if metadata.is_some() {
+                push_changed_field(&mut changed_fields, "metadata");
+                details.insert("metadata".to_string(), metadata_detail(&None, &metadata));
+            }
+            let mut flags = Map::new();
+            add_flag_change(&mut flags, "isArchived", false, is_archived);
+            add_flag_change(&mut flags, "isRecycle", false, is_recycle);
+            add_flag_change(&mut flags, "isTop", false, is_top);
+            add_flag_change(&mut flags, "isReviewed", false, is_reviewed);
+            if !flags.is_empty() {
+                push_changed_field(&mut changed_fields, "flags");
+                details.insert("flags".to_string(), Value::Object(flags));
+            }
+            if !after_tags.is_empty() {
+                push_changed_field(&mut changed_fields, "tags");
+                details.insert("tags".to_string(), ids_diff_detail(&[], &after_tags));
+            }
+            if !after_references.is_empty() {
+                push_changed_field(&mut changed_fields, "references");
+                details.insert("references".to_string(), ids_diff_detail(&[], &after_references));
+            }
+            let title = note_title(&content, note_id);
+            insert_note_log_if_enabled_tx(
+                &ctx,
+                &mut tx,
+                user,
+                OperationLogDraft {
+                    action: "create".to_string(),
+                    note_id,
+                    note_type,
+                    previous_note_type: None,
+                    note_title: title.clone(),
+                    changed_fields,
+                    summary: format!("Created note: {title}"),
+                    details: Value::Object(details),
+                },
+            )
+            .await?;
+            (note_id, content)
         };
-        sync_tags(&ctx, &mut tx, note_id, user.id, ws, &synced_content).await?;
-        sync_references(&mut tx, note_id, user.id, ws, input.get("references")).await?;
         sync_attachments(&mut tx, note_id, user.id, ws, &synced_content, input.get("attachments")).await?;
         tx.commit().await?;
         let row = sqlx::query(&note_select_sql("id=$3"))
@@ -581,18 +732,56 @@ fn update_many(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let is_archived = input.get("isArchived").and_then(Value::as_bool);
         let is_top = input.get("isTop").and_then(Value::as_bool);
         let is_reviewed = input.get("isReviewed").and_then(Value::as_bool);
+        let mut tx = ctx.state.pool().begin().await?;
+        let mut old_notes = Vec::new();
+        for id in &ids {
+            if let Some(note) = note_snapshot_tx(&mut tx, *id, user.id, ws).await? {
+                old_notes.push(note);
+            }
+        }
         if let Some(value) = is_archived {
             sqlx::query(r#"UPDATE notes SET "isArchived"=$1, "updatedAt"=NOW() WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#)
-                .bind(value).bind(&ids).bind(user.id).bind(ws).execute(ctx.state.pool()).await?;
+                .bind(value).bind(&ids).bind(user.id).bind(ws).execute(&mut *tx).await?;
         }
         if let Some(value) = is_top {
             sqlx::query(r#"UPDATE notes SET "isTop"=$1, "updatedAt"=NOW() WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#)
-                .bind(value).bind(&ids).bind(user.id).bind(ws).execute(ctx.state.pool()).await?;
+                .bind(value).bind(&ids).bind(user.id).bind(ws).execute(&mut *tx).await?;
         }
         if let Some(value) = is_reviewed {
             sqlx::query(r#"UPDATE notes SET "isReviewed"=$1, "updatedAt"=NOW() WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#)
-                .bind(value).bind(&ids).bind(user.id).bind(ws).execute(ctx.state.pool()).await?;
+                .bind(value).bind(&ids).bind(user.id).bind(ws).execute(&mut *tx).await?;
         }
+        for old in old_notes {
+            let mut flags = Map::new();
+            add_flag_change(&mut flags, "isArchived", old.is_archived, is_archived);
+            add_flag_change(&mut flags, "isTop", old.is_top, is_top);
+            add_flag_change(&mut flags, "isReviewed", old.is_reviewed, is_reviewed);
+            if flags.is_empty() {
+                continue;
+            }
+            let mut details = Map::new();
+            details.insert("flags".to_string(), Value::Object(flags));
+            let changed_fields = vec!["flags".to_string()];
+            let action = action_for_update(&changed_fields, &details);
+            let title = note_title(&old.content, old.id);
+            insert_note_log_if_enabled_tx(
+                &ctx,
+                &mut tx,
+                user,
+                OperationLogDraft {
+                    action,
+                    note_id: old.id,
+                    note_type: old.note_type,
+                    previous_note_type: Some(old.note_type),
+                    note_title: title.clone(),
+                    changed_fields,
+                    summary: format!("Updated note flags: {title}"),
+                    details: Value::Object(details),
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
         Ok(json!(true))
     }
     .boxed()
@@ -644,8 +833,34 @@ fn add_reference(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             bail!("invalid reference");
         }
         ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws, false).await?;
+        let mut tx = ctx.state.pool().begin().await?;
+        let Some(note) = note_snapshot_tx(&mut tx, from, user.id, ws).await? else {
+            bail!("Note not found");
+        };
+        let before_references = note_reference_ids_tx(&mut tx, from).await?;
         sqlx::query(r#"INSERT INTO "noteReference" ("fromNoteId","toNoteId") VALUES ($1,$2) ON CONFLICT DO NOTHING"#)
-            .bind(from).bind(to).execute(ctx.state.pool()).await?;
+            .bind(from).bind(to).execute(&mut *tx).await?;
+        let after_references = note_reference_ids_tx(&mut tx, from).await?;
+        if before_references != after_references {
+            let title = note_title(&note.content, from);
+            insert_note_log_if_enabled_tx(
+                &ctx,
+                &mut tx,
+                user,
+                OperationLogDraft {
+                    action: "addReference".to_string(),
+                    note_id: from,
+                    note_type: note.note_type,
+                    previous_note_type: Some(note.note_type),
+                    note_title: title.clone(),
+                    changed_fields: vec!["references".to_string()],
+                    summary: format!("Added reference: {title}"),
+                    details: json!({ "references": ids_diff_detail(&before_references, &after_references) }),
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
         Ok(json!({ "success": true, "fromNoteId": from, "toNoteId": to }))
     }
     .boxed()
@@ -659,36 +874,72 @@ fn remove_reference(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .get("id")
             .and_then(Value::as_i64)
             .map(|value| value as i32);
-        let from = note_id_arg(&input, &["fromNoteId", "fromId"]);
-        let to = note_id_arg(&input, &["toNoteId", "toId"]);
-        let deleted = if let Some(id) = id {
-            sqlx::query(
-                r#"DELETE FROM "noteReference" nr
-                   USING notes nf, notes nt
+        let mut from = note_id_arg(&input, &["fromNoteId", "fromId"]);
+        let mut to = note_id_arg(&input, &["toNoteId", "toId"]);
+        if let Some(id) = id {
+            let row = sqlx::query(
+                r#"SELECT nr."fromNoteId", nr."toNoteId"
+                   FROM "noteReference" nr
+                   JOIN notes nf ON nf.id=nr."fromNoteId"
+                   JOIN notes nt ON nt.id=nr."toNoteId"
                    WHERE nr.id=$1
-                     AND nf.id=nr."fromNoteId"
-                     AND nt.id=nr."toNoteId"
                      AND nf."accountId"=$2 AND nf."workspaceId"=$3
                      AND nt."accountId"=$2 AND nt."workspaceId"=$3"#,
             )
             .bind(id)
             .bind(user.id)
             .bind(ws)
-            .execute(ctx.state.pool())
-            .await?
-            .rows_affected()
-        } else {
-            if from <= 0 || to <= 0 {
-                bail!("id or fromNoteId/toNoteId is required");
+            .fetch_optional(ctx.state.pool())
+            .await?;
+            if let Some(row) = row {
+                from = row.get::<i32, _>("fromNoteId");
+                to = row.get::<i32, _>("toNoteId");
             }
-            ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws, false).await?;
+        }
+        if from <= 0 || to <= 0 {
+            bail!("id or fromNoteId/toNoteId is required");
+        }
+        ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws, false).await?;
+        let mut tx = ctx.state.pool().begin().await?;
+        let Some(note) = note_snapshot_tx(&mut tx, from, user.id, ws).await? else {
+            bail!("Note not found");
+        };
+        let before_references = note_reference_ids_tx(&mut tx, from).await?;
+        let deleted = if let Some(id) = id {
+            sqlx::query(r#"DELETE FROM "noteReference" WHERE id=$1"#)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected()
+        } else {
             sqlx::query(r#"DELETE FROM "noteReference" WHERE "fromNoteId"=$1 AND "toNoteId"=$2"#)
                 .bind(from)
                 .bind(to)
-                .execute(ctx.state.pool())
+                .execute(&mut *tx)
                 .await?
                 .rows_affected()
         };
+        let after_references = note_reference_ids_tx(&mut tx, from).await?;
+        if deleted > 0 && before_references != after_references {
+            let title = note_title(&note.content, from);
+            insert_note_log_if_enabled_tx(
+                &ctx,
+                &mut tx,
+                user,
+                OperationLogDraft {
+                    action: "removeReference".to_string(),
+                    note_id: from,
+                    note_type: note.note_type,
+                    previous_note_type: Some(note.note_type),
+                    note_title: title.clone(),
+                    changed_fields: vec!["references".to_string()],
+                    summary: format!("Removed reference: {title}"),
+                    details: json!({ "references": ids_diff_detail(&before_references, &after_references) }),
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
         Ok(json!({ "success": true, "deleted": deleted }))
     }
     .boxed()
@@ -714,6 +965,10 @@ fn set_references(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         .filter(|id| *id > 0 && *id != from)
         .collect::<Vec<_>>();
         let mut tx = ctx.state.pool().begin().await?;
+        let Some(note) = note_snapshot_tx(&mut tx, from, user.id, ws).await? else {
+            bail!("Note not found");
+        };
+        let before_references = note_reference_ids_tx(&mut tx, from).await?;
         sync_references(
             &mut tx,
             from,
@@ -724,6 +979,26 @@ fn set_references(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             )),
         )
         .await?;
+        let after_references = note_reference_ids_tx(&mut tx, from).await?;
+        if before_references != after_references {
+            let title = note_title(&note.content, from);
+            insert_note_log_if_enabled_tx(
+                &ctx,
+                &mut tx,
+                user,
+                OperationLogDraft {
+                    action: "setReferences".to_string(),
+                    note_id: from,
+                    note_type: note.note_type,
+                    previous_note_type: Some(note.note_type),
+                    note_title: title.clone(),
+                    changed_fields: vec!["references".to_string()],
+                    summary: format!("Set references: {title}"),
+                    details: json!({ "references": ids_diff_detail(&before_references, &after_references) }),
+                },
+            )
+            .await?;
+        }
         tx.commit().await?;
         let result = reference_list_for_note(&ctx, from, user.id, ws, false).await?;
         Ok(json!({ "success": true, "references": result }))
@@ -801,6 +1076,152 @@ fn reference_ids_from_value(value: &Value) -> Vec<i32> {
             .collect(),
         Value::Number(value) => value.as_i64().map(|id| vec![id as i32]).unwrap_or_default(),
         _ => Vec::new(),
+    }
+}
+
+async fn note_snapshot_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    note_id: i32,
+    account_id: i32,
+    workspace_id: i32,
+) -> anyhow::Result<Option<NoteSnapshot>> {
+    let row = sqlx::query(
+        r#"SELECT id, content, type, metadata, "isArchived", "isRecycle", "isTop", "isReviewed"
+           FROM notes WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#,
+    )
+    .bind(note_id)
+    .bind(account_id)
+    .bind(workspace_id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    Ok(row.map(|row| NoteSnapshot {
+        id: row.get::<i32, _>("id"),
+        content: row.get::<String, _>("content"),
+        note_type: row.get::<i32, _>("type"),
+        metadata: row.get::<Option<Value>, _>("metadata"),
+        is_archived: row.get::<bool, _>("isArchived"),
+        is_recycle: row.get::<bool, _>("isRecycle"),
+        is_top: row.get::<bool, _>("isTop"),
+        is_reviewed: row.get::<bool, _>("isReviewed"),
+    }))
+}
+
+async fn note_tag_ids_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    note_id: i32,
+) -> anyhow::Result<Vec<i32>> {
+    let ids: Vec<i32> = sqlx::query_scalar(
+        r#"SELECT "tagId" FROM "tagsToNote" WHERE "noteId"=$1 ORDER BY "tagId" ASC"#,
+    )
+    .bind(note_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(unique_ids(&ids))
+}
+
+async fn note_reference_ids_tx(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    note_id: i32,
+) -> anyhow::Result<Vec<i32>> {
+    let ids: Vec<i32> = sqlx::query_scalar(
+        r#"SELECT "toNoteId" FROM "noteReference" WHERE "fromNoteId"=$1 ORDER BY "toNoteId" ASC"#,
+    )
+    .bind(note_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    Ok(unique_ids(&ids))
+}
+
+fn ids_diff_detail(before: &[i32], after: &[i32]) -> Value {
+    let before = unique_ids(before);
+    let after = unique_ids(after);
+    let before_set = before.iter().copied().collect::<HashSet<_>>();
+    let after_set = after.iter().copied().collect::<HashSet<_>>();
+    let added = after
+        .iter()
+        .copied()
+        .filter(|id| !before_set.contains(id))
+        .collect::<Vec<_>>();
+    let removed = before
+        .iter()
+        .copied()
+        .filter(|id| !after_set.contains(id))
+        .collect::<Vec<_>>();
+    json!({
+        "before": before,
+        "after": after,
+        "added": added,
+        "removed": removed
+    })
+}
+
+fn metadata_detail(before: &Option<Value>, after: &Option<Value>) -> Value {
+    json!({
+        "beforeHash": before.as_ref().map(metadata_hash),
+        "afterHash": after.as_ref().map(metadata_hash),
+        "beforeKeys": metadata_keys(before),
+        "afterKeys": metadata_keys(after)
+    })
+}
+
+fn metadata_hash(value: &Value) -> String {
+    content_hash(&serde_json::to_string(value).unwrap_or_default())
+}
+
+fn metadata_keys(value: &Option<Value>) -> Vec<String> {
+    value
+        .as_ref()
+        .and_then(Value::as_object)
+        .map(|object| object.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+fn add_flag_change(flags: &mut Map<String, Value>, name: &str, before: bool, after: Option<bool>) {
+    if let Some(after) = after {
+        if before != after {
+            flags.insert(
+                name.to_string(),
+                json!({ "before": before, "after": after }),
+            );
+        }
+    }
+}
+
+fn action_for_update(changed_fields: &[String], details: &Map<String, Value>) -> String {
+    if changed_fields.len() == 1 && changed_fields[0] == "flags" {
+        if let Some(flags) = details.get("flags").and_then(Value::as_object) {
+            if let Some(value) = flags.get("isArchived").and_then(Value::as_object) {
+                return if value.get("after").and_then(Value::as_bool).unwrap_or(false) {
+                    "archive"
+                } else {
+                    "unarchive"
+                }
+                .to_string();
+            }
+            if let Some(value) = flags.get("isRecycle").and_then(Value::as_object) {
+                return if value.get("after").and_then(Value::as_bool).unwrap_or(false) {
+                    "recycle"
+                } else {
+                    "restore"
+                }
+                .to_string();
+            }
+            if let Some(value) = flags.get("isReviewed").and_then(Value::as_object) {
+                return if value.get("after").and_then(Value::as_bool).unwrap_or(false) {
+                    "review"
+                } else {
+                    "unreview"
+                }
+                .to_string();
+            }
+        }
+    }
+    "update".to_string()
+}
+
+fn push_changed_field(changed_fields: &mut Vec<String>, field: &str) {
+    if !changed_fields.iter().any(|item| item == field) {
+        changed_fields.push(field.to_string());
     }
 }
 
@@ -1034,8 +1455,51 @@ fn update_flag(
         let ws = workspace_id(&ctx).await?;
         let ids = ids_from_input(&input);
         if !ids.is_empty() {
+            let mut tx = ctx.state.pool().begin().await?;
+            let mut old_notes = Vec::new();
+            for id in &ids {
+                if let Some(note) = note_snapshot_tx(&mut tx, *id, user.id, ws).await? {
+                    old_notes.push(note);
+                }
+            }
             let sql = format!(r#"UPDATE notes SET "{field}"=$1, "updatedAt"=NOW() WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#);
-            sqlx::query(&sql).bind(value).bind(&ids).bind(user.id).bind(ws).execute(ctx.state.pool()).await?;
+            sqlx::query(&sql).bind(value).bind(&ids).bind(user.id).bind(ws).execute(&mut *tx).await?;
+            for old in old_notes {
+                let before = match field {
+                    "isArchived" => old.is_archived,
+                    "isRecycle" => old.is_recycle,
+                    "isTop" => old.is_top,
+                    "isReviewed" => old.is_reviewed,
+                    _ => value,
+                };
+                if before == value {
+                    continue;
+                }
+                let mut flags = Map::new();
+                flags.insert(field.to_string(), json!({ "before": before, "after": value }));
+                let mut details = Map::new();
+                details.insert("flags".to_string(), Value::Object(flags));
+                let changed_fields = vec!["flags".to_string()];
+                let action = action_for_update(&changed_fields, &details);
+                let title = note_title(&old.content, old.id);
+                insert_note_log_if_enabled_tx(
+                    &ctx,
+                    &mut tx,
+                    user,
+                    OperationLogDraft {
+                        action,
+                        note_id: old.id,
+                        note_type: old.note_type,
+                        previous_note_type: Some(old.note_type),
+                        note_title: title.clone(),
+                        changed_fields,
+                        summary: format!("Updated note flag: {title}"),
+                        details: Value::Object(details),
+                    },
+                )
+                .await?;
+            }
+            tx.commit().await?;
         }
         Ok(json!(true))
     }.boxed()
@@ -1062,7 +1526,7 @@ pub(crate) fn note_select_sql(extra: &str) -> String {
     )
 }
 
-async fn sync_tags<'a>(
+pub(crate) async fn sync_tags<'a>(
     _ctx: &ProcedureContext,
     tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
     note_id: i32,
@@ -1212,6 +1676,7 @@ fn normalize_attachment_path(path: &str) -> String {
 #[derive(Clone)]
 struct NoteForDelete {
     id: i32,
+    note_type: i32,
     content: String,
 }
 
@@ -1263,7 +1728,7 @@ async fn notes_for_delete(
     }
 
     let rows = sqlx::query(
-        r#"SELECT id, content FROM notes WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#,
+        r#"SELECT id, type, content FROM notes WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#,
     )
     .bind(&note_ids)
     .bind(user.id)
@@ -1279,6 +1744,7 @@ async fn notes_for_delete(
         .into_iter()
         .map(|row| NoteForDelete {
             id: row.get::<i32, _>("id"),
+            note_type: row.get::<i32, _>("type"),
             content: row.get::<String, _>("content"),
         })
         .collect();
@@ -1400,6 +1866,7 @@ async fn delete_note_ids(
     ids: Vec<i32>,
     delete_orphan_attachments: bool,
 ) -> anyhow::Result<Value> {
+    let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
     let (notes, account_id, workspace_id) = notes_for_delete(&ctx, &ids).await?;
     let ids = notes.iter().map(|note| note.id).collect::<Vec<_>>();
     if ids.is_empty() {
@@ -1435,6 +1902,31 @@ async fn delete_note_ids(
             .bind(&ids)
             .fetch_all(&mut *tx)
             .await?;
+    for note in &notes {
+        let title = note_title(&note.content, note.id);
+        insert_note_log_if_enabled_tx(
+            &ctx,
+            &mut tx,
+            user,
+            OperationLogDraft {
+                action: "delete".to_string(),
+                note_id: note.id,
+                note_type: note.note_type,
+                previous_note_type: Some(note.note_type),
+                note_title: title.clone(),
+                changed_fields: vec!["note".to_string()],
+                summary: format!("Deleted note: {title}"),
+                details: json!({
+                    "content": {
+                        "beforeHash": content_hash(&note.content),
+                        "beforeLength": note.content.chars().count()
+                    },
+                    "deleteOrphanAttachments": delete_orphan_attachments
+                }),
+            },
+        )
+        .await?;
+    }
     for sql in [
         r#"DELETE FROM "tagsToNote" WHERE "noteId"=ANY($1)"#,
         r#"DELETE FROM "noteReference" WHERE "fromNoteId"=ANY($1) OR "toNoteId"=ANY($1)"#,

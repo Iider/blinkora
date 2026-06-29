@@ -173,6 +173,9 @@ Docker compose 文件：
 | [ ] | 偏好 | 打开偏好页 | 不显示已移除的 Hub 开关，语言显示为简体中文 |
 | [ ] | 存储 | 打开存储页 | 本地 / S3 配置项加载正常，无空白 |
 | [ ] | 导出 | 打开导出页 | 当前工作区导出 / 全量备份导出、JSON / Markdown 和导入入口可见 |
+| [ ] | 操作日志设置 | 打开设置页操作日志 | 页签位于“备份与恢复”和“关于”之间；默认只开启“记录笔记”，闪念和待办关闭 |
+| [ ] | 操作日志记录范围 | 创建/更新/删除一张笔记，再创建一条闪念和一条待办 | 笔记产生操作日志；闪念和待办默认不产生日志；打开对应开关后开始记录 |
+| [ ] | 操作日志筛选 | 在操作日志页按操作者、类型、操作、字段、笔记 ID 和时间筛选 | 列表稳定刷新，内容不展示完整正文，只展示标题、操作者、动作、字段和时间 |
 | [ ] | 执行导出与导入 | 使用测试数据执行一次当前工作区导出，再导入该 zip | 新增一个备份 Workspace，原 Workspace 数据不被替换或合并 |
 | [ ] | Markdown 属性导出 | 给一张测试笔记保存自定义属性后导出 Markdown zip，检查 zip 内 `.md` 文件和 `manifest.json` | 有属性的 `.md` 文件开头有 YAML frontmatter；无属性笔记没有空 frontmatter；manifest 仍完整保留 `metadata.properties` |
 | [ ] | 每日回顾 | 打开 `/review` | 页面可加载，无空白或控制台错误 |
@@ -183,8 +186,9 @@ Docker compose 文件：
 | --- | --- | --- | --- |
 | [ ] | 未鉴权拒绝 | 不携带 token 请求 `GET /sse` | 返回 `401`，不会建立 SSE 连接 |
 | [ ] | SSE 握手 | 使用经授权的测试 token 通过 `@modelcontextprotocol/sdk` 的 `SSEClientTransport` 连接 `/sse` | 客户端完成 `connect()`，服务端建立对应 session |
-| [ ] | 工具清单 | 在已连接客户端调用 `tools/list` | 返回 workspace context、note、reference、comment 和 tag tree 相关工具：`getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree` |
-| [ ] | Workspace Agent 工具清单 | 使用 Workspace Agent token 连接 `/sse` 后调用 `tools/list` | 返回 `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree` |
+| [ ] | 工具清单 | 在已连接客户端调用 `tools/list` | 返回 workspace context、note、reference、comment、tag tree 和 operation log 相关工具：`getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree`、`listOperationLogs` |
+| [ ] | Workspace Agent 工具清单 | 使用 Workspace Agent token 连接 `/sse` 后调用 `tools/list` | 返回 `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`deleteBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree`、`listOperationLogs` |
+| [ ] | Workspace Agent 操作日志 | 用 Workspace Agent token 调用 `listOperationLogs({ afterId, actorType: "user", noteTypes: [1], orderBy: "asc" })` | 返回当前 Workspace 内按 cursor 增量筛选后的笔记操作日志 |
 | [ ] | Workspace Agent 越权拒绝 | 用 Workspace A 的 Agent token 携带 Workspace B 的 `x-workspace-id` 或调用 `workspaces.list` / `config.list` | 错误 workspace 被 `401` 拒绝；非白名单 tRPC 返回 `403` |
 | [ ] | Workspace Agent 数据隔离 | Workspace A/B 各写一条测试笔记，用 Workspace A 的 Agent token 搜索 | 可读写 A 的闪念、笔记、待办、评论、引用和自定义属性，可读 A 标签树，不能读到 B 的内容 |
 | [ ] | Workspace Agent 资源下载 | 使用任意有效 Workspace Agent token 读取 `/api/agent/mcp-guide.md`、`/api/agent/blinkora-workspace/SKILL.md`、`/api/agent/blinkora-workspace.zip` | 返回只读安装资源，包含 MCP/Skill 使用说明，不暴露其他 Workspace 数据 |

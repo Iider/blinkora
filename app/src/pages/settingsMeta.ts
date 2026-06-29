@@ -36,6 +36,13 @@ export const allSettingMetas: SettingMeta[] = [
     keywords: ['export', 'import', 'backup', 'restore', 'data', '导出', '导入', '备份', '恢复', '数据导出'],
   },
   {
+    key: 'operationLog',
+    title: 'operation-log',
+    icon: 'lucide:history',
+    requireAdmin: false,
+    keywords: ['operation', 'log', 'history', '操作日志', '审计', '变更'],
+  },
+  {
     key: 'about',
     title: 'about',
     icon: 'tabler:info-circle',
