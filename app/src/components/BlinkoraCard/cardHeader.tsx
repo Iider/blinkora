@@ -9,6 +9,7 @@ import { _ } from '@/lib/lodash';
 import { useIsIOS } from '@/lib/hooks';
 import { observer } from 'mobx-react-lite';
 import { CardActionButtons } from './cardActions';
+import { useMediaQuery } from 'usehooks-ts';
 
 interface CardHeaderProps {
   blinkoraItem: Note;
@@ -23,10 +24,12 @@ export const CardHeader = observer(({
 }: CardHeaderProps) => {
   const { t } = useTranslation();
   const iconSize = isExpanded ? '20' : '16';
+  const isPc = useMediaQuery('(min-width: 768px)');
   const isIOSDevice = useIsIOS();
-  const actionVisibleClass = isIOSDevice
-    ? 'opacity-100'
-    : 'opacity-0 group-hover/card:opacity-100 group-hover/card:translate-x-0 translate-x-1';
+  const shouldAlwaysShowActions = !isPc || isIOSDevice;
+  const actionVisibleClass = shouldAlwaysShowActions
+    ? 'opacity-100 pointer-events-auto'
+    : 'pointer-events-none opacity-0 translate-x-1 group-hover/card:pointer-events-auto group-hover/card:opacity-100 group-hover/card:translate-x-0';
 
   const handleTodoToggle = async (e) => {
     e.stopPropagation();
