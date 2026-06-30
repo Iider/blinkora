@@ -7,6 +7,7 @@
 - [Smoke test checklist](./SMOKE_TEST_CHECKLIST.md)：Rust 运行栈手动烟测清单。
 - [笔记状态模型](./NOTE_STATE_LIFECYCLE.md)：闪念、笔记、待办的类型转换、归档、回收站、置顶、回顾、列表交互、卡背和引用展示规则。
 - [Local persistent deployment](./LOCAL_PERSISTENT_DEPLOYMENT.md)：PostgreSQL 用 Docker，Rust Web 服务用 macOS `launchd` 常驻。
+- [远端笔记本部署](./REMOTE_LAPTOP_DEPLOYMENT.md)：当前个人常驻部署目标，采用 PostgreSQL Docker + Rust 本地二进制 systemd 服务。
 - [Workspace agent access](./WORKSPACE_AGENT_ACCESS.md)：工作区令牌、MCP、Skill、操作日志增量查询的使用和安全边界。
 - [Workspace data lifecycle](./WORKSPACE_DATA_LIFECYCLE.md)：Workspace 删除清理、卡片跨工作区移动、S3 注意事项和残留检查命令。
 - [Bun network strategy](./BUN_NETWORK_STRATEGY.md)：国内网络、镜像源和构建链路说明。
@@ -16,4 +17,5 @@
 - Rust 后端：`server/`，默认访问地址 `http://localhost:6676`。
 - 完整 Docker：`docker/compose.yml` 启动 `blinkora-web` 和 `blinkora-db`。
 - 本机持久化：`bun run deploy:local install` 只启动 Docker `blinkora-db`，Rust 服务由 `launchd` 运行；代码或前端构建变更后用 `bun run deploy:local update` 让 `localhost:6676` 生效。
+- 个人常驻部署：优先部署到远端 Ubuntu 笔记本，入口见 [远端笔记本部署](./REMOTE_LAPTOP_DEPLOYMENT.md)。
 - Web 前端：`app/`，构建后进入 Rust release artifact。
