@@ -16,6 +16,11 @@ import { ReferencesContent } from "./referencesContent";
 import { useTranslation } from "react-i18next";
 import { CardActionButtons } from "./cardActions";
 import { NotePropertiesPanel } from "./NotePropertiesPanel";
+import { useIsIOS } from "@/lib/hooks";
+
+const EDGE_BACK_GESTURE_WIDTH = 28;
+const EDGE_BACK_MIN_DISTANCE = 72;
+const EDGE_BACK_MAX_VERTICAL_MOVE = 48;
 
 interface FullscreenEditorProps {
   blinkoraItem: BlinkoraItem;
@@ -27,17 +32,35 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
   const isPc = useMediaQuery('(min-width: 768px)');
   const blinkora = RootStore.Get(BlinkoraStore);
   const { t } = useTranslation();
+  const isIOSDevice = useIsIOS();
   const [viewMode, setViewMode] = useState<string>('wysiwyg');
   const [editorMode, setEditorMode] = useState<'preview' | 'edit'>('preview');
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const pointerStartedInsideRef = useRef(false);
   const ignoreNextOutsideClickRef = useRef(false);
+  const fullscreenHistoryPushedRef = useRef(false);
+  const closingFromHistoryRef = useRef(false);
+  const edgeBackGestureRef = useRef<{
+    startX: number;
+    startY: number;
+    side: 'left' | 'right';
+    active: boolean;
+  } | null>(null);
   
-  // Clean up fullscreen editor state when closing
-  const handleClose = () => {
+  const closeEditorState = () => {
     blinkora.fullscreenEditorNoteId = null;
     setEditorMode('preview');
     onClose();
+  };
+
+  // Clean up fullscreen editor state when closing
+  const handleClose = () => {
+    if (!isPc && fullscreenHistoryPushedRef.current && !closingFromHistoryRef.current) {
+      window.history.back();
+      return;
+    }
+
+    closeEditorState();
   };
 
   // Switch to edit mode
@@ -92,6 +115,35 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
       }
     }
   }, [isOpen, blinkoraItem.id]);
+
+  useEffect(() => {
+    if (!isOpen || isPc) return;
+
+    const currentState = window.history.state && typeof window.history.state === 'object'
+      ? window.history.state
+      : {};
+    window.history.pushState({
+      ...currentState,
+      blinkoraFullscreenEditorNoteId: blinkoraItem.id,
+    }, '');
+    fullscreenHistoryPushedRef.current = true;
+
+    const handlePopState = () => {
+      if (!fullscreenHistoryPushedRef.current) return;
+
+      fullscreenHistoryPushedRef.current = false;
+      closingFromHistoryRef.current = true;
+      closeEditorState();
+      window.setTimeout(() => {
+        closingFromHistoryRef.current = false;
+      }, 0);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [isOpen, isPc, blinkoraItem.id]);
 
   // Handle ESC key to close editor
   useEffect(() => {
@@ -181,6 +233,74 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
     pointerStartedInsideRef.current = false;
   };
 
+  const handleTouchStartCapture = (e: React.TouchEvent<HTMLDivElement>) => {
+    const touch = e.touches[0];
+    edgeBackGestureRef.current = null;
+
+    if (!isPc && touch) {
+      const width = document.documentElement.clientWidth || window.innerWidth;
+      const side = touch.clientX <= EDGE_BACK_GESTURE_WIDTH
+        ? 'left'
+        : width - touch.clientX <= EDGE_BACK_GESTURE_WIDTH
+          ? 'right'
+          : null;
+
+      if (side) {
+        edgeBackGestureRef.current = {
+          startX: touch.clientX,
+          startY: touch.clientY,
+          side,
+          active: true,
+        };
+      }
+    }
+
+    if (!isInsideEditorContainer(e.target)) {
+      e.stopPropagation();
+    }
+  };
+
+  const handleTouchMoveCapture = (e: React.TouchEvent<HTMLDivElement>) => {
+    const gesture = edgeBackGestureRef.current;
+    const touch = e.touches[0];
+    if (!gesture || !gesture.active || !touch) return;
+
+    const deltaX = touch.clientX - gesture.startX;
+    const deltaY = Math.abs(touch.clientY - gesture.startY);
+    const inwardDistance = gesture.side === 'left' ? deltaX : -deltaX;
+
+    if (deltaY > EDGE_BACK_MAX_VERTICAL_MOVE) {
+      gesture.active = false;
+      return;
+    }
+
+    if (inwardDistance > 12 && inwardDistance > deltaY * 1.5) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  const handleTouchEndCapture = (e: React.TouchEvent<HTMLDivElement>) => {
+    const gesture = edgeBackGestureRef.current;
+    edgeBackGestureRef.current = null;
+    const touch = e.changedTouches[0];
+    if (!gesture || !gesture.active || !touch) return;
+
+    const deltaX = touch.clientX - gesture.startX;
+    const deltaY = Math.abs(touch.clientY - gesture.startY);
+    const inwardDistance = gesture.side === 'left' ? deltaX : -deltaX;
+
+    if (
+      inwardDistance >= EDGE_BACK_MIN_DISTANCE &&
+      deltaY <= EDGE_BACK_MAX_VERTICAL_MOVE &&
+      inwardDistance > deltaY * 1.5
+    ) {
+      e.preventDefault();
+      e.stopPropagation();
+      handleClose();
+    }
+  };
+
   const handleEditorSended = async () => {
     // Refresh the note data after saving
     if (blinkoraItem.id) {
@@ -253,13 +373,9 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
       onClick={handleOutsideClick}
       onPointerDownCapture={handlePointerDownCapture}
       onPointerUpCapture={handlePointerUpCapture}
-      onTouchStartCapture={(e) => {
-        // Only stop propagation if event is not from editor container (to prevent drag on background)
-        // Allow events from editor container to work normally
-        if (!isInsideEditorContainer(e.target)) {
-          e.stopPropagation();
-        }
-      }}
+      onTouchStartCapture={handleTouchStartCapture}
+      onTouchMoveCapture={handleTouchMoveCapture}
+      onTouchEndCapture={handleTouchEndCapture}
       style={{ 
         position: 'fixed', 
         top: 0, 
@@ -281,7 +397,7 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
           {/* Top header with back button and toolbar */}
           <div
             className={`flex items-center justify-between flex-shrink-0 border-b border-border bg-background ${isPc ? 'py-4' : 'px-1 pb-2 pt-2'}`}
-            style={!isPc ? { paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' } : undefined}
+            style={!isPc && isIOSDevice ? { paddingTop: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' } : undefined}
           >
             <Button
               isIconOnly

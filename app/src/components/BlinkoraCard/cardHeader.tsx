@@ -26,8 +26,7 @@ export const CardHeader = observer(({
   const iconSize = isExpanded ? '20' : '16';
   const isPc = useMediaQuery('(min-width: 768px)');
   const isIOSDevice = useIsIOS();
-  const shouldAlwaysShowActions = !isPc || isIOSDevice;
-  const actionVisibleClass = shouldAlwaysShowActions
+  const actionVisibleClass = isIOSDevice
     ? 'opacity-100 pointer-events-auto'
     : 'pointer-events-none opacity-0 translate-x-1 group-hover/card:pointer-events-auto group-hover/card:opacity-100 group-hover/card:translate-x-0';
 
@@ -102,13 +101,15 @@ export const CardHeader = observer(({
           </div>
         </Tooltip>
 
-        <CardActionButtons
-          blinkoraItem={blinkoraItem}
-          blinkora={blinkora}
-          iconSize={iconSize}
-          className={`ml-auto ${actionVisibleClass}`}
-          showMarkdownExport
-        />
+        {isPc && (
+          <CardActionButtons
+            blinkoraItem={blinkoraItem}
+            blinkora={blinkora}
+            iconSize={iconSize}
+            className={`ml-auto ${actionVisibleClass}`}
+            showMarkdownExport
+          />
+        )}
 
         {blinkoraItem.isTop && (
           <Icon
