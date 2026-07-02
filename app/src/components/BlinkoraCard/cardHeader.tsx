@@ -29,6 +29,10 @@ export const CardHeader = observer(({
   const actionVisibleClass = isIOSDevice
     ? 'opacity-100 pointer-events-auto'
     : 'pointer-events-none opacity-0 translate-x-1 group-hover/card:pointer-events-auto group-hover/card:opacity-100 group-hover/card:translate-x-0';
+  const rightSlotClass = isPc
+    ? (blinkoraItem.isTop ? 'pr-40' : 'pr-32')
+    : (blinkoraItem.isTop ? 'pr-12' : 'pr-6');
+  const actionAnchorClass = blinkoraItem.isTop ? 'right-12' : 'right-6';
 
   const handleTodoToggle = async (e) => {
     e.stopPropagation();
@@ -57,7 +61,7 @@ export const CardHeader = observer(({
       className={`flex cursor-pointer items-center ${isExpanded ? 'mb-4' : 'mb-1'}`}
       title={t('flip-to-back')}
     >
-      <div className={`flex items-center w-full gap-1 ${isExpanded ? 'text-base' : 'text-xs'}`}>
+      <div className={`relative flex items-center w-full gap-1 ${rightSlotClass} ${isExpanded ? 'text-base' : 'text-xs'}`}>
         {blinkoraItem.type === NoteType.TODO && (
           <Tooltip content={blinkoraItem.isArchived ? t('restore') : t('complete')} delay={1000}>
             <div
@@ -78,7 +82,7 @@ export const CardHeader = observer(({
         <Tooltip content={t('edit-time')} delay={1000}>
           <div 
             data-drag-ignore="true"
-            className={`${isExpanded ? 'text-sm' : 'text-xs'} text-desc select-text transition-colors`}
+            className={`min-w-0 truncate ${isExpanded ? 'text-sm' : 'text-xs'} text-desc select-text transition-colors`}
             onClick={(e) => {
               e.stopPropagation();
               const selection = window.getSelection();
@@ -106,14 +110,14 @@ export const CardHeader = observer(({
             blinkoraItem={blinkoraItem}
             blinkora={blinkora}
             iconSize={iconSize}
-            className={`ml-auto ${actionVisibleClass}`}
+            className={`absolute top-1/2 ${actionAnchorClass} -translate-y-1/2 ${actionVisibleClass}`}
             showMarkdownExport
           />
         )}
 
         {blinkoraItem.isTop && (
           <Icon
-            className={isIOSDevice ? 'ml-[10px] text-[#EFC646]' : "ml-auto group-hover/card:ml-2 text-[#EFC646]"}
+            className="absolute right-6 top-1/2 -translate-y-1/2 text-[#EFC646]"
             icon="solar:bookmark-bold"
             width={iconSize}
             height={iconSize}
@@ -122,7 +126,7 @@ export const CardHeader = observer(({
 
         <span data-drag-ignore="true" className="contents">
           <LeftCickMenu
-            className={isIOSDevice ? 'ml-[10px]' : (blinkoraItem.isTop ? "ml-[10px]" : 'ml-auto group-hover/card:ml-2')}
+            className="absolute right-0 top-1/2 -translate-y-1/2"
             onTrigger={() => { blinkora.curSelectedNote = _.cloneDeep(blinkoraItem) }}
           />
         </span>
