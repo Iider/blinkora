@@ -113,6 +113,7 @@ Agent 批量导入或维护时建议：
 ```
 
 只增删一条引用时，用 `addReference` 或 `removeReference`，不要为了单条修改误用 `setReferences` 覆盖整组出链。
+`removeReference` 可以清理涉及回收站笔记的既有引用；已知引用 `id` 时优先传 `id`，没有 `id` 时再传 `fromNoteId` / `toNoteId`。
 
 ## Skill 和文档资源
 

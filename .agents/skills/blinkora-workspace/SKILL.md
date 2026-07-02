@@ -109,7 +109,7 @@ Reference update pattern:
 }
 ```
 
-Use `addReference` or `removeReference` for one reference. Use `setReferences` only when replacing the complete outgoing reference set for `fromNoteId`.
+Use `addReference` or `removeReference` for one reference. `removeReference` can clean up existing references that touch recycle-bin notes; prefer passing the reference `id` when known, otherwise pass `fromNoteId` and `toNoteId`. Use `setReferences` only when replacing the complete outgoing reference set for `fromNoteId`.
 
 ## Write Rules
 

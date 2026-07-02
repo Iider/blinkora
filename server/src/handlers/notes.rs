@@ -891,15 +891,16 @@ fn remove_reference(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .bind(ws)
             .fetch_optional(ctx.state.pool())
             .await?;
-            if let Some(row) = row {
-                from = row.get::<i32, _>("fromNoteId");
-                to = row.get::<i32, _>("toNoteId");
-            }
+            let Some(row) = row else {
+                bail!("reference not found");
+            };
+            from = row.get::<i32, _>("fromNoteId");
+            to = row.get::<i32, _>("toNoteId");
         }
         if from <= 0 || to <= 0 {
             bail!("id or fromNoteId/toNoteId is required");
         }
-        ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws, false).await?;
+        ensure_notes_in_workspace(&ctx, &[from, to], user.id, ws, true).await?;
         let mut tx = ctx.state.pool().begin().await?;
         let Some(note) = note_snapshot_tx(&mut tx, from, user.id, ws).await? else {
             bail!("Note not found");
@@ -1339,7 +1340,7 @@ fn reference_list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .or_else(|| input.get("noteId"))
             .and_then(Value::as_i64)
             .unwrap_or_default() as i32;
-        reference_list_for_note(&ctx, id, user.id, ws, false).await
+        reference_list_for_note(&ctx, id, user.id, ws, true).await
     }
     .boxed()
 }
