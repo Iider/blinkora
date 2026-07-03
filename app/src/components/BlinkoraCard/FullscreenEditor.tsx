@@ -145,6 +145,26 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
     };
   }, [isOpen, isPc, blinkoraItem.id]);
 
+  useEffect(() => {
+    if (!isOpen || isPc) return;
+
+    const handleNativeBack = (event: Event) => {
+      event.preventDefault();
+
+      if (editorMode === 'edit') {
+        setEditorMode('preview');
+        return;
+      }
+
+      handleClose();
+    };
+
+    window.addEventListener('blinkora:native-back', handleNativeBack);
+    return () => {
+      window.removeEventListener('blinkora:native-back', handleNativeBack);
+    };
+  }, [isOpen, isPc, editorMode]);
+
   // Handle ESC key to close editor
   useEffect(() => {
     if (!isOpen) return;
