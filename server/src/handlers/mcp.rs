@@ -204,7 +204,7 @@ fn tool_list(user: &CurrentUser) -> Value {
         {
             json!({
                 "name": "getBlinkora",
-                "description": "Get one Blinkora note by id.",
+                "description": "Get one Blinkora note by id. Returned tags are read-only fields derived from hashtags in content.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -217,11 +217,11 @@ fn tool_list(user: &CurrentUser) -> Value {
         {
             json!({
                 "name": "upsertBlinkora",
-                "description": "Create a Blinkora, note, or todo entry.",
+                "description": "Create a Blinkora, note, or todo entry. Hashtags in content are the source of note tags; there is no separate writable tags parameter.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "content": { "type": "string" },
+                        "content": { "type": "string", "description": "Markdown content. Add tags by writing hashtags such as #项目/网络阅历; Blinkora syncs the tag tree from content." },
                         "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "default": "blinkora" },
                         "isArchived": { "type": "boolean", "default": false },
                         "isRecycle": { "type": "boolean", "default": false },
@@ -237,12 +237,12 @@ fn tool_list(user: &CurrentUser) -> Value {
         {
             json!({
                 "name": "updateBlinkora",
-                "description": "Update a Blinkora note by id.",
+                "description": "Update a Blinkora note by id. To add, remove, or rename tags, edit hashtags in content; Blinkora then syncs the read-only tags field and tag tree.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "id": { "type": "number" },
-                        "content": { "type": "string" },
+                        "content": { "type": "string", "description": "Markdown content. Tags are derived from hashtags in this field, so tag maintenance is done by editing content." },
                         "type": { "oneOf": [{ "type": "number" }, { "type": "string" }], "description": "Omit to preserve the current note type." },
                         "isArchived": { "type": "boolean", "description": "Omit to preserve the current archived state." },
                         "isRecycle": { "type": "boolean", "description": "Omit to preserve the current recycle-bin state." },
@@ -374,7 +374,7 @@ fn tool_list(user: &CurrentUser) -> Value {
         {
             json!({
                 "name": "listTagTree",
-                "description": "List the tag tree for the current workspace.",
+                "description": "List the current workspace tag tree. The tree is read-only for MCP agents and is derived from hashtags in note content.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {}

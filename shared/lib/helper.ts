@@ -6,11 +6,20 @@ export interface TagTreeNode {
   children?: TagTreeNode[];
 }
 export type TagTreeDBNode = Tag & { children?: TagTreeDBNode[]; metadata: { icon: string, path: string } }
+const HASHTAG_TRAILING_PUNCTUATION_RE = /[。！？；：，、,.!?;:)\]}>）】》"”'’*]+$/u;
+const HASHTAG_INLINE_DELIMITER_RE = /[。！？；：，、,!?;:)\]}>）】》"”'’*]/u;
+
+function normalizeHashtag(tag: string): string {
+  const delimiterIndex = tag.search(HASHTAG_INLINE_DELIMITER_RE);
+  const head = delimiterIndex === -1 ? tag : tag.slice(0, delimiterIndex);
+  return head.replace(HASHTAG_TRAILING_PUNCTUATION_RE, '');
+}
+
 export const helper = {
   regex: {
     isEndsWithHashTag: /#[/\w\p{L}\p{N}]*$/u,
     //lookbehind assertions in ios regex is not supported
-    isContainHashTag: /#[^\s#]*(?:[*?.。]|$)/g
+    isContainHashTag: /#[^\s#]+/g
   },
   assemblyPageResult<T>(args: { data: T[], page: number, size: number, result: T[] }): { result: T[], isLoadAll: boolean, isEmpty: boolean } {
     const { data, page, size } = args
@@ -33,9 +42,10 @@ export const helper = {
     return { result, isLoadAll, isEmpty: data.length == 0 }
   },
   extractHashtags(input: string): string[] {
-    const hashtagRegex = /#[^\s#]*(?:[*?.。]|$)/g;
-    const matches = input.match(hashtagRegex);
-    return matches ? matches : [];
+    const hashtagRegex = /(?:^|[\s*_~`])(#[^\s#]+)/gu;
+    const matches = Array.from(input.matchAll(hashtagRegex), match => normalizeHashtag(match[1] ?? ''))
+      .filter(tag => tag.length > 1);
+    return Array.from(new Set(matches));
   },
   buildHashTagTreeFromHashString(paths: string[]): TagTreeNode[] {
     const root: TagTreeNode[] = [];

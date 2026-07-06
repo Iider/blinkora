@@ -343,6 +343,7 @@ getWorkspaceContext、searchBlinkora、getBlinkora、upsertBlinkora、updateBlin
 
 写入提醒：
 - 搜索是普通关键词 / metadata 检索，不是语义、向量、embedding 或 RAG 搜索。
+- tags 是只读派生结果，不是独立可写字段；新增、移除或重命名卡片标签时，先读原笔记，修改 content 里的 hashtag，再调用 updateBlinkora，Blinkora 会自动同步标签树。
 - metadata.properties 是自定义属性；修改 metadata 前先读原笔记并合并，避免覆盖导入键、来源、哈希等维护字段。
 - updateBlinkora 不传 content、type 或状态字段时保持原值。
 - listOperationLogs 可按 afterId 增量读取用户和 Agent 的笔记操作日志。

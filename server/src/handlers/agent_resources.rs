@@ -108,6 +108,7 @@ export BLINKORA_AGENT_TOKEN="bkws_xxx"
 - 常用筛选：`searchText`、`type`、`isArchived`、`isRecycle`、`tagId`、`withoutTag`、`withFile`、`withLink`、`hasTodo`、`startDate`、`endDate`、`metadata` / `metadataContains`。
 - `isArchived` 默认只查未归档；传 `true` 查归档，传 `null` 同时查普通和归档。`isRecycle: true` 查回收站。
 - `isReviewed` 表示每日回顾状态，不表示审核、审批或内容审计。
+- `tags` 是只读派生结果，不是独立可写字段。新增、移除或重命名卡片标签时，先读原笔记，修改 `content` 里的 hashtag，再调用 `updateBlinkora`；Blinkora 会自动同步标签树和卡片标签关系。
 - `metadata.properties` 是给人看的自定义属性，只放扁平值：字符串、数字、布尔、`null` 或字符串数组。修改属性前先读原笔记并合并完整 `metadata`，不要覆盖导入键、来源、哈希等维护字段。
 - `deleteBlinkora` 只移入回收站；MCP 不暴露彻底删除、附件写入/管理或跨 Workspace 移动。
 - 笔记返回的附件路径可以用工作区令牌读取：`GET ${BLINKORA_BASE_URL}/api/file/...` 或 `/api/s3file/...`，请求继续携带 `Authorization: Bearer ${BLINKORA_AGENT_TOKEN}`。
@@ -237,8 +238,8 @@ Prefer these MCP tools:
 - `getWorkspaceContext`: confirm the account and workspace bound to the token before large writes.
 - `searchBlinkora`: read notes with `page` and `size`; always paginate for broad reads.
 - `getBlinkora`: read one note by `id`.
-- `upsertBlinkora`: create a flash thought, note, or todo.
-- `updateBlinkora`: update a note by `id`.
+- `upsertBlinkora`: create a flash thought, note, or todo. Hashtags in `content` create and sync tags.
+- `updateBlinkora`: update a note by `id`. To add, remove, or rename tags, edit hashtags in `content`; `tags` is a read-only derived field.
 - `deleteBlinkora`: move notes to recycle bin.
 - `listReferences`: read outgoing and incoming note references.
 - `addReference`: create one note-to-note reference.
@@ -259,6 +260,8 @@ Attachment metadata may include `/api/file/...` or `/api/s3file/...` paths. To r
 `isArchived` defaults to `false`; pass `true` for archived notes and `null` to search both normal and archived notes. Pass `isRecycle: true` for recycle-bin notes. `deleteBlinkora` only moves notes to the recycle bin; MCP does not expose hard deletion.
 
 `upsertBlinkora` and `updateBlinkora` accept optional status flags, `metadata`, and `references`. On update, omit `content`, `type`, `isArchived`, `isRecycle`, `isTop`, or `isReviewed` to keep the current value. `isReviewed` means daily-review status, not moderation or approval.
+
+Tags are not a separate writable field. Returned `tags` are derived from hashtags in note `content`. To maintain card tags, read the note, edit hashtags in `content`, then call `updateBlinkora`; Blinkora will sync `tagsToNote` and the tag tree automatically.
 
 Use `listOperationLogs({ afterId, actorType: "user", noteTypes: [1], orderBy: "asc" })` before maintenance work when you need to see user changes since the last agent pass. Operation log actions `markDailyReviewed` and `markDailyUnreviewed` mean daily-review state changes, not approval or content audit.
 

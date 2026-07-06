@@ -1651,12 +1651,79 @@ async fn sync_attachments<'a>(
 fn extract_hashtags(content: &str) -> Vec<String> {
     let code_re = Regex::new("(?s)```.*?```").unwrap();
     let without_code = code_re.replace_all(content, "");
-    let re = Regex::new(r"(?:^|\s)(#[^\s#]+)").unwrap();
+    let re = Regex::new(r"(?:^|[\s*_~`])(#[^\s#]+)").unwrap();
     let mut seen = HashSet::new();
     re.captures_iter(&without_code)
-        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+        .filter_map(|cap| cap.get(1).map(|m| normalize_hashtag(m.as_str())))
+        .filter(|tag| tag.len() > 1)
         .filter(|tag| seen.insert(tag.clone()))
         .collect()
+}
+
+fn normalize_hashtag(tag: &str) -> String {
+    let tag = match tag.find(is_hashtag_inline_delimiter) {
+        Some(index) => &tag[..index],
+        None => tag,
+    };
+    tag.trim_end_matches(is_hashtag_trailing_punctuation)
+        .to_string()
+}
+
+fn is_hashtag_inline_delimiter(ch: char) -> bool {
+    matches!(
+        ch,
+        '。' | '！'
+            | '？'
+            | '；'
+            | '：'
+            | '，'
+            | '、'
+            | '!'
+            | '?'
+            | ';'
+            | ':'
+            | ','
+            | ')'
+            | '）'
+            | ']'
+            | '】'
+            | '》'
+            | '>'
+            | '"'
+            | '\''
+            | '”'
+            | '’'
+            | '*'
+    )
+}
+
+fn is_hashtag_trailing_punctuation(ch: char) -> bool {
+    matches!(
+        ch,
+        '。' | '！'
+            | '？'
+            | '；'
+            | '：'
+            | '，'
+            | '、'
+            | '.'
+            | '!'
+            | '?'
+            | ';'
+            | ':'
+            | ','
+            | ')'
+            | '）'
+            | ']'
+            | '】'
+            | '》'
+            | '>'
+            | '"'
+            | '\''
+            | '”'
+            | '’'
+            | '*'
+    )
 }
 
 fn extract_attachment_paths(content: &str) -> HashSet<String> {
@@ -1665,6 +1732,33 @@ fn extract_attachment_paths(content: &str) -> HashSet<String> {
         .map(|matched| normalize_attachment_path(matched.as_str()))
         .filter(|path| !path.is_empty())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_hashtags;
+
+    #[test]
+    fn extract_hashtags_trims_sentence_punctuation() {
+        let content = "并把新卡标为 draft / #待审核。再关联 #方法, #项目/网络阅历；以及 #Node.js。";
+
+        assert_eq!(
+            extract_hashtags(content),
+            vec!["#待审核", "#方法", "#项目/网络阅历", "#Node.js"]
+        );
+    }
+
+    #[test]
+    fn extract_hashtags_trims_markdown_emphasis_markers() {
+        assert_eq!(extract_hashtags("正文 **#AI**"), vec!["#AI"]);
+    }
+
+    #[test]
+    fn extract_hashtags_ignores_code_blocks_and_empty_tags() {
+        let content = "保留 #方法。\n```md\n忽略 #代码。\n```\n过滤 #。 并保留 #观点！ #方法。";
+
+        assert_eq!(extract_hashtags(content), vec!["#方法", "#观点"]);
+    }
 }
 
 fn normalize_attachment_path(path: &str) -> String {
