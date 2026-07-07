@@ -6,12 +6,18 @@ use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
 use anyhow::{anyhow, bail};
 use futures::FutureExt;
 use serde_json::{json, Value};
+use sqlx::Postgres;
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+const DEFAULT_ORPHAN_TAG_CLEANUP_LIMIT: usize = 200;
+const MAX_ORPHAN_TAG_CLEANUP_LIMIT: usize = 1000;
+const INTERNAL_ORPHAN_TAG_CLEANUP_LIMIT: usize = 10_000;
 
 pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
     registry.insert("tags.list", list);
     registry.insert("tags.fullTagNameById", full_name);
+    registry.insert("tags.cleanupOrphanTags", cleanup_orphan);
     registry.insert("tags.updateTagMany", update_many);
     registry.insert("tags.updateTagName", update_name);
     registry.insert("tags.updateTagIcon", update_icon);
@@ -33,6 +39,38 @@ fn list(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
         .fetch_all(ctx.state.pool())
         .await?;
         Ok(Value::Array(rows.into_iter().map(tag_json).collect()))
+    }
+    .boxed()
+}
+
+fn cleanup_orphan(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
+    async move {
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        let ws = workspace_id(&ctx).await?;
+        let tag_ids = tag_ids_from_input(&input);
+        let all = input.get("all").and_then(Value::as_bool).unwrap_or(false);
+        let dry_run = input.get("dryRun").and_then(Value::as_bool).unwrap_or(true);
+        if !dry_run && !all && tag_ids.is_empty() {
+            bail!("cleanupOrphanTags requires tagIds or all=true when dryRun=false");
+        }
+
+        let limit = input
+            .get("limit")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(DEFAULT_ORPHAN_TAG_CLEANUP_LIMIT)
+            .clamp(1, MAX_ORPHAN_TAG_CLEANUP_LIMIT);
+
+        let options = OrphanTagCleanupOptions {
+            tag_ids,
+            all,
+            dry_run,
+            limit,
+        };
+        let mut tx = ctx.state.pool().begin().await?;
+        let result = cleanup_orphan_tags_tx(&mut tx, user.id, ws, options).await?;
+        tx.commit().await?;
+        Ok(result)
     }
     .boxed()
 }
@@ -118,6 +156,366 @@ fn update_many(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         Ok(json!(true))
     }
     .boxed()
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OrphanTagCleanupOptions {
+    pub tag_ids: Vec<i32>,
+    pub all: bool,
+    pub dry_run: bool,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone)]
+struct TagNode {
+    id: i32,
+    name: String,
+    parent: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SkippedTag {
+    id: i32,
+    reason: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OrphanTagCleanupPlan {
+    candidate_ids: Vec<i32>,
+    skipped: Vec<SkippedTag>,
+    remaining_orphan_count: usize,
+}
+
+pub(crate) async fn cleanup_unused_tags<'a>(
+    tx: &mut sqlx::Transaction<'a, Postgres>,
+    tag_ids: &[i32],
+    account_id: i32,
+    workspace_id: i32,
+) -> anyhow::Result<()> {
+    if tag_ids.is_empty() {
+        return Ok(());
+    }
+    cleanup_orphan_tags_tx(
+        tx,
+        account_id,
+        workspace_id,
+        OrphanTagCleanupOptions {
+            tag_ids: tag_ids.to_vec(),
+            all: false,
+            dry_run: false,
+            limit: INTERNAL_ORPHAN_TAG_CLEANUP_LIMIT,
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+pub(crate) async fn cleanup_orphan_tags_tx<'a>(
+    tx: &mut sqlx::Transaction<'a, Postgres>,
+    account_id: i32,
+    workspace_id: i32,
+    options: OrphanTagCleanupOptions,
+) -> anyhow::Result<Value> {
+    let tag_rows = sqlx::query(
+        r#"SELECT id, name, parent
+           FROM tag
+           WHERE "accountId"=$1 AND "workspaceId"=$2
+           ORDER BY id ASC"#,
+    )
+    .bind(account_id)
+    .bind(workspace_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    let tags = tag_rows
+        .into_iter()
+        .map(|row| TagNode {
+            id: row.get("id"),
+            name: row.get("name"),
+            parent: row.get("parent"),
+        })
+        .collect::<Vec<_>>();
+    let referenced_tag_ids = sqlx::query_scalar(
+        r#"SELECT DISTINCT ttn."tagId"
+           FROM "tagsToNote" ttn
+           JOIN tag t ON t.id=ttn."tagId"
+           WHERE t."accountId"=$1 AND t."workspaceId"=$2"#,
+    )
+    .bind(account_id)
+    .bind(workspace_id)
+    .fetch_all(&mut **tx)
+    .await?
+    .into_iter()
+    .collect::<HashSet<i32>>();
+
+    let scan_all = options.all || (options.dry_run && options.tag_ids.is_empty());
+    let plan = plan_orphan_tag_cleanup(
+        &tags,
+        &referenced_tag_ids,
+        &options.tag_ids,
+        scan_all,
+        options.limit.max(1),
+    );
+    if !options.dry_run && !plan.candidate_ids.is_empty() {
+        sqlx::query(r#"DELETE FROM tag WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
+            .bind(&plan.candidate_ids)
+            .bind(account_id)
+            .bind(workspace_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+
+    let by_id = tag_map(&tags);
+    let candidates = tag_list_json(&by_id, &plan.candidate_ids, None);
+    let deleted = if options.dry_run {
+        Vec::new()
+    } else {
+        tag_list_json(&by_id, &plan.candidate_ids, None)
+    };
+    let skipped = plan
+        .skipped
+        .iter()
+        .filter_map(|item| {
+            by_id
+                .get(&item.id)
+                .map(|tag| tag_to_json(&by_id, tag, Some(item.reason)))
+                .or_else(|| {
+                    Some(json!({
+                        "id": item.id,
+                        "reason": item.reason
+                    }))
+                })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(json!({
+        "success": true,
+        "dryRun": options.dry_run,
+        "all": scan_all,
+        "limit": options.limit,
+        "candidates": candidates,
+        "deleted": deleted,
+        "skipped": skipped,
+        "remainingOrphanCount": plan.remaining_orphan_count
+    }))
+}
+
+fn plan_orphan_tag_cleanup(
+    tags: &[TagNode],
+    referenced_tag_ids: &HashSet<i32>,
+    requested_tag_ids: &[i32],
+    scan_all: bool,
+    limit: usize,
+) -> OrphanTagCleanupPlan {
+    let by_id = tag_map(tags);
+    let mut scope = if scan_all {
+        tags.iter().map(|tag| tag.id).collect::<HashSet<_>>()
+    } else {
+        let mut scope = HashSet::new();
+        for id in unique_ids(requested_tag_ids) {
+            let Some(tag) = by_id.get(&id) else {
+                continue;
+            };
+            scope.insert(tag.id);
+            let mut parent = tag.parent;
+            while parent > 0 {
+                let Some(parent_tag) = by_id.get(&parent) else {
+                    break;
+                };
+                scope.insert(parent_tag.id);
+                parent = parent_tag.parent;
+            }
+        }
+        scope
+    };
+    scope.retain(|id| by_id.contains_key(id));
+
+    let requested_set = unique_ids(requested_tag_ids)
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let mut skipped = requested_set
+        .iter()
+        .filter(|id| !by_id.contains_key(id))
+        .map(|id| SkippedTag {
+            id: *id,
+            reason: "notFound",
+        })
+        .collect::<Vec<_>>();
+    let child_map = child_map(tags);
+    let depth_map = depth_map(tags);
+    let limit = limit.max(1);
+    let mut deleted_ids = HashSet::new();
+    let mut candidate_ids = Vec::new();
+
+    while candidate_ids.len() < limit {
+        let mut pass = scope
+            .iter()
+            .copied()
+            .filter(|id| !deleted_ids.contains(id))
+            .filter(|id| tag_is_orphan_leaf(*id, &child_map, referenced_tag_ids, &deleted_ids))
+            .collect::<Vec<_>>();
+        pass.sort_by(|left, right| {
+            depth_map
+                .get(right)
+                .unwrap_or(&0)
+                .cmp(depth_map.get(left).unwrap_or(&0))
+                .then_with(|| left.cmp(right))
+        });
+        if pass.is_empty() {
+            break;
+        }
+        for id in pass {
+            if candidate_ids.len() >= limit {
+                break;
+            }
+            deleted_ids.insert(id);
+            candidate_ids.push(id);
+        }
+    }
+
+    for id in requested_set.iter().filter(|id| by_id.contains_key(id)) {
+        if deleted_ids.contains(id) {
+            continue;
+        }
+        skipped.push(SkippedTag {
+            id: *id,
+            reason: skipped_reason(*id, &child_map, referenced_tag_ids, &deleted_ids),
+        });
+    }
+
+    let remaining_orphan_count = tags
+        .iter()
+        .filter(|tag| !deleted_ids.contains(&tag.id))
+        .filter(|tag| tag_is_orphan_leaf(tag.id, &child_map, referenced_tag_ids, &deleted_ids))
+        .count();
+
+    OrphanTagCleanupPlan {
+        candidate_ids,
+        skipped,
+        remaining_orphan_count,
+    }
+}
+
+fn tag_is_orphan_leaf(
+    id: i32,
+    child_map: &HashMap<i32, Vec<i32>>,
+    referenced_tag_ids: &HashSet<i32>,
+    deleted_ids: &HashSet<i32>,
+) -> bool {
+    !referenced_tag_ids.contains(&id)
+        && child_map
+            .get(&id)
+            .map(|children| children.iter().all(|child| deleted_ids.contains(child)))
+            .unwrap_or(true)
+}
+
+fn skipped_reason(
+    id: i32,
+    child_map: &HashMap<i32, Vec<i32>>,
+    referenced_tag_ids: &HashSet<i32>,
+    deleted_ids: &HashSet<i32>,
+) -> &'static str {
+    if referenced_tag_ids.contains(&id) {
+        return "referencedByNotes";
+    }
+    if child_map
+        .get(&id)
+        .map(|children| children.iter().any(|child| !deleted_ids.contains(child)))
+        .unwrap_or(false)
+    {
+        return "hasChildren";
+    }
+    "limitReached"
+}
+
+fn tag_map(tags: &[TagNode]) -> HashMap<i32, TagNode> {
+    tags.iter().map(|tag| (tag.id, tag.clone())).collect()
+}
+
+fn child_map(tags: &[TagNode]) -> HashMap<i32, Vec<i32>> {
+    let mut map: HashMap<i32, Vec<i32>> = HashMap::new();
+    for tag in tags {
+        if tag.parent > 0 {
+            map.entry(tag.parent).or_default().push(tag.id);
+        }
+    }
+    map
+}
+
+fn depth_map(tags: &[TagNode]) -> HashMap<i32, usize> {
+    let by_id = tag_map(tags);
+    tags.iter()
+        .map(|tag| {
+            let mut depth = 0;
+            let mut parent = tag.parent;
+            while parent > 0 {
+                let Some(parent_tag) = by_id.get(&parent) else {
+                    break;
+                };
+                depth += 1;
+                parent = parent_tag.parent;
+            }
+            (tag.id, depth)
+        })
+        .collect()
+}
+
+fn tag_list_json(
+    by_id: &HashMap<i32, TagNode>,
+    ids: &[i32],
+    reason: Option<&'static str>,
+) -> Vec<Value> {
+    ids.iter()
+        .filter_map(|id| by_id.get(id).map(|tag| tag_to_json(by_id, tag, reason)))
+        .collect()
+}
+
+fn tag_to_json(
+    by_id: &HashMap<i32, TagNode>,
+    tag: &TagNode,
+    reason: Option<&'static str>,
+) -> Value {
+    let mut value = json!({
+        "id": tag.id,
+        "name": tag.name,
+        "parent": tag.parent,
+        "fullName": full_tag_name(by_id, tag.id)
+    });
+    if let Some(reason) = reason {
+        value["reason"] = json!(reason);
+    }
+    value
+}
+
+fn full_tag_name(by_id: &HashMap<i32, TagNode>, id: i32) -> String {
+    let mut parts = Vec::new();
+    let mut current = id;
+    while current > 0 {
+        let Some(tag) = by_id.get(&current) else {
+            break;
+        };
+        parts.push(tag.name.as_str());
+        current = tag.parent;
+    }
+    parts.reverse();
+    format!("#{}", parts.join("/"))
+}
+
+fn tag_ids_from_input(input: &Value) -> Vec<i32> {
+    input
+        .get("tagIds")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_i64().map(|value| value as i32))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn unique_ids(ids: &[i32]) -> Vec<i32> {
+    let mut seen = HashSet::new();
+    ids.iter().copied().filter(|id| seen.insert(*id)).collect()
 }
 
 fn update_name(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
@@ -281,4 +679,72 @@ fn delete_with_notes(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         Ok(json!(true))
     }
     .boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{plan_orphan_tag_cleanup, TagNode};
+    use std::collections::HashSet;
+
+    fn tag(id: i32, name: &str, parent: i32) -> TagNode {
+        TagNode {
+            id,
+            name: name.to_string(),
+            parent,
+        }
+    }
+
+    fn refs(ids: &[i32]) -> HashSet<i32> {
+        ids.iter().copied().collect()
+    }
+
+    #[test]
+    fn orphan_cleanup_keeps_referenced_tags() {
+        let tags = vec![tag(1, "AI", 0), tag(2, "方法", 0)];
+        let plan = plan_orphan_tag_cleanup(&tags, &refs(&[1]), &[], true, 200);
+
+        assert_eq!(plan.candidate_ids, vec![2]);
+        assert_eq!(plan.remaining_orphan_count, 0);
+    }
+
+    #[test]
+    fn orphan_cleanup_deletes_leaf_then_parent() {
+        let tags = vec![
+            tag(1, "项目", 0),
+            tag(2, "网络阅历", 1),
+            tag(3, "脏标签", 2),
+        ];
+        let plan = plan_orphan_tag_cleanup(&tags, &refs(&[]), &[3], false, 200);
+
+        assert_eq!(plan.candidate_ids, vec![3, 2, 1]);
+        assert_eq!(plan.remaining_orphan_count, 0);
+    }
+
+    #[test]
+    fn orphan_cleanup_skips_parent_with_children_when_only_parent_requested() {
+        let tags = vec![tag(1, "项目", 0), tag(2, "网络阅历", 1)];
+        let plan = plan_orphan_tag_cleanup(&tags, &refs(&[]), &[1], false, 200);
+
+        assert!(plan.candidate_ids.is_empty());
+        assert_eq!(plan.skipped[0].id, 1);
+        assert_eq!(plan.skipped[0].reason, "hasChildren");
+    }
+
+    #[test]
+    fn orphan_cleanup_requested_ids_do_not_scan_unrelated_tags() {
+        let tags = vec![tag(1, "目标", 0), tag(2, "其他", 0)];
+        let plan = plan_orphan_tag_cleanup(&tags, &refs(&[]), &[1], false, 200);
+
+        assert_eq!(plan.candidate_ids, vec![1]);
+        assert_eq!(plan.remaining_orphan_count, 1);
+    }
+
+    #[test]
+    fn orphan_cleanup_all_respects_limit() {
+        let tags = vec![tag(1, "一", 0), tag(2, "二", 0), tag(3, "三", 0)];
+        let plan = plan_orphan_tag_cleanup(&tags, &refs(&[]), &[], true, 2);
+
+        assert_eq!(plan.candidate_ids, vec![1, 2]);
+        assert_eq!(plan.remaining_orphan_count, 1);
+    }
 }

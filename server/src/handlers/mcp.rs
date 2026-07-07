@@ -374,10 +374,25 @@ fn tool_list(user: &CurrentUser) -> Value {
         {
             json!({
                 "name": "listTagTree",
-                "description": "List the current workspace tag tree. The tree is read-only for MCP agents and is derived from hashtags in note content.",
+                "description": "List the current workspace tag tree. The tree is read-only for MCP agents; card tags are maintained by editing hashtags in content. Historical zero-reference orphan tags can be removed with cleanupOrphanTags.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {}
+                }
+            })
+        },
+        {
+            json!({
+                "name": "cleanupOrphanTags",
+                "description": "Preview or remove orphan tag rows that have no note references and no child tags. This is only for historical tag-tree cleanup; do not use it to add, remove, or rename card tags. Card tag maintenance still happens by editing hashtags in content through updateBlinkora.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "tagIds": { "type": "array", "items": { "type": "number" }, "description": "Candidate tag ids from listTagTree. Ancestors of these tags are considered only after descendants are removable." },
+                        "all": { "type": "boolean", "default": false, "description": "When true, scan the whole workspace for orphan tags." },
+                        "dryRun": { "type": "boolean", "default": true, "description": "Defaults to true. Preview candidates without deleting them." },
+                        "limit": { "type": "number", "default": 200, "maximum": 1000 }
+                    }
                 }
             })
         },
@@ -462,6 +477,9 @@ async fn call_tool(state: AppState, user: CurrentUser, tool_name: &str, argument
             crate::trpc::execute_procedure(state, user, "comments.update", arguments).await
         }
         "listTagTree" => list_tag_tree(state, user).await,
+        "cleanupOrphanTags" => {
+            crate::trpc::execute_procedure(state, user, "tags.cleanupOrphanTags", arguments).await
+        }
         "listOperationLogs" => {
             crate::trpc::execute_procedure(state, user, "operationLogs.list", arguments).await
         }

@@ -413,6 +413,7 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 let next_content = content.clone().unwrap_or_else(|| old.content.clone());
                 let next_note_type = note_type.unwrap_or(old.note_type);
                 let next_metadata = metadata.clone().or_else(|| old.metadata.clone());
+                let next_is_recycle = is_recycle.unwrap_or(old.is_recycle);
                 sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3::json, metadata), "isArchived"=COALESCE($4, "isArchived"), "isRecycle"=COALESCE($5, "isRecycle"), "isTop"=COALESCE($6, "isTop"), "isReviewed"=COALESCE($7, "isReviewed"), "updatedAt"=NOW() WHERE id=$8 AND "accountId"=$9 AND "workspaceId"=$10"#)
                     .bind(&next_content)
                     .bind(next_note_type)
@@ -426,7 +427,16 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                     .bind(ws)
                     .execute(&mut *tx)
                     .await?;
-                sync_tags(&ctx, &mut tx, id, user.id, ws, &next_content).await?;
+                sync_tags_for_recycle_state(
+                    &ctx,
+                    &mut tx,
+                    id,
+                    user.id,
+                    ws,
+                    &next_content,
+                    next_is_recycle,
+                )
+                .await?;
                 sync_references(&mut tx, id, user.id, ws, input.get("references")).await?;
                 let after_tags = note_tag_ids_tx(&mut tx, id).await?;
                 let after_references = note_reference_ids_tx(&mut tx, id).await?;
@@ -511,7 +521,16 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 .bind(ws)
                 .fetch_one(&mut *tx)
                 .await?;
-            sync_tags(&ctx, &mut tx, note_id, user.id, ws, &content).await?;
+            sync_tags_for_recycle_state(
+                &ctx,
+                &mut tx,
+                note_id,
+                user.id,
+                ws,
+                &content,
+                is_recycle.unwrap_or(false),
+            )
+            .await?;
             sync_references(&mut tx, note_id, user.id, ws, input.get("references")).await?;
             let after_tags = note_tag_ids_tx(&mut tx, note_id).await?;
             let after_references = note_reference_ids_tx(&mut tx, note_id).await?;
@@ -645,7 +664,8 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .bind(&note_ids)
             .execute(&mut *tx)
             .await?;
-        cleanup_unused_tags(&mut tx, &source_tag_ids, user.id, source_workspace_id).await?;
+        super::tags::cleanup_unused_tags(&mut tx, &source_tag_ids, user.id, source_workspace_id)
+            .await?;
 
         sqlx::query(
             r#"UPDATE notes
@@ -1464,7 +1484,13 @@ fn update_flag(
                 }
             }
             let sql = format!(r#"UPDATE notes SET "{field}"=$1, "updatedAt"=NOW() WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#);
-            sqlx::query(&sql).bind(value).bind(&ids).bind(user.id).bind(ws).execute(&mut *tx).await?;
+            sqlx::query(&sql)
+                .bind(value)
+                .bind(&ids)
+                .bind(user.id)
+                .bind(ws)
+                .execute(&mut *tx)
+                .await?;
             for old in old_notes {
                 let before = match field {
                     "isArchived" => old.is_archived,
@@ -1476,11 +1502,29 @@ fn update_flag(
                 if before == value {
                     continue;
                 }
+                let before_tags = note_tag_ids_tx(&mut tx, old.id).await?;
+                if field == "isRecycle" {
+                    sync_tags_for_recycle_state(
+                        &ctx,
+                        &mut tx,
+                        old.id,
+                        user.id,
+                        ws,
+                        &old.content,
+                        value,
+                    )
+                    .await?;
+                }
+                let after_tags = note_tag_ids_tx(&mut tx, old.id).await?;
                 let mut flags = Map::new();
                 flags.insert(field.to_string(), json!({ "before": before, "after": value }));
                 let mut details = Map::new();
                 details.insert("flags".to_string(), Value::Object(flags));
-                let changed_fields = vec!["flags".to_string()];
+                let mut changed_fields = vec!["flags".to_string()];
+                if before_tags != after_tags {
+                    push_changed_field(&mut changed_fields, "tags");
+                    details.insert("tags".to_string(), ids_diff_detail(&before_tags, &after_tags));
+                }
                 let action = action_for_update(&changed_fields, &details);
                 let title = note_title(&old.content, old.id);
                 insert_note_log_if_enabled_tx(
@@ -1574,34 +1618,45 @@ pub(crate) async fn sync_tags<'a>(
             .execute(&mut **tx)
             .await?;
     }
-    cleanup_unused_tags(tx, &previous_tag_ids, account_id, workspace_id).await?;
+    super::tags::cleanup_unused_tags(tx, &previous_tag_ids, account_id, workspace_id).await?;
     Ok(())
 }
 
-async fn cleanup_unused_tags<'a>(
+async fn sync_tags_for_recycle_state<'a>(
+    ctx: &ProcedureContext,
     tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
-    tag_ids: &[i32],
+    note_id: i32,
+    account_id: i32,
+    workspace_id: i32,
+    content: &str,
+    is_recycle: bool,
+) -> anyhow::Result<()> {
+    if is_recycle {
+        clear_note_tags(tx, note_id, account_id, workspace_id).await
+    } else {
+        sync_tags(ctx, tx, note_id, account_id, workspace_id, content).await
+    }
+}
+
+async fn clear_note_tags<'a>(
+    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    note_id: i32,
     account_id: i32,
     workspace_id: i32,
 ) -> anyhow::Result<()> {
-    let tag_ids = unique_ids(tag_ids);
-    if tag_ids.is_empty() {
+    let previous_tag_ids: Vec<i32> =
+        sqlx::query_scalar(r#"SELECT "tagId" FROM "tagsToNote" WHERE "noteId"=$1"#)
+            .bind(note_id)
+            .fetch_all(&mut **tx)
+            .await?;
+    if previous_tag_ids.is_empty() {
         return Ok(());
     }
-    sqlx::query(
-        r#"DELETE FROM tag t
-           WHERE t.id=ANY($1)
-             AND t."accountId"=$2
-             AND t."workspaceId"=$3
-             AND NOT EXISTS (
-               SELECT 1 FROM "tagsToNote" ttn WHERE ttn."tagId"=t.id
-             )"#,
-    )
-    .bind(&tag_ids)
-    .bind(account_id)
-    .bind(workspace_id)
-    .execute(&mut **tx)
-    .await?;
+    sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=$1"#)
+        .bind(note_id)
+        .execute(&mut **tx)
+        .await?;
+    super::tags::cleanup_unused_tags(tx, &previous_tag_ids, account_id, workspace_id).await?;
     Ok(())
 }
 
@@ -2030,7 +2085,8 @@ async fn delete_note_ids(
     ] {
         sqlx::query(sql).bind(&ids).execute(&mut *tx).await?;
     }
-    cleanup_unused_tags(&mut tx, &tag_ids_to_cleanup, account_id, workspace_id).await?;
+    super::tags::cleanup_unused_tags(&mut tx, &tag_ids_to_cleanup, account_id, workspace_id)
+        .await?;
 
     if attachment_ids_to_delete.is_empty() {
         sqlx::query(

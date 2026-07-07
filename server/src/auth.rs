@@ -160,6 +160,7 @@ impl AgentPermissions {
             "comments.list" => self.comments_read,
             "comments.create" | "comments.update" => self.comments_write,
             "tags.list" | "tags.fullTagNameById" => self.tags_read,
+            "tags.cleanupOrphanTags" => self.notes_write && self.tags_read,
             _ => false,
         }
     }
@@ -174,6 +175,7 @@ impl AgentPermissions {
             "listComments" => self.comments_read,
             "createComment" | "updateComment" => self.comments_write,
             "listTagTree" => self.tags_read,
+            "cleanupOrphanTags" => self.notes_write && self.tags_read,
             _ => false,
         }
     }
@@ -579,10 +581,13 @@ mod tests {
         assert!(permissions.allows_procedure("notes.setReferences"));
         assert!(permissions.allows_procedure("comments.create"));
         assert!(permissions.allows_procedure("tags.list"));
+        assert!(permissions.allows_procedure("tags.cleanupOrphanTags"));
+        assert!(permissions.allows_mcp_tool("cleanupOrphanTags"));
         assert!(!permissions.allows_procedure("attachments.list"));
         assert!(!permissions.allows_procedure("workspaces.list"));
         assert!(!permissions.allows_procedure("config.list"));
         assert!(!permissions.allows_procedure("notes.deleteMany"));
+        assert!(!permissions.allows_procedure("tags.deleteOnlyTag"));
     }
 
     #[test]

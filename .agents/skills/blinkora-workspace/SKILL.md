@@ -64,6 +64,7 @@ Prefer these MCP tools:
 - `createComment`: create a comment for a note.
 - `updateComment`: update a comment by `id`.
 - `listTagTree`: read the current workspace tag tree.
+- `cleanupOrphanTags`: preview or remove historical orphan tag rows that have no note references and no child tags. This is only for tag-tree cleanup, not card tag maintenance.
 - `listOperationLogs`: read note operation logs. Use `afterId` as a cursor for incremental sync.
 
 Returned notes include `id`, `type`, `content`, status flags, `metadata`, tags, attachment metadata, outgoing `references`, incoming `referencedBy`, and timestamps.
@@ -76,7 +77,7 @@ Attachment metadata may include `/api/file/...` or `/api/s3file/...` paths. To r
 
 `upsertBlinkora` and `updateBlinkora` accept optional status flags, `metadata`, and `references`. On update, omit `content`, `type`, `isArchived`, `isRecycle`, `isTop`, or `isReviewed` to keep the current value. `isReviewed` means daily-review status, not moderation or approval.
 
-Tags are not a separate writable field. Returned `tags` are derived from hashtags in note `content`. To maintain card tags, read the note, edit hashtags in `content`, then call `updateBlinkora`; Blinkora will sync `tagsToNote` and the tag tree automatically.
+Tags are not a separate writable field. Returned `tags` are derived from hashtags in note `content`. To maintain card tags, read the note, edit hashtags in `content`, then call `updateBlinkora`; Blinkora will sync `tagsToNote` and the tag tree automatically. If old zero-reference tag rows remain visible in `listTagTree` after content cleanup, use `cleanupOrphanTags` with `dryRun: true` first, then rerun with `dryRun: false` only for confirmed orphan tag ids or with `all: true`.
 
 Use `listOperationLogs({ afterId, actorType: "user", noteTypes: [1], orderBy: "asc" })` before maintenance work when you need to see user changes since the last agent pass. Operation log actions `markDailyReviewed` and `markDailyUnreviewed` mean daily-review state changes, not approval or content audit.
 
@@ -123,6 +124,7 @@ Before writing:
 - You may read attachment file bytes from attachment paths returned by Blinkora. Do not upload, delete, move, or rename attachment files.
 - Do not move notes between workspaces; workspace-scoped tokens cannot call workspace management or move endpoints.
 - Do not modify the tag tree directly. To assign tags, write hashtags in content, for example `#项目/类型/概念`; Blinkora will create and sync the tag tree.
+- Do not use `cleanupOrphanTags` to add, remove, or rename a card's tags. It only removes tag-table rows that no note references and that have no child tags.
 - For idempotent imports, use a stable `metadata.importSourceKey` or another stable workflow key, then search by that metadata before creating a new note.
 - For migrations or graph-style writes, create or update notes first, then run a second pass to call `setReferences` after all target ids are known.
 - Domain-specific writing rules, taxonomy, content retention policy, and card/wiki conventions belong in the target workspace or project `AGENTS.md`, not in this generic Blinkora skill.
