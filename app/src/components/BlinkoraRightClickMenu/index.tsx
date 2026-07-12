@@ -19,6 +19,17 @@ import { FocusEditorFixMobile } from "@/components/Common/Editor/editorUtils";
 import { confirmDeleteNotes } from "@/lib/noteDeletion";
 import { WorkspaceStore } from "@/store/workspace";
 import { getNoteTypeOption, NOTE_TYPE_OPTIONS } from "../Common/NoteTypePicker";
+import { writeTextToClipboard } from "@/lib/clipboard";
+import { getBlinkoraEndpoint } from "@/lib/blinkoraEndpoint";
+import { findPreviewTitle } from "../BlinkoraCard/cardPreview";
+
+const AGENT_DISCUSSION_TITLE_MAX_LENGTH = 80;
+
+const truncateTitle = (title: string) => {
+  const characters = Array.from(title);
+  if (characters.length <= AGENT_DISCUSSION_TITLE_MAX_LENGTH) return title;
+  return `${characters.slice(0, AGENT_DISCUSSION_TITLE_MAX_LENGTH).join('').trimEnd()}...`;
+};
 
 const toIsoString = (value?: string | Date | null) => {
   if (!value) return null;
@@ -297,33 +308,32 @@ const handleMultiSelect = () => {
   blinkora.onMultiSelectNote(blinkora.curSelectedNote?.id!)
 }
 
-const handleSelectAll = () => {
+const handleAgentDiscussion = async () => {
   const blinkora = RootStore.Get(BlinkoraStore)
-  blinkora.isMultiSelectMode = true
+  const workspaceStore = RootStore.Get(WorkspaceStore)
+  const note = blinkora.curSelectedNote
 
-  const currentPath = new URLSearchParams(window.location.search).get('path');
-  let items: Array<{ id?: number | null }> | undefined;
-
-  if (currentPath === 'notes') {
-    items = blinkora.noteOnlyList.value;
-  } else if (currentPath === 'todo') {
-    items = blinkora.todoList.value;
-  } else if (currentPath === 'archived') {
-    items = blinkora.archivedList.value;
-  } else if (currentPath === 'trash') {
-    items = blinkora.trashList.value;
-  } else if (currentPath === 'all') {
-    items = blinkora.noteList.value;
-  } else {
-    items = blinkora.blinkoraList.value;
+  if (!note?.id) {
+    RootStore.Get(ToastPlugin).error(i18n.t('operation-failed'))
+    return
   }
 
-  const ids = (items || [])
-    .map(n => n.id)
-    .filter((id): id is number => typeof id === 'number');
+  const title = truncateTitle(
+    findPreviewTitle(note.content ?? '', note.title ?? '') || i18n.t('no-title')
+  )
+  const content = i18n.t('agent-discussion-copy-template', {
+    id: note.id,
+    title,
+    workspace: workspaceStore.currentWorkspace?.name || i18n.t('workspace'),
+    url: getBlinkoraEndpoint(`/detail?id=${note.id}`)
+  })
 
-  // Assign directly to avoid toggle side-effects
-  blinkora.setMultiSelectIds(ids);
+  try {
+    await writeTextToClipboard(content)
+    RootStore.Get(ToastPlugin).success(i18n.t('agent-discussion-copied'))
+  } catch {
+    RootStore.Get(ToastPlugin).error(i18n.t('operation-failed'))
+  }
 }
 
 const handleTop = () => {
@@ -385,11 +395,11 @@ export const MutiSelectItem = observer(() => {
   </div>
 })
 
-export const SelectAllItem = observer(() => {
+export const AgentDiscussionItem = observer(() => {
   const { t } = useTranslation();
   return <div className="flex items-start gap-2">
-    <Icon icon="lucide:square-check" width="20" height="20" />
-    <div>{t('select-all')}</div>
+    <Icon icon="hugeicons:bubble-chat-add" width="20" height="20" />
+    <div>{t('agent-discussion')}</div>
   </div>
 })
 
@@ -501,11 +511,12 @@ export const BlinkoraRightClickMenu = observer(() => {
         <ContextMenuItem onClick={() => handleMultiSelect()}>
           <MutiSelectItem />
         </ContextMenuItem>
-        <ContextMenuItem onClick={() => handleSelectAll()}>
-          <SelectAllItem />
-        </ContextMenuItem>
       </>
     ) : <></>}
+
+    <ContextMenuItem onClick={handleAgentDiscussion}>
+      <AgentDiscussionItem />
+    </ContextMenuItem>
 
     <ContextMenuItem onClick={() => ShowEditTimeModel()}>
       <EditTimeItem />
@@ -580,11 +591,11 @@ export const LeftCickMenu = observer(({ onTrigger, className }: { onTrigger: () 
           <DropdownItem key="MutiSelectItem" onPress={() => handleMultiSelect()}>
             <MutiSelectItem />
           </DropdownItem>
-          <DropdownItem key="SelectAllItem" onPress={() => handleSelectAll()}>
-            <SelectAllItem />
-          </DropdownItem>
         </>
       ) : null}
+      <DropdownItem key="AgentDiscussionItem" onPress={handleAgentDiscussion}>
+        <AgentDiscussionItem />
+      </DropdownItem>
       <DropdownItem key="EditTimeItem" onPress={() => ShowEditTimeModel()}> <EditTimeItem /></DropdownItem>
       {getConvertTargetOptions(blinkora.curSelectedNote?.type).map(option => (
         <DropdownItem key={`ConvertItem-${option.type}`} onPress={() => ConvertItemFunction(option.type)}>

@@ -46,6 +46,7 @@ export const ResourceMultiSelectPop = observer(() => {
     <MultiSelectToolbar
       show={resourceStore.selectedItems.size > 0}
       actions={actions}
+      closeLabel={t('close')}
       onClose={() => resourceStore.clearSelection()}
     />
   );

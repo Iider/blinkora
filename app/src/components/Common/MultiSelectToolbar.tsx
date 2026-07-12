@@ -11,18 +11,20 @@ interface Action {
 interface MultiSelectToolbarProps {
   show: boolean;
   actions: Action[];
+  closeLabel: string;
   onClose: () => void;
 }
 
-export const MultiSelectToolbar = ({ show, actions, onClose }: MultiSelectToolbarProps) => {
+export const MultiSelectToolbar = ({ show, actions, closeLabel, onClose }: MultiSelectToolbarProps) => {
   if (!show) return null;
 
   return (
-    <div className="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50">
-      <div className="bg-content1 rounded-2xl shadow-lg px-4 py-2 flex items-center gap-2 border-2 border-primary">
+    <div className="fixed bottom-[calc(68px+env(safe-area-inset-bottom))] left-1/2 z-[60] w-[calc(100vw-1rem)] -translate-x-1/2 md:bottom-4 md:w-auto">
+      <div className="grid grid-cols-3 gap-1 rounded-xl border-2 border-primary bg-content1 p-2 shadow-lg md:flex md:items-center md:gap-2 md:px-4">
         {actions.map((action, index) => (
           <Button
             key={index}
+            className="w-full! min-w-0! px-2! md:w-auto! md:px-3!"
             size="md"
             color={action.isDeleteButton ? "danger" : "default"}
             variant="light"
@@ -33,7 +35,8 @@ export const MultiSelectToolbar = ({ show, actions, onClose }: MultiSelectToolba
           </Button>
         ))}
         <Button
-          className="w-[32px]! h-[32px]! min-w-0!"
+          aria-label={closeLabel}
+          className="h-10! w-full! min-w-0! md:h-[32px]! md:w-[32px]!"
           size="md"
           variant="light"
           isIconOnly
@@ -43,4 +46,4 @@ export const MultiSelectToolbar = ({ show, actions, onClose }: MultiSelectToolba
       </div>
     </div>
   );
-}; 
+};

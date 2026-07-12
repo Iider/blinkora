@@ -114,6 +114,14 @@ Reference update pattern:
 
 Use `addReference` or `removeReference` for one reference. `removeReference` can clean up existing references that touch recycle-bin notes; prefer passing the reference `id` when known, otherwise pass `fromNoteId` and `toNoteId`. Use `setReferences` only when replacing the complete outgoing reference set for `fromNoteId`.
 
+## Card Discussion Handoffs
+
+Blinkora may copy a card reference containing a note id, title, workspace name, link, and a request to discuss the card.
+
+- Use the note id with `getBlinkora`; do not treat the copied title or link as the current note content.
+- A discussion handoff is read-only by default. Discuss the card without changing it until the user explicitly asks to write back.
+- Before an authorized write-back, call `getBlinkora` again and preserve fields the user did not ask to change.
+
 ## Write Rules
 
 Before writing:
@@ -124,7 +132,7 @@ Before writing:
 - You may read attachment file bytes from attachment paths returned by Blinkora. Do not upload, delete, move, or rename attachment files.
 - Do not move notes between workspaces; workspace-scoped tokens cannot call workspace management or move endpoints.
 - Do not modify the tag tree directly. To assign tags, write hashtags in content, for example `#项目/类型/概念`; Blinkora will create and sync the tag tree.
-- Do not use `cleanupOrphanTags` to add, remove, or rename a card's tags. It only removes tag-table rows that no note references and that have no child tags.
+- Do not use `cleanupOrphanTags` to add, remove, or rename a card's tags. It only removes tag-table rows that have no note references and no child tags.
 - For idempotent imports, use a stable `metadata.importSourceKey` or another stable workflow key, then search by that metadata before creating a new note.
 - For migrations or graph-style writes, create or update notes first, then run a second pass to call `setReferences` after all target ids are known.
 - Domain-specific writing rules, taxonomy, content retention policy, and card/wiki conventions belong in the target workspace or project `AGENTS.md`, not in this generic Blinkora skill.

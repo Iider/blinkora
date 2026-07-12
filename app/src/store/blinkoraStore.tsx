@@ -504,6 +504,30 @@ export class BlinkoraStore implements Store {
     this.isMultiSelectMode = uniqueIds.length > 0;
   }
 
+  selectAllCurrentListNotes() {
+    const currentPath = new URLSearchParams(window.location.search).get('path');
+    let items: Note[] | undefined;
+
+    if (currentPath === 'notes') {
+      items = this.noteOnlyList.value;
+    } else if (currentPath === 'todo') {
+      items = this.todoList.value;
+    } else if (currentPath === 'archived') {
+      items = this.archivedList.value;
+    } else if (currentPath === 'trash') {
+      items = this.trashList.value;
+    } else if (currentPath === 'all') {
+      items = this.noteList.value;
+    } else {
+      items = this.blinkoraList.value;
+    }
+
+    const ids = (items ?? [])
+      .map(note => note.id)
+      .filter((id): id is number => typeof id === 'number');
+    this.setMultiSelectIds(ids);
+  }
+
   onMultiSelectRest() {
     this.isMultiSelectMode = false
     this.curMultiSelectIds = []

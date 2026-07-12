@@ -23,6 +23,11 @@ export const BlinkoraMultiSelectPop = observer(() => {
 
   const actions = [
     {
+      icon: "material-symbols:select-all",
+      text: t('select-all'),
+      onClick: () => blinkora.selectAllCurrentListNotes()
+    },
+    {
       icon: isArchivedView ? "eva:archive-outline" : "eva:archive-outline",
       text: isArchivedView ? t('recovery') : t('archive'),
       onClick: async () => {
@@ -96,6 +101,7 @@ export const BlinkoraMultiSelectPop = observer(() => {
     <MultiSelectToolbar
       show={blinkora.isMultiSelectMode}
       actions={actions}
+      closeLabel={t('close')}
       onClose={() => blinkora.onMultiSelectRest()}
     />
   );

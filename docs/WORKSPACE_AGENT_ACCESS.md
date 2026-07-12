@@ -21,7 +21,7 @@ Blinkora 的工作区令牌用于把单个 Workspace 授权给外部 Agent，例
 - 数据库备份要按敏感数据处理。
 - 不要把 token 写进仓库、脚本、提交记录、公开日志或 Skill 文件。
 - 工作区令牌只能访问绑定的单个 Workspace。
-- 允许：闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性读写；标签树可读；同 Workspace 附件文件可读取。
+- 允许：闪念、笔记、待办、评论、笔记引用和 metadata 自定义属性读写；标签树可读，可受限清理无卡片引用且没有子标签的孤标签；同 Workspace 附件文件可读取。
 - 禁止：其他 Workspace、附件写入和管理、备份、配置、工作区管理和 admin 类接口。
 
 ## MCP 使用
@@ -63,6 +63,7 @@ Authorization: Bearer ${BLINKORA_AGENT_TOKEN}
 - `createComment`
 - `updateComment`
 - `listTagTree`
+- `cleanupOrphanTags`
 - `listOperationLogs`
 
 Agent 批量导入或维护时建议：
@@ -79,6 +80,7 @@ Agent 批量导入或维护时建议：
 - `updateBlinkora` 未传 `content`、`type`、`isArchived`、`isRecycle`、`isTop`、`isReviewed` 时保持原值。
 - 先创建全部笔记，再用 `setReferences` 第二轮写入笔记间引用。
 - 通过正文写 `#父/子` 形式的标签，不直接写标签树。
+- 历史孤标签先用 `cleanupOrphanTags({ "dryRun": true })` 预览，再指定 tag id 或传 `all: true`，并设置 `dryRun: false` 执行清理；不要用它维护卡片标签。
 - 维护卡片前需要追踪用户改动时，用 `listOperationLogs` 读取系统级操作日志，不依赖“操作日志”卡片作为事实来源。
 - 推荐增量查询：`listOperationLogs({ "afterId": 上次处理到的日志 id, "actorType": "user", "noteTypes": [1], "orderBy": "asc" })`。
 - 工作区令牌可以读取笔记返回的 `/api/file/...` 或 `/api/s3file/...` 附件路径；读取时继续携带 `Authorization: Bearer ${BLINKORA_AGENT_TOKEN}`。
@@ -114,6 +116,17 @@ Agent 批量导入或维护时建议：
 
 只增删一条引用时，用 `addReference` 或 `removeReference`，不要为了单条修改误用 `setReferences` 覆盖整组出链。
 `removeReference` 可以清理涉及回收站笔记的既有引用；已知引用 `id` 时优先传 `id`，没有 `id` 时再传 `fromNoteId` / `toNoteId`。
+
+## 从卡片发起讨论
+
+单卡菜单里的“与 Agent 讨论”用于把当前卡片交给外部 Agent，和卡片上的“复制”用途不同：
+
+- “复制”复制卡片正文，适合直接粘贴内容。
+- “与 Agent 讨论”复制卡片 id、标题、Workspace 和链接，不复制整篇正文。
+- Agent 收到后应使用卡片 id 调用 `getBlinkora` 读取最新内容，不能把复制出来的标题或链接当作事实源。
+- 讨论默认只读；只有用户明确要求“写回”后，Agent 才能重新读取卡片并提交修改。
+
+交接文本不包含正文，粘贴进已有会话时不会重复占用长卡片的对话上下文。
 
 ## Skill 和文档资源
 
