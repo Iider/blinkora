@@ -18,17 +18,21 @@ Never write the token into a repo file, script, skill, shell history snippet, or
 
 ## Install / Refresh
 
-If the agent supports project skills, install this skill into the workspace:
+For a full local installation, download the zip so its reference files stay beside
+the skill:
 
 ```bash
-mkdir -p .agents/skills/blinkora-workspace
+mkdir -p .agents/skills
 curl -fsSL \
   -H "Authorization: Bearer ${BLINKORA_AGENT_TOKEN}" \
-  "${BLINKORA_BASE_URL}/api/agent/blinkora-workspace/SKILL.md" \
-  -o .agents/skills/blinkora-workspace/SKILL.md
+  "${BLINKORA_BASE_URL}/api/agent/blinkora-workspace.zip" \
+  -o /tmp/blinkora-workspace.zip
+unzip -oq /tmp/blinkora-workspace.zip -d .agents/skills
 ```
 
-If the agent does not support local skills, read the same `SKILL.md` as task instructions and then connect through MCP.
+If the agent accepts only one skill file, download
+`/api/agent/blinkora-workspace/SKILL.md` instead. If the agent does not support
+local skills, read that file as task instructions and then connect through MCP.
 
 ## Connect
 
@@ -39,6 +43,11 @@ Prefer Blinkora MCP over raw HTTP.
 - Authenticate every MCP request with `Authorization: Bearer ${BLINKORA_AGENT_TOKEN}`.
 
 The token is bound to exactly one workspace. Do not pass or invent `workspaceId`; scoped tokens use their bound workspace.
+
+The bundled `references/mcp-guide.md` is the concise setup and safety guide.
+For a direct script client with no first-class MCP wrapper, use
+`references/mcp-sse-python-client.md`. The online MCP guide is also available at
+`${BLINKORA_BASE_URL}/api/agent/mcp-guide.md`.
 
 ## Tools
 

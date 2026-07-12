@@ -54,6 +54,13 @@ README.md
 CONTRIBUTING.md
 .blinkora
 
+!.agents/
+!.agents/skills/
+!.agents/skills/blinkora-workspace/
+!.agents/skills/blinkora-workspace/SKILL.md
+!.agents/skills/blinkora-workspace/references/
+!.agents/skills/blinkora-workspace/references/*.md
+
 docker-compose*.yml
 docker-compose*.yaml
 docker/data

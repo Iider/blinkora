@@ -19,6 +19,7 @@
     "setup": "bun install",
     "build:rust-release": "bash scripts/build-rust-release.sh",
     "deploy:local": "bash scripts/local-persistent-deploy.sh",
+    "skill:sync": "bash scripts/sync-blinkora-workspace-skill.sh",
     "smoke:rust": "node scripts/rust-smoke.mjs",
     "smoke:agent": "node scripts/workspace-agent-smoke.mjs",
     "verify:rust": "node scripts/verify-rust-acceptance.mjs"

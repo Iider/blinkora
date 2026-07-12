@@ -314,7 +314,9 @@ async function main() {
   assert(
     guide.response.ok &&
       guide.text.includes("Blinkora MCP / Skill") &&
-      guide.text.includes("searchBlinkora"),
+      guide.text.includes("searchBlinkora") &&
+      guide.text.includes("cleanupOrphanTags") &&
+      guide.text.includes("卡片讨论交接"),
     "agent token can read mcp guide",
     { status: guide.response.status, body: guide.text.slice(0, 200) },
   );
@@ -324,7 +326,9 @@ async function main() {
   assert(
     skill.response.ok &&
       skill.text.includes("name: blinkora-workspace") &&
-      skill.text.includes("BLINKORA_AGENT_TOKEN"),
+      skill.text.includes("BLINKORA_AGENT_TOKEN") &&
+      skill.text.includes("Card Discussion Handoffs") &&
+      skill.text.includes("references/mcp-sse-python-client.md"),
     "agent token can read skill markdown",
     { status: skill.response.status, body: skill.text.slice(0, 200) },
   );
@@ -486,6 +490,7 @@ async function main() {
     "createComment",
     "updateComment",
     "listTagTree",
+    "cleanupOrphanTags",
     "listOperationLogs",
   ];
   assert(

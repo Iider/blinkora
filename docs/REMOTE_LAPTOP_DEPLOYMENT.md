@@ -1,77 +1,83 @@
-# 远端笔记本部署
+# 飞牛常驻部署
 
-当前个人常驻部署目标是一台 Ubuntu 笔记本。以后日常部署优先更新这台机器，不再把当前 Mac 作为常驻 Blinkora 服务。
+Blinkora 当前的常驻服务运行在飞牛服务器，不再使用早期 Ubuntu 笔记本路径，也不把当前 Mac 当作正式服务。
 
 ## 当前入口
 
-- Wi-Fi 地址：`http://192.168.2.25:6676`
-- 有线地址：`http://192.168.2.34:6676`，仅网线接入且地址未变化时可用。
+- Web：`http://192.168.2.25:6676`
 - 健康检查：`curl -fsS http://192.168.2.25:6676/health`
 
-## 运行方式
+## 运行结构
 
-远端采用“数据库 Docker，本体本地二进制”的方式：
+部署根目录：`/vol1/1000/docker/blinkora`。
 
-- PostgreSQL：Docker 容器 `blinkora-db`
-- Blinkora Web/Rust 服务：systemd 服务 `blinkora.service`
-- Docker 镜像代理：`/etc/docker/daemon.json`
-- Rust 二进制：`/home/ubuntu/blinkora/local/bin/blinkora-server`
-- 静态资源：`/home/ubuntu/blinkora/local/public`
-- schema：`/home/ubuntu/blinkora/local/db/schema.sql`
-- 附件和运行数据：`/home/ubuntu/blinkora/local/data`
-- 环境文件：`/home/ubuntu/blinkora/local/blinkora.env`
-- 数据库 compose 目录：`/home/ubuntu/blinkora/docker`
-- PostgreSQL 数据：`/home/ubuntu/blinkora/docker/data/postgres`
+- Blinkora Web/Rust：systemd `blinkora.service`
+- PostgreSQL：Docker Compose 的 `db` 服务，由 `blinkora-db.service` 拉起
+- Rust 二进制：`/vol1/1000/docker/blinkora/local/bin/blinkora-server`
+- 前端静态资源：`/vol1/1000/docker/blinkora/local/public`
+- schema：`/vol1/1000/docker/blinkora/local/db/schema.sql`
+- 运行配置：`/vol1/1000/docker/blinkora/local/blinkora.env`
+- 附件和应用运行数据：`/vol1/1000/docker/blinkora/data/app`
+- PostgreSQL 数据：`/vol1/1000/docker/blinkora/data/postgres`
+- Compose 目录：`/vol1/1000/docker/blinkora/compose`
+- 发布备份：`/vol1/1000/docker/blinkora/backups`
 
-`blinkora.env` 里包含生产密钥，不要复制到文档或提交到仓库。
+`blinkora.env` 含生产密钥，不要复制到文档、提交或命令历史。
 
-## 常用命令
-
-在远端查看服务：
+## 日常检查
 
 ```bash
 systemctl status blinkora.service
-cd /home/ubuntu/blinkora/docker
-docker compose ps
+systemctl status blinkora-db.service
+curl -fsS http://127.0.0.1:6676/health
 ```
 
 重启 Web 服务：
 
 ```bash
 sudo systemctl restart blinkora.service
-curl -fsS http://127.0.0.1:6676/health
+systemctl is-active blinkora.service
 ```
 
-查看数据库数量示例：
+查看数据库容器：
 
 ```bash
-docker exec blinkora-db psql -U postgres -d postgres -tAc 'select count(*) from notes;'
+cd /vol1/1000/docker/blinkora/compose
+docker compose ps
 ```
 
-## 更新流程
+## 发布更新
 
-在开发机生成 Linux x86_64 release 产物：
+开发机先构建 Linux x86_64 release：
 
 ```bash
-TARGETARCH=amd64 DOCKER_DEFAULT_PLATFORM=linux/amd64 BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
+TARGETARCH=amd64 DOCKER_DEFAULT_PLATFORM=linux/amd64 \
+BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
 ```
 
-把 `docker/release/rust` 里的新二进制、`public` 和 `db` 同步到远端的 `/home/ubuntu/blinkora/local` 后，重启：
+发布只替换这三类产物：
+
+- `release/rust/blinkora-server`
+- `release/rust/public/`
+- `release/rust/db/schema.sql`
+
+远端操作应先把当前二进制、`public/` 和 schema 复制到
+`/vol1/1000/docker/blinkora/backups/release-<时间>-<说明>/`，再在同一文件系统内
+暂存并替换。不要删除或重建 `data/app`、`data/postgres`、`compose/` 或
+`local/blinkora.env`。
+
+替换后重启并确认：
 
 ```bash
 sudo systemctl restart blinkora.service
+systemctl is-active blinkora.service
 curl -fsS http://127.0.0.1:6676/health
 ```
 
-## 迁移记录
+若发布异常，用同一个发布备份恢复二进制、`public/` 和 schema，再重启服务；数据库和附件
+数据不需要回滚。
 
-2026-06-30 已把当前 Mac 上的 Blinkora 数据复制到远端：
+## 迁移基线
 
-- 数据库已恢复到远端 `blinkora-db`。
-- 附件和运行数据已复制到 `/home/ubuntu/blinkora/local/data`。
-- 首次迁移校验时 `notes` 数量为 `160`。这个数字只作为迁移记录，不作为后续当前数据量判断。
-
-当前 Mac 的本机常驻服务已停止并禁用：
-
-- `com.blinkora.local` 已从 launchd 卸载并禁用。
-- 本机 Docker 容器 `blinkora-db` 已停止但未删除，数据仍保留。
+生产数据已迁移到此飞牛目录。源主机保留为备份，不作为日常运行入口。当前 Mac 的本机常驻
+服务已停止并禁用；本机 Docker 数据仍保留，但不应拿它覆盖飞牛的生产数据。

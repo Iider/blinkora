@@ -4,6 +4,7 @@ WORKDIR /build/server
 
 COPY server/Cargo.toml server/Cargo.lock ./
 COPY server/src ./src
+COPY .agents/skills/blinkora-workspace /build/.agents/skills/blinkora-workspace
 
 RUN cargo build --release --locked
 

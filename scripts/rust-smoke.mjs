@@ -309,6 +309,7 @@ assert(
     'createComment',
     'updateComment',
     'listTagTree',
+    'cleanupOrphanTags',
     'listOperationLogs',
   ].every((name) => mcpToolNames.includes(name)),
   'MCP tools/list',
@@ -504,7 +505,9 @@ const agentMcpGuide = await request('/api/agent/mcp-guide.md', {
 assert(
   agentMcpGuide.response.ok
     && agentMcpGuide.text.includes('Blinkora MCP / Skill')
-    && agentMcpGuide.text.includes('searchBlinkora'),
+    && agentMcpGuide.text.includes('searchBlinkora')
+    && agentMcpGuide.text.includes('cleanupOrphanTags')
+    && agentMcpGuide.text.includes('卡片讨论交接'),
   'workspace agent can read MCP guide resource',
   { status: agentMcpGuide.response.status, body: agentMcpGuide.text.slice(0, 200) },
 );
@@ -515,7 +518,9 @@ const agentSkillMd = await request('/api/agent/blinkora-workspace/SKILL.md', {
 assert(
   agentSkillMd.response.ok
     && agentSkillMd.text.includes('name: blinkora-workspace')
-    && agentSkillMd.text.includes('BLINKORA_AGENT_TOKEN'),
+    && agentSkillMd.text.includes('BLINKORA_AGENT_TOKEN')
+    && agentSkillMd.text.includes('Card Discussion Handoffs')
+    && agentSkillMd.text.includes('references/mcp-sse-python-client.md'),
   'workspace agent can download skill markdown',
   { status: agentSkillMd.response.status, body: agentSkillMd.text.slice(0, 200) },
 );
@@ -579,6 +584,7 @@ assert(
     'createComment',
     'updateComment',
     'listTagTree',
+    'cleanupOrphanTags',
     'listOperationLogs',
   ].every((name) => agentToolNames.includes(name))
     && !agentToolNames.includes('workspaces.list'),

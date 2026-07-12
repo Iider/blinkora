@@ -136,23 +136,24 @@ Agent 批量导入或维护时建议：
 - Skill Markdown：`${BLINKORA_BASE_URL}/api/agent/blinkora-workspace/SKILL.md`
 - Skill zip：`${BLINKORA_BASE_URL}/api/agent/blinkora-workspace.zip`
 
-安装到项目级 `.agents`：
+安装完整 Skill 包到项目级 `.agents`：
 
 ```bash
-mkdir -p .agents/skills/blinkora-workspace
-curl -fsSL \
-  -H "Authorization: Bearer ${BLINKORA_AGENT_TOKEN}" \
-  "${BLINKORA_BASE_URL}/api/agent/blinkora-workspace/SKILL.md" \
-  -o .agents/skills/blinkora-workspace/SKILL.md
-```
-
-下载 zip：
-
-```bash
+mkdir -p .agents/skills
 curl -fsSL \
   -H "Authorization: Bearer ${BLINKORA_AGENT_TOKEN}" \
   "${BLINKORA_BASE_URL}/api/agent/blinkora-workspace.zip" \
-  -o blinkora-workspace.zip
+  -o /tmp/blinkora-workspace.zip
+unzip -oq /tmp/blinkora-workspace.zip -d .agents/skills
+```
+
+完整包包含 `SKILL.md`、`references/mcp-guide.md` 和
+`references/mcp-sse-python-client.md`。只需要读取主 Skill 时，可以直接请求：
+
+```bash
+curl -fsSL \
+  -H "Authorization: Bearer ${BLINKORA_AGENT_TOKEN}" \
+  "${BLINKORA_BASE_URL}/api/agent/blinkora-workspace/SKILL.md"
 ```
 
 只读查看在线指南：
@@ -162,6 +163,27 @@ curl -fsSL \
   -H "Authorization: Bearer ${BLINKORA_AGENT_TOKEN}" \
   "${BLINKORA_BASE_URL}/api/agent/mcp-guide.md"
 ```
+
+## Skill 唯一来源与同步
+
+`.agents/skills/blinkora-workspace/` 是 Blinkora Workspace Skill 的唯一可编辑来源。
+服务端在线指南、单文件 Skill 和下载 zip 都在 Rust 编译时直接读取这份目录，不能再各自维护一份手写副本。
+
+本机的这些目录都是分发目标，不是新的来源：
+
+- `~/.hermes/skills/blinkora-workspace/`
+- `~/.agents/skills/blinkora-workspace/`
+- `~/.codex/skills/blinkora-workspace/`
+- `/Volumes/SSD/skills/blinkora-workspace/`
+
+改动流程：
+
+1. 先修改仓库里的唯一来源，并运行对应测试。
+2. 先预览同步差异：`bun run skill:sync -- --check`。
+3. 确认后执行：`bun run skill:sync -- --apply`。
+4. 运行 `hermes gateway restart`；正在进行的 Hermes 会话再执行 `/reset`，让它重新加载 Skill。
+
+如果 Hermes 日常使用中出现值得保留的局部改动，先把它人工合并回仓库来源，验证后再向外同步；不要把运行时目录或 SSD 备份目录直接当作反向覆盖源。
 
 ## 烟测重点
 
@@ -184,6 +206,6 @@ bun run smoke:agent
 - 用工作区令牌调用 `workspaces.list` / `config.list` 返回 `403`。
 - 用工作区令牌能读取绑定 Workspace 的附件文件，但不能调用 `/api/file/upload`、`/api/file/delete` 或 `attachments.*` 管理接口。
 - 用工作区令牌连接 MCP 后，工具列表只包含 workspace context、note、reference、comment、tag tree、operation log 相关工具。
-- `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree`、`listOperationLogs` 主路径可用。
+- `getWorkspaceContext`、`searchBlinkora`、`getBlinkora`、`upsertBlinkora`、`updateBlinkora`、`listReferences`、`addReference`、`removeReference`、`setReferences`、`listComments`、`createComment`、`updateComment`、`listTagTree`、`cleanupOrphanTags`、`listOperationLogs` 主路径可用。
 - `listOperationLogs` 支持 `afterId`、`actorType`、`noteTypes`、`actions`、`changedField` 等筛选，默认操作日志设置只记录笔记类型 `1`。
-- `/api/agent/mcp-guide.md`、`/api/agent/blinkora-workspace/SKILL.md`、`/api/agent/blinkora-workspace.zip` 能被任意有效工作区令牌读取或下载。
+- `/api/agent/mcp-guide.md`、`/api/agent/blinkora-workspace/SKILL.md`、`/api/agent/blinkora-workspace.zip` 能被任意有效工作区令牌读取或下载；zip 同时包含主 Skill 和两个 reference 文件。
