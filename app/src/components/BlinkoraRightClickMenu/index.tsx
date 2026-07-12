@@ -31,6 +31,10 @@ const truncateTitle = (title: string) => {
   return `${characters.slice(0, AGENT_DISCUSSION_TITLE_MAX_LENGTH).join('').trimEnd()}...`;
 };
 
+const escapeMarkdownLinkLabel = (value: string) => value
+  .replace(/[\r\n]+/g, ' ')
+  .replace(/([\\\[\]])/g, '\\$1');
+
 const toIsoString = (value?: string | Date | null) => {
   if (!value) return null;
   const date = value instanceof Date ? value : new Date(value);
@@ -323,8 +327,8 @@ const handleAgentDiscussion = async () => {
   )
   const content = i18n.t('agent-discussion-copy-template', {
     id: note.id,
-    title,
-    workspace: workspaceStore.currentWorkspace?.name || i18n.t('workspace'),
+    title: escapeMarkdownLinkLabel(title),
+    workspace: escapeMarkdownLinkLabel(workspaceStore.currentWorkspace?.name || i18n.t('workspace')),
     url: getBlinkoraEndpoint(`/detail?id=${note.id}`)
   })
 

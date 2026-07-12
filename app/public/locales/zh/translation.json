@@ -292,7 +292,7 @@
   "deselect-all": "取消全选",
   "agent-discussion": "与 Agent 讨论",
   "agent-discussion-copied": "已复制 Agent 讨论引用",
-  "agent-discussion-copy-template": "请和我讨论这张 Blinkora 卡片：\n\n**#{{id}} · {{title}}**\n工作区：{{workspace}}\n链接：{{url}}\n\n请通过 Blinkora MCP 读取最新内容。先讨论，不要修改；等我明确说“写回”后再更新。",
+  "agent-discussion-copy-template": "[{{workspace}} · #{{id}} · {{title}}]({{url}})",
   "insert-before": "插入内容前",
   "insert-after": "插入内容后",
   "update-name": "更新名称",

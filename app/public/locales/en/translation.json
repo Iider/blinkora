@@ -297,7 +297,7 @@
   "deselect-all": "Deselect All",
   "agent-discussion": "Discuss with Agent",
   "agent-discussion-copied": "Agent discussion reference copied",
-  "agent-discussion-copy-template": "Please discuss this Blinkora card with me:\n\n**#{{id}} · {{title}}**\nWorkspace: {{workspace}}\nLink: {{url}}\n\nRead the latest content through Blinkora MCP. Discuss it first without making changes; update it only after I explicitly say \"write back\".",
+  "agent-discussion-copy-template": "[{{workspace}} · #{{id}} · {{title}}]({{url}})",
   "custom-icon": "Custom Icon",
   "preview-mode": "Preview Mode",
   "source-code": "Source Code",
