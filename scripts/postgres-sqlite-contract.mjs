@@ -364,6 +364,115 @@ async function openMcpTools(base, token) {
   }
 }
 
+function notesFrom(response, label) {
+  if (response.status !== 200) {
+    fail(`${label} returned ${response.status}`, response.json || response.text);
+  }
+  const notes = resultData(response);
+  if (!Array.isArray(notes)) {
+    fail(`${label} did not return a note array`, response.json || response.text);
+  }
+  return notes;
+}
+
+function searchMembership(response, ids, label) {
+  const matches = new Set(notesFrom(response, label).map((note) => note.id));
+  return {
+    matching: matches.has(ids.matching),
+    decoy: matches.has(ids.decoy),
+  };
+}
+
+async function createSearchBoundaryFixture(base, token) {
+  let matchingId;
+  try {
+    const matching = await trpc(
+      base,
+      'notes.upsert',
+      {
+        content: `Search boundary MiXeDCaSe 中文 🔥 @mention %percent _under ${runId}`,
+        type: 0,
+      },
+      token,
+    );
+    matchingId = resultData(matching)?.id;
+    const decoy = await trpc(
+      base,
+      'notes.upsert',
+      { content: `Search boundary decoy ${runId}`, type: 0 },
+      token,
+    );
+    const decoyId = resultData(decoy)?.id;
+    if (!Number.isInteger(matchingId) || !Number.isInteger(decoyId)) {
+      fail(`could not create search boundary fixture for ${base}`, {
+        matching: matching.json || matching.text,
+        decoy: decoy.json || decoy.text,
+      });
+    }
+    return { matching: matchingId, decoy: decoyId };
+  } catch (error) {
+    if (Number.isInteger(matchingId)) {
+      await deleteNotes(base, token, [matchingId]);
+    }
+    throw error;
+  }
+}
+
+async function deleteNotes(base, token, ids) {
+  const response = await trpc(base, 'notes.deleteMany', { ids }, token);
+  if (response.status !== 200 || resultData(response) !== true) {
+    fail(`could not delete temporary contract notes for ${base}`, response.json || response.text);
+  }
+}
+
+async function deleteSearchBoundaryFixture(base, token, ids) {
+  if (ids) await deleteNotes(base, token, [ids.matching, ids.decoy]);
+}
+
+async function compareSearchBoundaries(postgresToken, sqliteToken) {
+  let postgresIds;
+  let sqliteIds;
+
+  const probes = [
+    ['ASCII case-insensitive', `mixedcase ${runId}`],
+    ['Chinese substring', `中文 ${runId}`],
+    ['Emoji substring', `🔥 ${runId}`],
+    ['at-sign', `@mention ${runId}`],
+    ['percent wildcard', `%${runId}`],
+    ['underscore wildcard', `_${runId}`],
+  ];
+
+  try {
+    postgresIds = await createSearchBoundaryFixture(postgresBase, postgresToken);
+    sqliteIds = await createSearchBoundaryFixture(sqliteBase, sqliteToken);
+
+    const comparisons = [];
+    for (const [name, searchText] of probes) {
+      const [postgres, sqlite] = await Promise.all([
+        trpc(postgresBase, 'notes.list', { page: 1, size: 50, searchText }, postgresToken),
+        trpc(sqliteBase, 'notes.list', { page: 1, size: 50, searchText }, sqliteToken),
+      ]);
+      const postgresMembership = searchMembership(postgres, postgresIds, `PostgreSQL ${name} search`);
+      const sqliteMembership = searchMembership(sqlite, sqliteIds, `SQLite ${name} search`);
+      if (!sameValue(postgresMembership, sqliteMembership)) {
+        fail(`${name} search membership differs`, { searchText, postgresMembership, sqliteMembership });
+      }
+      comparisons.push({ name, searchText, membership: postgresMembership });
+    }
+
+    const ascii = comparisons.find((item) => item.name === 'ASCII case-insensitive');
+    if (!ascii?.membership.matching || ascii.membership.decoy) {
+      fail('ASCII case-insensitive search no longer matches only the intended note', ascii);
+    }
+    return comparisons;
+  } finally {
+    await Promise.all([
+      deleteSearchBoundaryFixture(postgresBase, postgresToken, postgresIds),
+      deleteSearchBoundaryFixture(sqliteBase, sqliteToken, sqliteIds),
+    ]);
+  }
+}
+
 async function main() {
   const procedures = await registeredProcedures();
   if (procedures.length !== 74) {
@@ -445,6 +554,8 @@ async function main() {
   ]);
   if (!sameValue(postgresMcp, sqliteMcp)) fail('MCP tools/list contract differs');
 
+  const searchBoundaries = await compareSearchBoundaries(postgresToken, sqliteToken);
+
   const report = {
     ok: true,
     procedures: coverage,
@@ -454,6 +565,7 @@ async function main() {
     matchingErrors: coverage.filter((item) => item.comparison === 'error').length,
     rest: ['health', 'auth profile', ...(attachment ? ['attachment download'] : [])],
     mcp: ['tools/list'],
+    searchBoundaries,
   };
   if (reportPath) await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify(report));
