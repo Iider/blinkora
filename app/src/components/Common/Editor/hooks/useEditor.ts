@@ -416,9 +416,7 @@ export const useEditorInit = (
       async ctrlEnter(md) {
         await store.handleSend()
       },
-      customWysiwygToolbar: (type: TWYSISYGToolbar, element: HTMLElement) => {
-        console.log(type, element)
-      },
+      customWysiwygToolbar: () => {},
       placeholder: t('i-have-a-new-idea'),
       i18n: {
         ...i18nEditor(t)

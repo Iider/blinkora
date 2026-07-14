@@ -516,6 +516,9 @@ export const tabler: IconCollection = {
     "chevron-right": {
       "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"m9 6l6 6l-6 6\"/>"
     },
+    "chevron-up": {
+      "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"m6 15l6-6l6 6\"/>"
+    },
     "upload": {
       "body": "<path fill=\"none\" stroke=\"currentColor\" stroke-linecap=\"round\" stroke-linejoin=\"round\" stroke-width=\"2\" d=\"M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M7 9l5-5l5 5m-5-5v12\"/>"
     },
@@ -859,6 +862,9 @@ export const mdi: IconCollection = {
     },
     "check-circle": {
       "body": "<path fill=\"currentColor\" d=\"M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10s10-4.5 10-10S17.5 2 12 2m-2 15l-5-5l1.41-1.41L10 14.17l7.59-7.59L19 8z\"/>"
+    },
+    "circle-outline": {
+      "body": "<path fill=\"currentColor\" d=\"M12 20a8 8 0 0 1-8-8a8 8 0 0 1 8-8a8 8 0 0 1 8 8a8 8 0 0 1-8 8m0-18A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2\"/>"
     },
     "alert-circle": {
       "body": "<path fill=\"currentColor\" d=\"M13 13h-2V7h2m0 10h-2v-2h2M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10a10 10 0 0 0 10-10A10 10 0 0 0 12 2\"/>"
@@ -1411,7 +1417,6 @@ const getIconData = (iconName: string) => {
   const collection = collections[collectionKey];
   
   if (!collection || !collection.icons || !collection.icons[name]) {
-    console.warn(`Icon "${name}" not found in "${prefix}" collection`);
     return null;
   }
   
@@ -1440,7 +1445,6 @@ export const Icon = ({
   
   // If local icon not found, use Iconify as fallback
   if (!iconData) {
-    console.warn(`Local icon not found: ${icon}, using Iconify fallback`);
     return <IconifyIcon 
       icon={icon}
       width={width}

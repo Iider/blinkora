@@ -34,7 +34,9 @@ const ALWAYS_INCLUDE_ICONS = [
   // Tags and comments can persist their icon values in user data.
   'ri:hashtag',
   'mingcute:comment-line',
-  'material-symbols:add'
+  'material-symbols:add',
+  'mdi:circle-outline',
+  'tabler:chevron-up'
 ];
 
 // Recursively scan directories for files
@@ -224,7 +226,6 @@ ${Object.keys(iconsByCollection).map(c => `    ${c.replace(/-/g, '_')},`).join('
   const collection = collections[collectionKey];
   
   if (!collection || !collection.icons || !collection.icons[name]) {
-    console.warn(\`Icon "\${name}" not found in "\${prefix}" collection\`);
     return null;
   }
   
@@ -253,7 +254,6 @@ export const Icon = ({
   
   // If local icon not found, use Iconify as fallback
   if (!iconData) {
-    console.warn(\`Local icon not found: \${icon}, using Iconify fallback\`);
     return <IconifyIcon 
       icon={icon}
       width={width}

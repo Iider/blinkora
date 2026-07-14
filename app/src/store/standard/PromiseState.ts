@@ -238,7 +238,6 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
 
     try {
       if (this.loadingLock && this.loading.value == true) {
-        console.warn('loadingLock', this.loading.value);
         return
       };
       this.loading.setValue(true);

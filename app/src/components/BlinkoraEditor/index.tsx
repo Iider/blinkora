@@ -174,7 +174,6 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
       }
       onSend={async ({ content, files, references, noteType, metadata }) => {
         if (isCreateMode) {
-          console.log("createMode", files, references, noteType, metadata)
           //@ts-ignore
           await blinkora.upsertNote.call({ type: noteType, references, refresh: false, content, attachments: files.map(i => { return { name: i.name, path: i.uploadPath, size: i.size, type: i.type } }), metadata })
           blinkora.createAttachmentsStorage.clear()
