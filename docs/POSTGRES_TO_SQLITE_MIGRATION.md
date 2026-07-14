@@ -44,7 +44,16 @@ BLINKORA_CONTRACT_REPORT_PATH='/受限目录/contract.json' \
 bun run test:postgres-sqlite-contract
 ```
 
-脚本从当前服务端注册表读取全部 74 个 procedure，拒绝数量漂移；确定性读接口逐值比较，原本无排序约束的列表按成员集合比较，随机和写入接口比较 HTTP/tRPC envelope、业务错误和返回结构。它还比较 `/health`、认证资料、同一路径附件内容和 MCP `tools/list`。
+脚本从当前服务端注册表读取全部 74 个 procedure，拒绝数量漂移；确定性读接口逐值比较，原本无排序约束的列表按成员集合比较，随机和写入接口比较 HTTP/tRPC envelope、业务错误和返回结构。
+
+它还会对照以下外部接口：
+
+- `/health`、已有附件的同一路径内容；
+- `/api/auth` 的登录（成功和错误密码）、资料（有/无认证）、token 校验（有效/无效）、退出，以及既有单账号安装的注册拒绝；
+- `/api/file` 的无效请求、上传、读取和删除，及 `/api/backup/import` 的无效请求；
+- MCP 的未认证 SSE/消息端点，以及已认证的 `initialize`、`tools/list`、Workspace 上下文、笔记详情、搜索、标签树和操作日志调用。
+
+两端各自写入后产生的 token、附件随机路径与即时 UTC 时间仅按明确规则归一化；MCP 同时返回的 JSON 文本镜像也按同一规则比较。除此之外的字段和用户可见错误文案均逐值对照。空库注册成功、有效备份导入和完整 Agent 写入仍由隔离 `smoke:rust`、`smoke:agent` 覆盖。
 
 脚本会在两端各创建并清理两条临时笔记，比较 ASCII 大小写、中文、Emoji、`@`、`%` 与 `_` 搜索的目标/非目标成员关系；`%` 和 `_` 按 PostgreSQL 既有通配符语义对照，不在迁移时改成新规则。报告不写入 token 或密码。
 
