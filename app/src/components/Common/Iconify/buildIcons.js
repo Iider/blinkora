@@ -25,7 +25,16 @@ const ALWAYS_INCLUDE_ICONS = [
   'hugeicons:delete-02',
   'hugeicons:plug-socket',
   'hugeicons:settings-01',
-  'mingcute:hashtag-line'
+  'mingcute:hashtag-line',
+  // These fallbacks are selected dynamically and cannot be found by the
+  // static source scan below.
+  'tabler:briefcase-2',
+  'mdi:chevron-left',
+  'mdi:chevron-right',
+  // Tags and comments can persist their icon values in user data.
+  'ri:hashtag',
+  'mingcute:comment-line',
+  'material-symbols:add'
 ];
 
 // Recursively scan directories for files
@@ -289,4 +298,4 @@ export default Icon;
 }
 
 // Execute extraction
-extractIcons(); 
+extractIcons();

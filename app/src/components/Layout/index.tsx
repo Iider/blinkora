@@ -73,13 +73,15 @@ export const CommonLayout = observer(({ children, header }: { children?: React.R
 
   return (
     <div className={`flex w-full h-mobile-full overflow-x-hidden`} id="outer-container">
-      <Menu style={{
-        bmMenuWrap: {
-          transition: 'all .3s'
-        }
-      }} disableAutoFocus onClose={() => setisOpen(false)} onOpen={setisOpen} isOpen={isOpen} pageWrapId={'page-wrap'} outerContainerId={'outer-container'}>
-        <Sidebar onItemClick={() => setisOpen(false)} />
-      </Menu>
+      {!isPc && (
+        <Menu style={{
+          bmMenuWrap: {
+            transition: 'all .3s'
+          }
+        }} disableAutoFocus onClose={() => setisOpen(false)} onOpen={setisOpen} isOpen={isOpen} pageWrapId={'page-wrap'} outerContainerId={'outer-container'}>
+          <Sidebar onItemClick={() => setisOpen(false)} />
+        </Menu>
+      )}
 
       {isPc && <Sidebar />}
 
