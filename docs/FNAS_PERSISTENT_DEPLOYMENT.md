@@ -48,6 +48,28 @@ docker compose ps
 
 ## 发布更新
 
+### 仅前端改动
+
+只改 `app/` 时不需要构建或替换 Linux Rust 二进制，也不需要替换 schema。开发机执行：
+
+```bash
+bun run build:web --force
+```
+
+只把 `dist/public/` 同步到远端同一文件系统内的暂存目录。替换前备份
+`local/public` 到 `backups/release-<时间>-<说明>/public`，确认暂存目录有
+`index.html` 后再替换 `local/public`。随后重启并从外部入口确认：
+
+```bash
+sudo systemctl restart blinkora.service
+curl -fsS http://127.0.0.1:6676/health
+curl -fsS http://192.168.2.25:6676/ | grep -o 'assets/index-[^" ]*\.js'
+```
+
+入口 HTML 中的 `index-*.js` 应与本机 `dist/public/index.html` 引用的文件名一致。
+
+### 后端或 schema 改动
+
 开发机先构建 Linux x86_64 release：
 
 ```bash
@@ -55,7 +77,7 @@ TARGETARCH=amd64 DOCKER_DEFAULT_PLATFORM=linux/amd64 \
 BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
 ```
 
-发布只替换这三类产物：
+只替换下列 release 产物：
 
 - `release/rust/blinkora-server`
 - `release/rust/public/`
