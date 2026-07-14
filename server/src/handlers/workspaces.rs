@@ -47,7 +47,7 @@ fn create(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let is_default = count == 0;
         let row = sqlx::query(
             r#"INSERT INTO workspaces (name, description, icon, color, "accountId", "isDefault", "updatedAt")
-               VALUES ($1,$2,$3,$4,$5,$6,NOW())
+               VALUES ($1,$2,$3,$4,$5,$6,blinkora_now())
                RETURNING id, name, description, icon, color, "accountId", "isDefault", "createdAt", "updatedAt""#,
         )
         .bind(name)
@@ -80,7 +80,7 @@ fn update(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                description=COALESCE($2, description),
                icon=COALESCE($3, icon),
                color=COALESCE($4, color),
-               "updatedAt"=NOW()
+               "updatedAt"=blinkora_now()
                WHERE id=$5 AND "accountId"=$6
                RETURNING id, name, description, icon, color, "accountId", "isDefault", "createdAt", "updatedAt""#,
         )
@@ -159,11 +159,11 @@ fn set_default(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         if exists.is_none() {
             bail!("workspace not found");
         }
-        sqlx::query(r#"UPDATE workspaces SET "isDefault"=false, "updatedAt"=NOW() WHERE "accountId"=$1"#)
+        sqlx::query(r#"UPDATE workspaces SET "isDefault"=false, "updatedAt"=blinkora_now() WHERE "accountId"=$1"#)
             .bind(user.id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query(r#"UPDATE workspaces SET "isDefault"=true, "updatedAt"=NOW() WHERE id=$1 AND "accountId"=$2"#)
+        sqlx::query(r#"UPDATE workspaces SET "isDefault"=true, "updatedAt"=blinkora_now() WHERE id=$1 AND "accountId"=$2"#)
             .bind(id)
             .bind(user.id)
             .execute(&mut *tx)
@@ -198,7 +198,7 @@ async fn ensure_default_workspace(ctx: &ProcedureContext, user_id: i32) -> anyho
     if count > 0 {
         return Ok(());
     }
-    sqlx::query(r#"INSERT INTO workspaces (name, "accountId", "isDefault", "updatedAt") VALUES ($1,$2,true,NOW())"#)
+    sqlx::query(r#"INSERT INTO workspaces (name, "accountId", "isDefault", "updatedAt") VALUES ($1,$2,true,blinkora_now())"#)
         .bind("默认工作区")
         .bind(user_id)
         .execute(ctx.state.pool())
@@ -206,7 +206,7 @@ async fn ensure_default_workspace(ctx: &ProcedureContext, user_id: i32) -> anyho
     Ok(())
 }
 
-fn workspace_json(row: sqlx::postgres::PgRow) -> Value {
+fn workspace_json(row: sqlx::sqlite::SqliteRow) -> Value {
     json!({
         "id": row.get::<i32, _>("id"),
         "name": row.get::<String, _>("name"),

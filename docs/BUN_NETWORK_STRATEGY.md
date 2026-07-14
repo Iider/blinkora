@@ -74,7 +74,7 @@ cd docker
 docker compose up -d
 ```
 
-这条路径中，Docker build 只需要拉取 Debian slim 基础镜像并复制 `docker/release/rust` 中的二进制、静态资源与 `db/schema.sql`，不会执行 `cargo build`，也不会访问 npm/Bun registry 或 Rust crate 下载链路。最终运行容器不包含 Node、Bun、npm、cargo、Go 或 Rust 编译器。
+这条路径中，Docker build 只需要拉取 Debian slim 基础镜像并复制 `docker/release/rust` 中的二进制、静态资源与 `db/schema.sqlite.sql`，不会执行 `cargo build`，也不会访问 npm/Bun registry 或 Rust crate 下载链路。最终运行容器不包含 Node、Bun、npm、cargo、Go 或 Rust 编译器。
 
 如果本机不能直接交叉编译 Linux Rust 二进制，可在开发机或 CI 临时使用 Docker builder 生成 release 产物：
 
@@ -92,7 +92,7 @@ docker build -f docker/dockerfile.rust.fullbuild -t blinkora-web:latest .
 
 ## 本机持久化部署
 
-个人 macOS 长期使用可以只把 PostgreSQL 放在 Docker，Rust Web 服务跑在本机：
+个人 macOS 长期使用可直接运行 Rust Web 服务：
 
 ```bash
 bun run deploy:local install

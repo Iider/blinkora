@@ -1,12 +1,12 @@
 use crate::app::AppState;
 use crate::trpc::ProcedureHandler;
 use axum::routing::get;
-use axum::{Json, Router};
-use serde_json::{json, Value};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, Json, Router};
+use serde_json::json;
 use std::collections::HashMap;
 
-pub mod agent_tokens;
 pub mod agent_resources;
+pub mod agent_tokens;
 pub mod attachments;
 pub mod auth;
 pub mod backup;
@@ -36,12 +36,26 @@ pub fn router() -> Router<AppState> {
         .route("/messages", axum::routing::post(mcp::messages))
 }
 
-pub async fn health() -> Json<Value> {
-    Json(json!({ "status": "ok" }))
+pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    match crate::db::probe(state.pool()).await {
+        Ok(()) => (StatusCode::OK, Json(json!({ "status": "ok" }))).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "health probe failed");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "status": "error" })),
+            )
+                .into_response()
+        }
+    }
 }
 
-pub async fn health_head() -> &'static str {
-    ""
+pub async fn health_head(State(state): State<AppState>) -> StatusCode {
+    if crate::db::probe(state.pool()).await.is_ok() {
+        StatusCode::OK
+    } else {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
 }
 
 pub fn register_procedures(registry: &mut HashMap<&'static str, ProcedureHandler>) {

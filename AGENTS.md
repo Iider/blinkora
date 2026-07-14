@@ -4,13 +4,13 @@
 
 Blinkora is a Docker-first Web-only private note and memory base. The target product is a clean single-user foundation for long-term notes, wiki-style memory, tags, attachments, references, daily review, search, export, and private annotations.
 
-Blinkora is shipped as a browser app served by the Rust backend. Default deployment is full Docker. Personal macOS machines may use the local persistent mode: Docker only runs PostgreSQL, while the Rust Web service runs locally through `launchd`. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
+Blinkora is shipped as a browser app served by the Rust backend. Default deployment is one Docker Web container; personal macOS machines may run the same Rust service locally through `launchd`, without Docker. SQLite and attachments stay under `DATA_DIR`. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
 
 ## Tech Stack
 
 - **Frontend**: React 18, TypeScript, Vite, TailwindCSS, HeroUI
-- **Primary Backend**: Rust, Axum, SQLx, PostgreSQL
-- **Database**: PostgreSQL
+- **Primary Backend**: Rust, Axum, SQLx, SQLite
+- **Database**: SQLite (single service process, local filesystem only)
 - **Package Manager**: Bun (v1.2.8+)
 - **Build Tool**: Turbo
 - **AI Scope**: No built-in RAG, embedding, semantic search, or conversational AI runtime. Workspace Agent/MCP is only an external access path for authorized agents to read and write Blinkora data.
@@ -22,9 +22,9 @@ blinkora/
 ├── app/             # Web frontend React application
 │   └── src/         # React source code
 ├── server/          # Primary Rust backend
-├── db/              # First-release PostgreSQL schema
+├── db/              # Runtime SQLite schema
 ├── shared/          # Shared utilities and types
-├── docker/          # Rust Docker deployment and PostgreSQL compose entry
+├── docker/          # Rust Docker deployment
 └── docs/            # Architecture notes, tasks, and records
 ```
 
@@ -78,7 +78,6 @@ bun run verify:rust
 Root `.env` values for local Bun commands:
 
 ```env
-DATABASE_URL=postgresql://postgres:mysecretpassword@localhost:55433/postgres
 BLINKORA_SECRET=your-secret-key
 ```
 
@@ -97,8 +96,7 @@ docker compose up -d
 The default full Docker runtime identity is:
 
 - web container: `blinkora-web`
-- database container: `blinkora-db`
-- database data path: `docker/data/postgres` on the host, mounted to `/var/lib/postgresql/data`
+- SQLite and attachments: `docker/data/blinkora` on the host, mounted to `/app/.blinkora`
 - local URL: `http://localhost:6676`
 
 Personal macOS local persistent deployment:
@@ -107,7 +105,7 @@ Personal macOS local persistent deployment:
 bun run deploy:local install
 ```
 
-This mode keeps only `blinkora-db` in Docker, runs the Rust Web service through `launchd` as `com.blinkora.local`, stores app data in `~/.blinkora/local/data`, and still serves `http://localhost:6676`.
+This mode runs the Rust Web service through `launchd` as `com.blinkora.local`, stores SQLite and attachments in `~/.blinkora/local/data`, and serves `http://localhost:6676`.
 
 ## Ports
 
@@ -120,5 +118,4 @@ This mode keeps only `blinkora-db` in Docker, runs the Rust Web service through 
 
 - Bun >= 1.0.0
 - Rust toolchain for `build:rust-release`, or Docker builder fallback
-- PostgreSQL
-- Docker for full runtime or local PostgreSQL
+- Docker for full runtime; no Docker is needed for local persistent deployment

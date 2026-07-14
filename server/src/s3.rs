@@ -104,7 +104,8 @@ pub fn normalize_endpoint(value: impl AsRef<str>) -> anyhow::Result<String> {
     } else {
         format!("https://{value}")
     };
-    let parsed = reqwest::Url::parse(&normalized).map_err(|_| anyhow!("Endpoint must be a valid URL"))?;
+    let parsed =
+        reqwest::Url::parse(&normalized).map_err(|_| anyhow!("Endpoint must be a valid URL"))?;
     let mut endpoint = parsed.to_string();
     if endpoint.ends_with('/') {
         endpoint.pop();
@@ -113,7 +114,11 @@ pub fn normalize_endpoint(value: impl AsRef<str>) -> anyhow::Result<String> {
 }
 
 pub fn object_key(config: &S3Config, file_name: &str) -> String {
-    format!("{}{}", config.custom_path, file_name.trim_start_matches('/'))
+    format!(
+        "{}{}",
+        config.custom_path,
+        file_name.trim_start_matches('/')
+    )
 }
 
 pub async fn validate_config(config: &S3Config) -> anyhow::Result<(String, bool)> {
@@ -125,14 +130,23 @@ pub async fn validate_config(config: &S3Config) -> anyhow::Result<(String, bool)
     };
     let key = object_key(
         config,
-        &format!(".blinkora-s3-validation-{}.txt", Utc::now().timestamp_millis()),
+        &format!(
+            ".blinkora-s3-validation-{}.txt",
+            Utc::now().timestamp_millis()
+        ),
     );
     let mut errors = Vec::new();
     for force_path_style in attempts {
         let mut next = config.clone();
         next.force_path_style = force_path_style;
         match async {
-            put_object(&next, &key, b"blinkora s3 validation", "text/plain; charset=utf-8").await?;
+            put_object(
+                &next,
+                &key,
+                b"blinkora s3 validation",
+                "text/plain; charset=utf-8",
+            )
+            .await?;
             let _ = get_object(&next, &key).await?;
             delete_object(&next, &key).await?;
             anyhow::Ok(())
@@ -142,14 +156,26 @@ pub async fn validate_config(config: &S3Config) -> anyhow::Result<(String, bool)
             Ok(()) => return Ok((key, force_path_style)),
             Err(err) => {
                 let _ = delete_object(&next, &key).await;
-                errors.push(format!("{}: {err}", if force_path_style { "path-style" } else { "virtual-hosted" }));
+                errors.push(format!(
+                    "{}: {err}",
+                    if force_path_style {
+                        "path-style"
+                    } else {
+                        "virtual-hosted"
+                    }
+                ));
             }
         }
     }
     bail!("S3 validation failed. Tried {}", errors.join("; "));
 }
 
-pub async fn put_object(config: &S3Config, key: &str, body: &[u8], content_type: &str) -> anyhow::Result<()> {
+pub async fn put_object(
+    config: &S3Config,
+    key: &str,
+    body: &[u8],
+    content_type: &str,
+) -> anyhow::Result<()> {
     validate_required(config)?;
     let body_hash = hex::encode(Sha256::digest(body));
     let mut headers = vec![
@@ -171,7 +197,11 @@ pub async fn get_object(config: &S3Config, key: &str) -> anyhow::Result<Vec<u8>>
     let body_hash = "UNSIGNED-PAYLOAD".to_string();
     let mut headers = vec![("x-amz-content-sha256".to_string(), body_hash.clone())];
     let url = signed_url_and_headers(config, Method::GET, key, "", &body_hash, &mut headers)?;
-    let response = Client::new().get(url).headers(header_map(headers)?).send().await?;
+    let response = Client::new()
+        .get(url)
+        .headers(header_map(headers)?)
+        .send()
+        .await?;
     let status = response.status();
     if !status.is_success() {
         bail!("get object failed with HTTP {status}");
@@ -184,7 +214,11 @@ pub async fn delete_object(config: &S3Config, key: &str) -> anyhow::Result<()> {
     let body_hash = hex::encode(Sha256::digest([]));
     let mut headers = vec![("x-amz-content-sha256".to_string(), body_hash.clone())];
     let url = signed_url_and_headers(config, Method::DELETE, key, "", &body_hash, &mut headers)?;
-    let response = Client::new().delete(url).headers(header_map(headers)?).send().await?;
+    let response = Client::new()
+        .delete(url)
+        .headers(header_map(headers)?)
+        .send()
+        .await?;
     ensure_success(response.status(), "delete object").await
 }
 
@@ -197,7 +231,11 @@ pub async fn copy_object(config: &S3Config, old_key: &str, new_key: &str) -> any
         ("x-amz-copy-source".to_string(), copy_source),
     ];
     let url = signed_url_and_headers(config, Method::PUT, new_key, "", &body_hash, &mut headers)?;
-    let response = Client::new().put(url).headers(header_map(headers)?).send().await?;
+    let response = Client::new()
+        .put(url)
+        .headers(header_map(headers)?)
+        .send()
+        .await?;
     ensure_success(response.status(), "copy object").await
 }
 
@@ -217,7 +255,11 @@ fn signed_url_and_headers(
             .nth(1)
             .ok_or_else(|| anyhow!("Endpoint must be a valid URL"))?
             .to_string();
-        let uri = format!("/{}/{}", percent_encode_segment(&config.bucket), percent_encode_key(key));
+        let uri = format!(
+            "/{}/{}",
+            percent_encode_segment(&config.bucket),
+            percent_encode_key(key)
+        );
         (host, uri.clone(), format!("{endpoint_url}{uri}"))
     } else {
         let endpoint_url = endpoint.trim_end_matches('/');
@@ -241,7 +283,11 @@ fn signed_url_and_headers(
     headers.push(("x-amz-date".to_string(), amz_date.clone()));
     headers.sort_by(|left, right| left.0.cmp(&right.0));
 
-    let signed_headers = headers.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>().join(";");
+    let signed_headers = headers
+        .iter()
+        .map(|(key, _)| key.as_str())
+        .collect::<Vec<_>>()
+        .join(";");
     let canonical_headers = headers
         .iter()
         .map(|(key, value)| format!("{key}:{}\n", value.trim()))
@@ -328,11 +374,17 @@ fn hmac_sha256(key: &[u8], data: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 fn percent_encode_key(key: &str) -> String {
-    key.split('/').map(percent_encode_segment).collect::<Vec<_>>().join("/")
+    key.split('/')
+        .map(percent_encode_segment)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn percent_encode_path(path: &str) -> String {
-    path.split('/').map(percent_encode_segment).collect::<Vec<_>>().join("/")
+    path.split('/')
+        .map(percent_encode_segment)
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn percent_encode_segment(segment: &str) -> String {

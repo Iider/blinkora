@@ -21,4 +21,21 @@ function run(name, command, args, env = {}) {
 
 run('rust smoke script syntax', 'node', ['--check', 'scripts/rust-smoke.mjs']);
 run('workspace agent smoke script syntax', 'node', ['--check', 'scripts/workspace-agent-smoke.mjs']);
+run('SQLite concurrency script syntax', 'node', ['--check', 'scripts/sqlite-concurrency.mjs']);
+run('SQLite bulk script syntax', 'node', ['--check', 'scripts/sqlite-bulk.mjs']);
+run('SQLite backup shell syntax', 'bash', ['-n', 'scripts/sqlite-backup.sh']);
+run('SQLite restore shell syntax', 'bash', ['-n', 'scripts/sqlite-restore.sh']);
 run('rust unit tests', 'cargo', ['test', '--manifest-path', 'server/Cargo.toml']);
+run('PostgreSQL migration tool tests', 'cargo', ['test', '--manifest-path', 'tools/postgres-to-sqlite/Cargo.toml']);
+
+const runtimeTree = spawnSync('cargo', ['tree', '--manifest-path', 'server/Cargo.toml', '-e', 'normal'], {
+  encoding: 'utf8',
+  env: baseEnv,
+});
+if (runtimeTree.status !== 0) {
+  process.exit(runtimeTree.status ?? 1);
+}
+if (/sqlx-postgres|tokio-postgres/i.test(`${runtimeTree.stdout}\n${runtimeTree.stderr}`)) {
+  console.error('SQLite runtime dependency graph unexpectedly contains a PostgreSQL driver');
+  process.exit(1);
+}

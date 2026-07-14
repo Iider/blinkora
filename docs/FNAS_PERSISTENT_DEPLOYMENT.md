@@ -1,105 +1,39 @@
 # 飞牛常驻部署
 
-Blinkora 当前的常驻服务运行在飞牛服务器；当前 Mac 只用于开发、构建和验证，不作为正式服务。
-
-## 当前入口
-
-- Web：`http://192.168.2.25:6676`
-- 健康检查：`curl -fsS http://192.168.2.25:6676/health`
+Blinkora 在飞牛上以单个 Rust 服务运行，SQLite 与附件使用本地磁盘。SQLite 不支持多副本服务、NFS 或 SMB 数据目录。
 
 ## 运行结构
 
-部署根目录：`/vol1/1000/docker/blinkora`。
-
-- Blinkora Web/Rust：systemd `blinkora.service`
-- PostgreSQL：Docker Compose 的 `db` 服务，由 `blinkora-db.service` 拉起
+- 服务：systemd `blinkora.service`
 - Rust 二进制：`/vol1/1000/docker/blinkora/local/bin/blinkora-server`
 - 前端静态资源：`/vol1/1000/docker/blinkora/local/public`
-- schema：`/vol1/1000/docker/blinkora/local/db/schema.sql`
+- schema：`/vol1/1000/docker/blinkora/local/db/schema.sqlite.sql`
 - 运行配置：`/vol1/1000/docker/blinkora/local/blinkora.env`
-- 附件和应用运行数据：`/vol1/1000/docker/blinkora/data/app`
-- PostgreSQL 数据：`/vol1/1000/docker/blinkora/data/postgres`
-- Compose 目录：`/vol1/1000/docker/blinkora/compose`
+- SQLite 与附件：`/vol1/1000/docker/blinkora/data/app`
 - 发布备份：`/vol1/1000/docker/blinkora/backups`
 
-`blinkora.env` 含生产密钥，不要复制到文档、提交或命令历史。
+`blinkora.env` 和 SQLite 文件包含认证数据、令牌和存储凭据；目录应为 `0700`，数据库和备份文件应为 `0600`，不要复制到命令历史或提交记录。
 
 ## 日常检查
 
 ```bash
 systemctl status blinkora.service
-systemctl status blinkora-db.service
 curl -fsS http://127.0.0.1:6676/health
-```
-
-重启 Web 服务：
-
-```bash
-sudo systemctl restart blinkora.service
-systemctl is-active blinkora.service
-```
-
-查看数据库容器：
-
-```bash
-cd /vol1/1000/docker/blinkora/compose
-docker compose ps
+sqlite3 /vol1/1000/docker/blinkora/data/app/blinkora.sqlite3 'PRAGMA integrity_check;'
+sqlite3 /vol1/1000/docker/blinkora/data/app/blinkora.sqlite3 'SELECT COUNT(*) FROM pragma_foreign_key_check;'
 ```
 
 ## 发布更新
 
-### 仅前端改动
-
-只改 `app/` 时不需要构建或替换 Linux Rust 二进制，也不需要替换 schema。开发机执行：
-
-```bash
-bun run build:web --force
-```
-
-只把 `dist/public/` 同步到远端同一文件系统内的暂存目录。替换前备份
-`local/public` 到 `backups/release-<时间>-<说明>/public`，确认暂存目录有
-`index.html` 后再替换 `local/public`。随后重启并从外部入口确认：
-
-```bash
-sudo systemctl restart blinkora.service
-curl -fsS http://127.0.0.1:6676/health
-curl -fsS http://192.168.2.25:6676/ | grep -o 'assets/index-[^" ]*\.js'
-```
-
-入口 HTML 中的 `index-*.js` 应与本机 `dist/public/index.html` 引用的文件名一致。
-
-### 后端或 schema 改动
-
-开发机先构建 Linux x86_64 release：
+开发机生成 Linux release：
 
 ```bash
 TARGETARCH=amd64 DOCKER_DEFAULT_PLATFORM=linux/amd64 \
 BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
 ```
 
-只替换下列 release 产物：
+只替换 `release/rust/blinkora-server`、`release/rust/public/` 和 `release/rust/db/schema.sqlite.sql`。先将旧 release 放进同一文件系统内的发布备份，再原子替换并重启 `blinkora.service`。不要删除或重建数据目录。
 
-- `release/rust/blinkora-server`
-- `release/rust/public/`
-- `release/rust/db/schema.sql`
+## 物理备份
 
-远端操作应先把当前二进制、`public/` 和 schema 复制到
-`/vol1/1000/docker/blinkora/backups/release-<时间>-<说明>/`，再在同一文件系统内
-暂存并替换。不要删除或重建 `data/app`、`data/postgres`、`compose/` 或
-`local/blinkora.env`。
-
-替换后重启并确认：
-
-```bash
-sudo systemctl restart blinkora.service
-systemctl is-active blinkora.service
-curl -fsS http://127.0.0.1:6676/health
-```
-
-若发布异常，用同一个发布备份恢复二进制、`public/` 和 schema，再重启服务；数据库和附件
-数据不需要回滚。
-
-## 迁移基线
-
-生产数据已迁移到此飞牛目录。源主机保留为备份，不作为日常运行入口。当前 Mac 的本机常驻
-服务已停止并禁用；本机 Docker 数据仍保留，但不应拿它覆盖飞牛的生产数据。
+停止服务后，运行仓库内的 `scripts/sqlite-backup.sh --offline`，把 `DATA_DIR` 指向 `/vol1/1000/docker/blinkora/data/app`。恢复到空目录后，先完成健康检查、登录和附件读取 smoke，再替换正式数据目录。

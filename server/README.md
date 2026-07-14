@@ -8,7 +8,7 @@
 bun run dev:rust
 ```
 
-默认监听 `http://127.0.0.1:6677`，连接 `localhost:55433` 上的 Rust Docker PostgreSQL，使用 `dist/public` 作为静态资源目录。可覆盖 `DATABASE_URL`、`PUBLIC_PATH`、`DATA_DIR`、`PORT`。
+默认监听 `http://127.0.0.1:6677`，使用 `dist/public` 作为静态资源目录，并将 SQLite 文件与附件写入 `DATA_DIR`。可覆盖 `PUBLIC_PATH`、`DATA_DIR`、`PORT`。
 
 ## 构建和部署
 
@@ -18,19 +18,19 @@ cd docker
 docker compose up -d
 ```
 
-`docker/dockerfile.rust` 只复制 `docker/release/rust` 中的 Linux 二进制、前端静态资源和 `db/schema.sql`。runtime 镜像不包含 Node、Bun、npm、cargo、Go 或 Rust 编译器。
+`docker/dockerfile.rust` 只复制 `docker/release/rust` 中的 Linux 二进制、前端静态资源和 `db/schema.sqlite.sql`。runtime 镜像不包含 Node、Bun、npm、cargo、Go 或 Rust 编译器。
 
 如果本机无法交叉编译 Linux Rust 二进制，`bun run build:rust-release` 会回退到 Docker binary builder。`docker/dockerfile.rust.fullbuild` 仅用于排障或构建机。
 
 ## 本机持久化部署
 
-PostgreSQL 可以继续使用 Docker，Rust 服务跑在 macOS 本机：
+macOS 可直接运行 Rust 服务：
 
 ```bash
 bun run deploy:local install
 ```
 
-脚本会启动 Docker `db` 服务，停掉旧的 `web` 容器，构建本机二进制，并安装 `launchd` 服务。细节见 `docs/LOCAL_PERSISTENT_DEPLOYMENT.md`。
+脚本会构建本机二进制，并安装 `launchd` 服务。细节见 `docs/LOCAL_PERSISTENT_DEPLOYMENT.md`。
 
 常用检查：
 
@@ -39,11 +39,11 @@ bun run deploy:local status
 curl -I http://127.0.0.1:6676/
 ```
 
-本机持久化部署只需要 `blinkora-db` 容器。`blinkora-web` 不运行是正常的。
+本机持久化部署不需要 Docker。
 
 ## 数据库初始化
 
-Rust 后端启动时会检查 `accounts` 表是否存在。空库会执行 `SCHEMA_PATH` 指向的 `db/schema.sql`；已有库会跳过初始化。当前只维护单份首版 schema。
+Rust 后端启动时会检查 SQLite 的 schema 版本和必需表。空数据目录会执行 `SCHEMA_PATH` 指向的 `db/schema.sqlite.sql`；未知非空库、损坏库或版本过新都会拒绝启动，不会静默创建新库。
 
 ## Smoke
 

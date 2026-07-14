@@ -4,7 +4,6 @@ use std::env;
 #[derive(Clone, Debug)]
 pub struct Config {
     pub port: String,
-    pub database_url: String,
     pub auth_secret: String,
     pub node_env: String,
     pub public_path: String,
@@ -21,12 +20,11 @@ impl Config {
         }
         Self {
             port: env_var("PORT", "6676"),
-            database_url: env_var("DATABASE_URL", "postgresql://postgres:mysecretpassword@localhost:5432/postgres"),
             auth_secret,
             node_env,
             public_path: env_var("PUBLIC_PATH", "./public"),
             data_dir: env_var("DATA_DIR", "./data"),
-            schema_path: env_var("SCHEMA_PATH", "db/schema.sql"),
+            schema_path: env_var("SCHEMA_PATH", "db/schema.sqlite.sql"),
         }
     }
 
@@ -58,12 +56,11 @@ mod tests {
     fn rejects_placeholder_secret_in_production() {
         let cfg = Config {
             port: "6676".into(),
-            database_url: "postgresql://localhost/db".into(),
             auth_secret: "dev-only-insecure-secret".into(),
             node_env: "production".into(),
             public_path: "./public".into(),
             data_dir: "./data".into(),
-            schema_path: "db/schema.sql".into(),
+            schema_path: "db/schema.sqlite.sql".into(),
         };
         assert!(cfg.validate().is_err());
     }

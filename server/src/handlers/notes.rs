@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail};
 use futures::FutureExt;
 use regex::Regex;
 use serde_json::{json, Map, Value};
-use sqlx::{Postgres, QueryBuilder, Row};
+use sqlx::{QueryBuilder, Row, Sqlite};
 use std::collections::{HashMap, HashSet};
 
 pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
@@ -65,7 +65,7 @@ struct NoteSnapshot {
     is_reviewed: bool,
 }
 
-fn push_note_list_filters(query: &mut QueryBuilder<'_, Postgres>, filters: &NoteListFilters<'_>) {
+fn push_note_list_filters(query: &mut QueryBuilder<'_, Sqlite>, filters: &NoteListFilters<'_>) {
     query.push(r#"n."accountId"="#).push_bind(filters.user_id);
     query
         .push(r#" AND n."workspaceId"="#)
@@ -103,32 +103,32 @@ fn push_note_list_filters(query: &mut QueryBuilder<'_, Postgres>, filters: &Note
         query.push(r#" AND NOT EXISTS (SELECT 1 FROM "tagsToNote" ttn3 WHERE ttn3."noteId"=n.id)"#);
     }
     if let Some(metadata_filter) = filters.metadata_filter.clone() {
-        query.push(r#" AND COALESCE(n.metadata::jsonb, '{}'::jsonb) @> "#);
+        query.push(" AND blinkora_json_contains(n.metadata, ");
         query.push_bind(metadata_filter);
-        query.push("::jsonb");
+        query.push(")");
     }
     if !filters.search.is_empty() {
         let pattern = format!("%{}%", filters.search);
-        query.push(" AND (n.content ILIKE ");
+        query.push(" AND (n.content LIKE ");
         query.push_bind(pattern.clone());
         query.push(
-            r#" OR EXISTS (SELECT 1 FROM attachments a3 WHERE a3."noteId"=n.id AND a3.path ILIKE "#,
+            r#" OR EXISTS (SELECT 1 FROM attachments a3 WHERE a3."noteId"=n.id AND a3.path LIKE "#,
         );
         query.push_bind(pattern);
         query.push("))");
     }
     if filters.with_link {
-        query.push(" AND (n.content ILIKE '%http://%' OR n.content ILIKE '%https://%')");
+        query.push(" AND (n.content LIKE '%http://%' OR n.content LIKE '%https://%')");
     }
     if filters.has_todo {
-        query.push(" AND (n.content ILIKE '%- [ ]%' OR n.content ILIKE '%- [x]%' OR n.content ILIKE '%* [ ]%' OR n.content ILIKE '%* [x]%')");
+        query.push(" AND (n.content LIKE '%- [ ]%' OR n.content LIKE '%- [x]%' OR n.content LIKE '%* [ ]%' OR n.content LIKE '%* [x]%')");
     }
     if let (Some(start_date), Some(end_date)) = (filters.start_date, filters.end_date) {
-        query.push(r#" AND n."createdAt" >= "#);
+        query.push(r#" AND julianday(n."createdAt") >= julianday("#);
         query.push_bind(start_date.to_string());
-        query.push(r#"::timestamptz AND n."createdAt" <= "#);
+        query.push(r#") AND julianday(n."createdAt") <= julianday("#);
         query.push_bind(end_date.to_string());
-        query.push("::timestamptz");
+        query.push(")");
     }
 }
 
@@ -180,7 +180,7 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             end_date,
         };
 
-        let mut query = QueryBuilder::<Postgres>::new(
+        let mut query = QueryBuilder::<Sqlite>::new(
             r#"SELECT n.id, n.type, n.content, n."isArchived", n."isRecycle", n."isTop", n."isReviewed", n.metadata,
                       n."accountId", n."workspaceId", n."sortOrder", n."createdAt", n."updatedAt"
                FROM notes n WHERE "#,
@@ -204,7 +204,7 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .push(" OFFSET ")
             .push_bind(offset);
         let total = if include_page_info {
-            let mut count_query = QueryBuilder::<Postgres>::new(r#"SELECT COUNT(*) FROM notes n WHERE "#);
+            let mut count_query = QueryBuilder::<Sqlite>::new(r#"SELECT COUNT(*) FROM notes n WHERE "#);
             push_note_list_filters(&mut count_query, &filters);
             count_query.build_query_scalar::<i64>().fetch_one(ctx.state.pool()).await?
         } else {
@@ -262,10 +262,10 @@ fn list_by_ids(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
         let ids = ids_from_input(&input);
-        let rows = sqlx::query(&note_select_sql("id=ANY($3)"))
+        let rows = sqlx::query(&note_select_sql("id IN (SELECT value FROM json_each($3))"))
             .bind(user.id)
             .bind(ws)
-            .bind(&ids)
+            .bind(crate::db::json_array(&ids))
             .fetch_all(ctx.state.pool())
             .await?;
         let mut items = Vec::new();
@@ -343,7 +343,7 @@ fn review(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let Some(old) = note_snapshot_tx(&mut tx, id, user.id, ws).await? else {
             bail!("Note not found");
         };
-        sqlx::query(r#"UPDATE notes SET "isReviewed"=true, "updatedAt"=NOW() WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
+        sqlx::query(r#"UPDATE notes SET "isReviewed"=true, "updatedAt"=blinkora_now() WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
             .bind(id)
             .bind(user.id)
             .bind(ws)
@@ -414,7 +414,7 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 let next_note_type = note_type.unwrap_or(old.note_type);
                 let next_metadata = metadata.clone().or_else(|| old.metadata.clone());
                 let next_is_recycle = is_recycle.unwrap_or(old.is_recycle);
-                sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3::json, metadata), "isArchived"=COALESCE($4, "isArchived"), "isRecycle"=COALESCE($5, "isRecycle"), "isTop"=COALESCE($6, "isTop"), "isReviewed"=COALESCE($7, "isReviewed"), "updatedAt"=NOW() WHERE id=$8 AND "accountId"=$9 AND "workspaceId"=$10"#)
+                sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3, metadata), "isArchived"=COALESCE($4, "isArchived"), "isRecycle"=COALESCE($5, "isRecycle"), "isTop"=COALESCE($6, "isTop"), "isReviewed"=COALESCE($7, "isReviewed"), "updatedAt"=blinkora_now() WHERE id=$8 AND "accountId"=$9 AND "workspaceId"=$10"#)
                     .bind(&next_content)
                     .bind(next_note_type)
                     .bind(metadata.clone())
@@ -509,7 +509,7 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         } else {
             let content = content.unwrap_or_default();
             let note_type = note_type.unwrap_or(0);
-            let note_id: i32 = sqlx::query_scalar(r#"INSERT INTO notes (content, type, metadata, "isArchived", "isRecycle", "isTop", "isReviewed", "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()) RETURNING id"#)
+            let note_id: i32 = sqlx::query_scalar(r#"INSERT INTO notes (content, type, metadata, "isArchived", "isRecycle", "isTop", "isReviewed", "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,blinkora_now()) RETURNING id"#)
                 .bind(&content)
                 .bind(note_type)
                 .bind(metadata.clone())
@@ -629,10 +629,10 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let mut tx = ctx.state.pool().begin().await?;
         let note_rows: Vec<(i32, String, bool)> = sqlx::query_as(
             r#"SELECT id, content, "isRecycle" FROM notes
-               WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3
-               FOR UPDATE"#,
+               WHERE id IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3
+               "#,
         )
-        .bind(&note_ids)
+        .bind(crate::db::json_array(&note_ids))
         .bind(user.id)
         .bind(source_workspace_id)
         .fetch_all(&mut *tx)
@@ -646,22 +646,22 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         }
 
         let source_tag_ids: Vec<i32> = sqlx::query_scalar(
-            r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId"=ANY($1)"#,
+            r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
         )
-        .bind(&note_ids)
+        .bind(crate::db::json_array(&note_ids))
         .fetch_all(&mut *tx)
         .await?;
 
         sqlx::query(
             r#"DELETE FROM "noteReference"
-               WHERE ("fromNoteId"=ANY($1) AND NOT ("toNoteId"=ANY($1)))
-                  OR ("toNoteId"=ANY($1) AND NOT ("fromNoteId"=ANY($1)))"#,
+               WHERE ("fromNoteId" IN (SELECT value FROM json_each($1)) AND NOT ("toNoteId" IN (SELECT value FROM json_each($1))))
+                  OR ("toNoteId" IN (SELECT value FROM json_each($1)) AND NOT ("fromNoteId" IN (SELECT value FROM json_each($1))))"#,
         )
-        .bind(&note_ids)
+        .bind(crate::db::json_array(&note_ids))
         .execute(&mut *tx)
         .await?;
-        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=ANY($1)"#)
-            .bind(&note_ids)
+        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#)
+            .bind(crate::db::json_array(&note_ids))
             .execute(&mut *tx)
             .await?;
         super::tags::cleanup_unused_tags(&mut tx, &source_tag_ids, user.id, source_workspace_id)
@@ -669,11 +669,11 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
         sqlx::query(
             r#"UPDATE notes
-               SET "workspaceId"=$1, "updatedAt"=NOW()
-               WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#,
+               SET "workspaceId"=$1, "updatedAt"=blinkora_now()
+               WHERE id IN (SELECT value FROM json_each($2)) AND "accountId"=$3 AND "workspaceId"=$4"#,
         )
         .bind(target_workspace_id)
-        .bind(&note_ids)
+        .bind(crate::db::json_array(&note_ids))
         .bind(user.id)
         .bind(source_workspace_id)
         .execute(&mut *tx)
@@ -681,11 +681,11 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
         sqlx::query(
             r#"UPDATE attachments
-               SET "workspaceId"=$1, "updatedAt"=NOW()
-               WHERE "noteId"=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#,
+               SET "workspaceId"=$1, "updatedAt"=blinkora_now()
+               WHERE "noteId" IN (SELECT value FROM json_each($2)) AND "accountId"=$3 AND "workspaceId"=$4"#,
         )
         .bind(target_workspace_id)
-        .bind(&note_ids)
+        .bind(crate::db::json_array(&note_ids))
         .bind(user.id)
         .bind(source_workspace_id)
         .execute(&mut *tx)
@@ -693,11 +693,11 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
         sqlx::query(
             r#"UPDATE comments
-               SET "workspaceId"=$1, "updatedAt"=NOW()
-               WHERE "noteId"=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#,
+               SET "workspaceId"=$1, "updatedAt"=blinkora_now()
+               WHERE "noteId" IN (SELECT value FROM json_each($2)) AND "accountId"=$3 AND "workspaceId"=$4"#,
         )
         .bind(target_workspace_id)
-        .bind(&note_ids)
+        .bind(crate::db::json_array(&note_ids))
         .bind(user.id)
         .bind(source_workspace_id)
         .execute(&mut *tx)
@@ -706,10 +706,10 @@ fn move_to_workspace(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         sqlx::query(
             r#"UPDATE "noteHistory"
                SET "workspaceId"=$1
-               WHERE "noteId"=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#,
+               WHERE "noteId" IN (SELECT value FROM json_each($2)) AND "accountId"=$3 AND "workspaceId"=$4"#,
         )
         .bind(target_workspace_id)
-        .bind(&note_ids)
+        .bind(crate::db::json_array(&note_ids))
         .bind(user.id)
         .bind(source_workspace_id)
         .execute(&mut *tx)
@@ -760,16 +760,16 @@ fn update_many(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             }
         }
         if let Some(value) = is_archived {
-            sqlx::query(r#"UPDATE notes SET "isArchived"=$1, "updatedAt"=NOW() WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#)
-                .bind(value).bind(&ids).bind(user.id).bind(ws).execute(&mut *tx).await?;
+            sqlx::query(r#"UPDATE notes SET "isArchived"=$1, "updatedAt"=blinkora_now() WHERE id IN (SELECT value FROM json_each($2)) AND "accountId"=$3 AND "workspaceId"=$4"#)
+                .bind(value).bind(crate::db::json_array(&ids)).bind(user.id).bind(ws).execute(&mut *tx).await?;
         }
         if let Some(value) = is_top {
-            sqlx::query(r#"UPDATE notes SET "isTop"=$1, "updatedAt"=NOW() WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#)
-                .bind(value).bind(&ids).bind(user.id).bind(ws).execute(&mut *tx).await?;
+            sqlx::query(r#"UPDATE notes SET "isTop"=$1, "updatedAt"=blinkora_now() WHERE id IN (SELECT value FROM json_each($2)) AND "accountId"=$3 AND "workspaceId"=$4"#)
+                .bind(value).bind(crate::db::json_array(&ids)).bind(user.id).bind(ws).execute(&mut *tx).await?;
         }
         if let Some(value) = is_reviewed {
-            sqlx::query(r#"UPDATE notes SET "isReviewed"=$1, "updatedAt"=NOW() WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#)
-                .bind(value).bind(&ids).bind(user.id).bind(ws).execute(&mut *tx).await?;
+            sqlx::query(r#"UPDATE notes SET "isReviewed"=$1, "updatedAt"=blinkora_now() WHERE id IN (SELECT value FROM json_each($2)) AND "accountId"=$3 AND "workspaceId"=$4"#)
+                .bind(value).bind(crate::db::json_array(&ids)).bind(user.id).bind(ws).execute(&mut *tx).await?;
         }
         for old in old_notes {
             let mut flags = Map::new();
@@ -828,10 +828,10 @@ fn delete_impact(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let ws = workspace_id(&ctx).await?;
         let ids = ids_from_input(&input);
         let impact = get_delete_impact(&ctx, &ids).await?;
-        let comments: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM comments WHERE "noteId"=ANY($1) AND "workspaceId"=$2"#)
-            .bind(&impact.note_ids).bind(ws).fetch_one(ctx.state.pool()).await.unwrap_or(0);
-        let attachment_count: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM attachments WHERE "noteId"=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
-            .bind(&ids).bind(user.id).bind(ws).fetch_one(ctx.state.pool()).await.unwrap_or(0);
+        let comments: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM comments WHERE "noteId" IN (SELECT value FROM json_each($1)) AND "workspaceId"=$2"#)
+            .bind(crate::db::json_array(&impact.note_ids)).bind(ws).fetch_one(ctx.state.pool()).await.unwrap_or(0);
+        let attachment_count: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM attachments WHERE "noteId" IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3"#)
+            .bind(crate::db::json_array(&ids)).bind(user.id).bind(ws).fetch_one(ctx.state.pool()).await.unwrap_or(0);
         Ok(json!({
             "noteIds": impact.note_ids,
             "attachmentCount": attachment_count,
@@ -1028,7 +1028,7 @@ fn set_references(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 }
 
 async fn sync_references<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
     from_note_id: i32,
     account_id: i32,
     workspace_id: i32,
@@ -1053,9 +1053,9 @@ async fn sync_references<'a>(
 
     let valid_targets: Vec<i32> = sqlx::query_scalar(
         r#"SELECT id FROM notes
-           WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3 AND "isRecycle"=false"#,
+           WHERE id IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3 AND "isRecycle"=false"#,
     )
-    .bind(&references)
+    .bind(crate::db::json_array(&references))
     .bind(account_id)
     .bind(workspace_id)
     .fetch_all(&mut **tx)
@@ -1101,7 +1101,7 @@ fn reference_ids_from_value(value: &Value) -> Vec<i32> {
 }
 
 async fn note_snapshot_tx(
-    tx: &mut sqlx::Transaction<'_, Postgres>,
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
     note_id: i32,
     account_id: i32,
     workspace_id: i32,
@@ -1128,7 +1128,7 @@ async fn note_snapshot_tx(
 }
 
 async fn note_tag_ids_tx(
-    tx: &mut sqlx::Transaction<'_, Postgres>,
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
     note_id: i32,
 ) -> anyhow::Result<Vec<i32>> {
     let ids: Vec<i32> = sqlx::query_scalar(
@@ -1141,7 +1141,7 @@ async fn note_tag_ids_tx(
 }
 
 async fn note_reference_ids_tx(
-    tx: &mut sqlx::Transaction<'_, Postgres>,
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
     note_id: i32,
 ) -> anyhow::Result<Vec<i32>> {
     let ids: Vec<i32> = sqlx::query_scalar(
@@ -1257,11 +1257,12 @@ async fn ensure_notes_in_workspace(
     if ids.is_empty() {
         bail!("note id is required");
     }
-    let mut query =
-        QueryBuilder::<Postgres>::new(r#"SELECT COUNT(DISTINCT id) FROM notes WHERE id=ANY("#);
-    query.push_bind(&ids);
+    let mut query = QueryBuilder::<Sqlite>::new(
+        r#"SELECT COUNT(DISTINCT id) FROM notes WHERE id IN (SELECT value FROM json_each("#,
+    );
+    query.push_bind(crate::db::json_array(&ids));
     query
-        .push(r#") AND "accountId"="#)
+        .push(r#")) AND "accountId"="#)
         .push_bind(account_id)
         .push(r#" AND "workspaceId"="#)
         .push_bind(workspace_id);
@@ -1390,7 +1391,7 @@ fn update_attachments_order(ctx: ProcedureContext, input: Value) -> ProcedureFut
                     .and_then(Value::as_i64)
                     .unwrap_or_default() as i32;
                 sqlx::query(
-                    r#"UPDATE attachments SET "sortOrder"=$1, "updatedAt"=NOW() WHERE id=$2"#,
+                    r#"UPDATE attachments SET "sortOrder"=$1, "updatedAt"=blinkora_now() WHERE id=$2"#,
                 )
                 .bind(sort_order)
                 .bind(id)
@@ -1416,11 +1417,13 @@ fn update_notes_order(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                     .get("sortOrder")
                     .and_then(Value::as_i64)
                     .unwrap_or_default() as i32;
-                sqlx::query(r#"UPDATE notes SET "sortOrder"=$1, "updatedAt"=NOW() WHERE id=$2"#)
-                    .bind(sort_order)
-                    .bind(id)
-                    .execute(ctx.state.pool())
-                    .await?;
+                sqlx::query(
+                    r#"UPDATE notes SET "sortOrder"=$1, "updatedAt"=blinkora_now() WHERE id=$2"#,
+                )
+                .bind(sort_order)
+                .bind(id)
+                .execute(ctx.state.pool())
+                .await?;
             }
         }
         Ok(json!(true))
@@ -1483,10 +1486,10 @@ fn update_flag(
                     old_notes.push(note);
                 }
             }
-            let sql = format!(r#"UPDATE notes SET "{field}"=$1, "updatedAt"=NOW() WHERE id=ANY($2) AND "accountId"=$3 AND "workspaceId"=$4"#);
+            let sql = format!(r#"UPDATE notes SET "{field}"=$1, "updatedAt"=blinkora_now() WHERE id IN (SELECT value FROM json_each($2)) AND "accountId"=$3 AND "workspaceId"=$4"#);
             sqlx::query(&sql)
                 .bind(value)
-                .bind(&ids)
+                .bind(crate::db::json_array(&ids))
                 .bind(user.id)
                 .bind(ws)
                 .execute(&mut *tx)
@@ -1573,7 +1576,7 @@ pub(crate) fn note_select_sql(extra: &str) -> String {
 
 pub(crate) async fn sync_tags<'a>(
     _ctx: &ProcedureContext,
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
     note_id: i32,
     account_id: i32,
     workspace_id: i32,
@@ -1596,7 +1599,7 @@ pub(crate) async fn sync_tags<'a>(
                 .bind(part).bind(parent).bind(account_id).bind(workspace_id).fetch_optional(&mut **tx).await?;
             let tag_id = match existing {
                 Some(id) => id,
-                None => sqlx::query_scalar(r#"INSERT INTO tag (name, parent, "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,NOW()) RETURNING id"#)
+                None => sqlx::query_scalar(r#"INSERT INTO tag (name, parent, "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,blinkora_now()) RETURNING id"#)
                     .bind(part).bind(parent).bind(account_id).bind(workspace_id).fetch_one(&mut **tx).await?,
             };
             sqlx::query(r#"INSERT INTO "tagsToNote" ("tagId","noteId") VALUES ($1,$2) ON CONFLICT DO NOTHING"#)
@@ -1612,9 +1615,9 @@ pub(crate) async fn sync_tags<'a>(
             .await?;
     } else {
         let ids: Vec<i32> = current_ids.into_iter().collect();
-        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=$1 AND NOT ("tagId"=ANY($2))"#)
+        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "noteId"=$1 AND NOT ("tagId" IN (SELECT value FROM json_each($2)))"#)
             .bind(note_id)
-            .bind(&ids)
+            .bind(crate::db::json_array(&ids))
             .execute(&mut **tx)
             .await?;
     }
@@ -1624,7 +1627,7 @@ pub(crate) async fn sync_tags<'a>(
 
 async fn sync_tags_for_recycle_state<'a>(
     ctx: &ProcedureContext,
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
     note_id: i32,
     account_id: i32,
     workspace_id: i32,
@@ -1639,7 +1642,7 @@ async fn sync_tags_for_recycle_state<'a>(
 }
 
 async fn clear_note_tags<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
     note_id: i32,
     account_id: i32,
     workspace_id: i32,
@@ -1661,7 +1664,7 @@ async fn clear_note_tags<'a>(
 }
 
 async fn sync_attachments<'a>(
-    tx: &mut sqlx::Transaction<'a, sqlx::Postgres>,
+    tx: &mut sqlx::Transaction<'a, sqlx::Sqlite>,
     note_id: i32,
     account_id: i32,
     workspace_id: i32,
@@ -1686,8 +1689,8 @@ async fn sync_attachments<'a>(
     let paths: Vec<String> = paths.into_iter().collect();
     sqlx::query(
         r#"UPDATE attachments
-           SET "noteId"=$1, "workspaceId"=$2, "updatedAt"=NOW()
-           WHERE path=ANY($3)
+           SET "noteId"=$1, "workspaceId"=$2, "updatedAt"=blinkora_now()
+           WHERE path IN (SELECT value FROM json_each($3))
              AND (
                ("accountId"=$4 AND "workspaceId"=$2)
                OR ("accountId"=$4 AND "workspaceId" IS NULL AND "noteId" IS NULL)
@@ -1696,7 +1699,7 @@ async fn sync_attachments<'a>(
     )
     .bind(note_id)
     .bind(workspace_id)
-    .bind(&paths)
+    .bind(crate::db::json_array(&paths))
     .bind(account_id)
     .execute(&mut **tx)
     .await?;
@@ -1878,9 +1881,9 @@ async fn notes_for_delete(
     }
 
     let rows = sqlx::query(
-        r#"SELECT id, type, content FROM notes WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#,
+        r#"SELECT id, type, content FROM notes WHERE id IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3"#,
     )
-    .bind(&note_ids)
+    .bind(crate::db::json_array(&note_ids))
     .bind(user.id)
     .bind(ws)
     .fetch_all(ctx.state.pool())
@@ -1914,8 +1917,8 @@ async fn attachment_delete_candidates(
 
     let mut by_id = HashMap::<i32, AttachmentForDelete>::new();
     let direct_rows =
-        sqlx::query(r#"SELECT id, name, path, type FROM attachments WHERE "noteId"=ANY($1)"#)
-            .bind(&note_ids)
+        sqlx::query(r#"SELECT id, name, path, type FROM attachments WHERE "noteId" IN (SELECT value FROM json_each($1))"#)
+            .bind(crate::db::json_array(&note_ids))
             .fetch_all(ctx.state.pool())
             .await?;
 
@@ -1941,14 +1944,14 @@ async fn attachment_delete_candidates(
         let content_rows = sqlx::query(
             r#"SELECT id, name, path, type
                FROM attachments
-               WHERE path=ANY($1)
+               WHERE path IN (SELECT value FROM json_each($1))
                  AND (
                    ("accountId"=$2 AND "workspaceId"=$3)
                    OR ("accountId"=$2 AND "workspaceId" IS NULL AND "noteId" IS NULL)
                    OR "noteId" IN (SELECT id FROM notes WHERE "accountId"=$2 AND "workspaceId"=$3)
                  )"#,
         )
-        .bind(&content_paths)
+        .bind(crate::db::json_array(&content_paths))
         .bind(account_id)
         .bind(workspace_id)
         .fetch_all(ctx.state.pool())
@@ -1980,18 +1983,18 @@ async fn get_delete_impact(ctx: &ProcedureContext, ids: &[i32]) -> anyhow::Resul
         let other_reference_count: i64 = sqlx::query_scalar(
             r#"SELECT COUNT(*)
                FROM notes n
-               WHERE NOT (n.id=ANY($1))
+               WHERE NOT (n.id IN (SELECT value FROM json_each($1)))
                  AND n."accountId"=$2
                  AND n."workspaceId"=$3
                  AND (
-                   POSITION($4 IN n.content) > 0
+                   instr(n.content, $4) > 0
                    OR EXISTS (
                      SELECT 1 FROM attachments a
                      WHERE a."noteId"=n.id AND a.path=$4
                    )
                  )"#,
         )
-        .bind(&note_ids)
+        .bind(crate::db::json_array(&note_ids))
         .bind(account_id)
         .bind(workspace_id)
         .bind(&attachment.path)
@@ -2048,8 +2051,8 @@ async fn delete_note_ids(
         .collect::<Vec<_>>();
     let mut tx = ctx.state.pool().begin().await?;
     let tag_ids_to_cleanup: Vec<i32> =
-        sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId"=ANY($1)"#)
-            .bind(&ids)
+        sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#)
+            .bind(crate::db::json_array(&ids))
             .fetch_all(&mut *tx)
             .await?;
     for note in &notes {
@@ -2078,37 +2081,40 @@ async fn delete_note_ids(
         .await?;
     }
     for sql in [
-        r#"DELETE FROM "tagsToNote" WHERE "noteId"=ANY($1)"#,
-        r#"DELETE FROM "noteReference" WHERE "fromNoteId"=ANY($1) OR "toNoteId"=ANY($1)"#,
-        r#"DELETE FROM comments WHERE "noteId"=ANY($1)"#,
-        r#"DELETE FROM "noteHistory" WHERE "noteId"=ANY($1)"#,
+        r#"DELETE FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
+        r#"DELETE FROM "noteReference" WHERE "fromNoteId" IN (SELECT value FROM json_each($1)) OR "toNoteId" IN (SELECT value FROM json_each($1))"#,
+        r#"DELETE FROM comments WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
+        r#"DELETE FROM "noteHistory" WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
     ] {
-        sqlx::query(sql).bind(&ids).execute(&mut *tx).await?;
+        sqlx::query(sql)
+            .bind(crate::db::json_array(&ids))
+            .execute(&mut *tx)
+            .await?;
     }
     super::tags::cleanup_unused_tags(&mut tx, &tag_ids_to_cleanup, account_id, workspace_id)
         .await?;
 
     if attachment_ids_to_delete.is_empty() {
         sqlx::query(
-            r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=NOW() WHERE "noteId"=ANY($1)"#,
+            r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=blinkora_now() WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
         )
-        .bind(&ids)
+        .bind(crate::db::json_array(&ids))
         .execute(&mut *tx)
         .await?;
     } else {
-        sqlx::query(r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=NOW() WHERE "noteId"=ANY($1) AND NOT (id=ANY($2))"#)
-            .bind(&ids)
-            .bind(&attachment_ids_to_delete)
+        sqlx::query(r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=blinkora_now() WHERE "noteId" IN (SELECT value FROM json_each($1)) AND NOT (id IN (SELECT value FROM json_each($2)))"#)
+            .bind(crate::db::json_array(&ids))
+            .bind(crate::db::json_array(&attachment_ids_to_delete))
             .execute(&mut *tx)
             .await?;
-        sqlx::query(r#"DELETE FROM attachments WHERE id=ANY($1)"#)
-            .bind(&attachment_ids_to_delete)
+        sqlx::query(r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#)
+            .bind(crate::db::json_array(&attachment_ids_to_delete))
             .execute(&mut *tx)
             .await?;
     }
 
-    sqlx::query(r#"DELETE FROM notes WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
-        .bind(&ids)
+    sqlx::query(r#"DELETE FROM notes WHERE id IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3"#)
+        .bind(crate::db::json_array(&ids))
         .bind(account_id)
         .bind(workspace_id)
         .execute(&mut *tx)

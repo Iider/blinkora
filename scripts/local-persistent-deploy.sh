@@ -14,7 +14,6 @@ LOCAL_BIN="$LOCAL_BIN_DIR/blinkora-server"
 LABEL="${BLINKORA_LAUNCHD_LABEL:-com.blinkora.local}"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 PORT="${PORT:-6676}"
-DATABASE_URL="${DATABASE_URL:-postgresql://postgres:mysecretpassword@127.0.0.1:55433/postgres}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/private/tmp/blinkora-server-target-local}"
 
 usage() {
@@ -22,19 +21,18 @@ usage() {
 Usage: scripts/local-persistent-deploy.sh <command>
 
 Commands:
-  install     Build native Blinkora, start Docker PostgreSQL, install and start launchd service
-  update      Rebuild native Blinkora and restart launchd service
+  install     Build native Blinkora, install and start the launchd service
+  update      Rebuild native Blinkora and restart the launchd service
   build       Build native Blinkora release artifacts only
-  start       Start launchd service
-  stop        Stop launchd service
-  restart     Restart launchd service
-  status      Show launchd and PostgreSQL status
+  start       Start the launchd service
+  stop        Stop the launchd service
+  restart     Restart the launchd service
+  status      Show launchd service status
   logs        Tail local Blinkora service logs
-  db-up       Start Docker PostgreSQL only
-  db-stop     Stop Docker PostgreSQL only
-  uninstall   Stop launchd service and remove plist; keep data and database
+  uninstall   Stop the service and remove its plist; keep all local data
 
-Local app home: $APP_HOME
+This installation needs no Docker. SQLite and attachments are both kept in:
+  $DATA_DIR
 EOF
 }
 
@@ -61,7 +59,9 @@ ensure_node_deps() {
 }
 
 ensure_dirs() {
+  umask 077
   mkdir -p "$APP_HOME" "$LOG_DIR" "$DATA_DIR" "$LOCAL_BIN_DIR" "$RELEASE_DIR" "$HOME/Library/LaunchAgents"
+  chmod 700 "$APP_HOME" "$LOG_DIR" "$DATA_DIR" "$LOCAL_BIN_DIR"
 }
 
 generate_secret() {
@@ -79,10 +79,9 @@ ensure_env_file() {
   cat > "$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=$PORT
-DATABASE_URL=$DATABASE_URL
 PUBLIC_PATH=$RELEASE_DIR/public
 DATA_DIR=$DATA_DIR
-SCHEMA_PATH=$RELEASE_DIR/db/schema.sql
+SCHEMA_PATH=$RELEASE_DIR/db/schema.sqlite.sql
 BLINKORA_SECRET=$secret
 RUST_LOG=info
 EOF
@@ -102,26 +101,9 @@ build_native() {
   rm -rf "$RELEASE_DIR/public"
   cp -R dist/public "$RELEASE_DIR/public"
   mkdir -p "$RELEASE_DIR/db"
-  cp db/schema.sql "$RELEASE_DIR/db/schema.sql"
-  chmod +x "$RELEASE_DIR/blinkora-server"
-  chmod +x "$LOCAL_BIN"
+  cp db/schema.sqlite.sql "$RELEASE_DIR/db/schema.sqlite.sql"
+  chmod +x "$RELEASE_DIR/blinkora-server" "$LOCAL_BIN"
   echo "native release artifacts are ready in $RELEASE_DIR"
-}
-
-db_up() {
-  require_cmd docker "Install Docker or OrbStack first."
-  (cd "$ROOT_DIR/docker" && docker compose up -d db)
-}
-
-db_stop() {
-  require_cmd docker "Install Docker or OrbStack first."
-  (cd "$ROOT_DIR/docker" && docker compose stop db)
-}
-
-stop_web_container() {
-  if command -v docker >/dev/null 2>&1; then
-    (cd "$ROOT_DIR/docker" && docker compose stop web >/dev/null 2>&1 || true)
-  fi
 }
 
 write_runner() {
@@ -141,7 +123,7 @@ source "$ENV_FILE"
 set +a
 exec "$LOCAL_BIN"
 EOF
-  chmod +x "$RUNNER"
+  chmod 700 "$RUNNER"
 }
 
 write_plist() {
@@ -196,15 +178,9 @@ stop_service() {
 status() {
   local domain
   domain="$(launchd_domain)"
-  echo "== launchd =="
   launchctl print "$domain/$LABEL" 2>/dev/null || echo "service is not loaded"
   echo
-  echo "== docker db =="
-  if command -v docker >/dev/null 2>&1; then
-    (cd "$ROOT_DIR/docker" && docker compose ps db)
-  else
-    echo "docker is not installed"
-  fi
+  echo "SQLite data directory: $DATA_DIR"
 }
 
 tail_logs() {
@@ -214,16 +190,12 @@ tail_logs() {
 }
 
 install() {
-  db_up
-  stop_web_container
   build_native
   ensure_env_file
   start_service
 }
 
 update() {
-  db_up
-  stop_web_container
   build_native
   restart_service
 }
@@ -238,11 +210,9 @@ uninstall() {
   rm -f "$PLIST"
   echo "removed $PLIST"
   echo "kept local data: $APP_HOME"
-  echo "kept PostgreSQL data: $ROOT_DIR/docker/data/postgres"
 }
 
-cmd="${1:-}"
-case "$cmd" in
+case "${1:-}" in
   install) install ;;
   update) update ;;
   build) build_native ;;
@@ -251,9 +221,7 @@ case "$cmd" in
   restart) restart_service ;;
   status) status ;;
   logs) tail_logs ;;
-  db-up) db_up ;;
-  db-stop) db_stop ;;
   uninstall) uninstall ;;
   -h | --help | help | "") usage ;;
-  *) echo "error: unknown command: $cmd" >&2; usage; exit 1 ;;
+  *) echo "error: unknown command: $1" >&2; usage; exit 1 ;;
 esac

@@ -90,7 +90,7 @@ fn create(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         validate_category(category)?;
         let sort_order = input.get("sortOrder").and_then(Value::as_i64).unwrap_or(0) as i32;
 
-        let row = sqlx::query(r#"INSERT INTO fonts (name, "displayName", url, "isLocal", weights, category, "isSystem", "sortOrder", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) RETURNING id, name, "displayName", url, "fileData", "isLocal", weights, category, "isSystem", "sortOrder", "createdAt", "updatedAt""#)
+        let row = sqlx::query(r#"INSERT INTO fonts (name, "displayName", url, "isLocal", weights, category, "isSystem", "sortOrder", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,blinkora_now()) RETURNING id, name, "displayName", url, "fileData", "isLocal", weights, category, "isSystem", "sortOrder", "createdAt", "updatedAt""#)
             .bind(name)
             .bind(display_name)
             .bind(url)
@@ -130,7 +130,7 @@ fn update(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let is_system = data.get("isSystem").and_then(Value::as_bool).unwrap_or_else(|| current.get::<bool, _>("isSystem"));
         let sort_order = data.get("sortOrder").and_then(Value::as_i64).map(|value| value as i32).unwrap_or_else(|| current.get::<i32, _>("sortOrder"));
 
-        let row = sqlx::query(r#"UPDATE fonts SET name=$1, "displayName"=$2, url=$3, "isLocal"=$4, weights=$5, category=$6, "isSystem"=$7, "sortOrder"=$8, "updatedAt"=NOW() WHERE id=$9 RETURNING id, name, "displayName", url, "fileData", "isLocal", weights, category, "isSystem", "sortOrder", "createdAt", "updatedAt""#)
+        let row = sqlx::query(r#"UPDATE fonts SET name=$1, "displayName"=$2, url=$3, "isLocal"=$4, weights=$5, category=$6, "isSystem"=$7, "sortOrder"=$8, "updatedAt"=blinkora_now() WHERE id=$9 RETURNING id, name, "displayName", url, "fileData", "isLocal", weights, category, "isSystem", "sortOrder", "createdAt", "updatedAt""#)
             .bind(name)
             .bind(display_name)
             .bind(url)
@@ -184,7 +184,7 @@ fn upload(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let sort_order: i32 = sqlx::query_scalar(r#"SELECT COALESCE(MAX("sortOrder"), 0) + 1 FROM fonts"#)
             .fetch_one(ctx.state.pool())
             .await?;
-        let row = sqlx::query(r#"INSERT INTO fonts (name, "displayName", url, "fileData", "isLocal", weights, category, "isSystem", "sortOrder", "updatedAt") VALUES ($1,$2,NULL,$3,true,$4,$5,false,$6,NOW()) RETURNING id, name, "displayName", url, "isLocal", weights, category, "isSystem", "sortOrder", "createdAt", "updatedAt""#)
+        let row = sqlx::query(r#"INSERT INTO fonts (name, "displayName", url, "fileData", "isLocal", weights, category, "isSystem", "sortOrder", "updatedAt") VALUES ($1,$2,NULL,$3,true,$4,$5,false,$6,blinkora_now()) RETURNING id, name, "displayName", url, "isLocal", weights, category, "isSystem", "sortOrder", "createdAt", "updatedAt""#)
             .bind(name)
             .bind(display_name)
             .bind(bytes)
@@ -215,7 +215,10 @@ fn required_string(input: &Value, key: &str) -> anyhow::Result<String> {
 }
 
 fn optional_string(input: &Value, key: &str) -> Option<String> {
-    input.get(key).and_then(Value::as_str).map(ToString::to_string)
+    input
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
 }
 
 fn validate_category(category: &str) -> anyhow::Result<()> {
@@ -225,7 +228,7 @@ fn validate_category(category: &str) -> anyhow::Result<()> {
     }
 }
 
-fn font_metadata_json(row: sqlx::postgres::PgRow) -> Value {
+fn font_metadata_json(row: sqlx::sqlite::SqliteRow) -> Value {
     json!({
         "id": row.get::<i32, _>("id"),
         "name": row.get::<String, _>("name"),
@@ -241,7 +244,7 @@ fn font_metadata_json(row: sqlx::postgres::PgRow) -> Value {
     })
 }
 
-fn font_json(row: sqlx::postgres::PgRow) -> Value {
+fn font_json(row: sqlx::sqlite::SqliteRow) -> Value {
     let data: Option<Vec<u8>> = row.get("fileData");
     let mut value = font_metadata_json(row);
     value["fileData"] = data

@@ -5,7 +5,7 @@
 ## 使用规则
 
 - 当前统一入口：`http://localhost:6676`。
-- 当前主运行栈：Rust，统一入口为 `6676`。完整 Docker 部署使用 `blinkora-web` / `blinkora-db`；本机持久化部署只保留 Docker `blinkora-db`，Rust Web 服务由 macOS `launchd` 运行。
+- 当前主运行栈：Rust，统一入口为 `6676`。完整 Docker 部署只使用 `blinkora-web`；本机持久化部署由 macOS `launchd` 运行。两种模式都使用 `DATA_DIR` 下的 SQLite 和附件目录。
 - Rust 后端固定 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_SMOKE_USER=<test-user> BLINKORA_SMOKE_PASSWORD=<test-password> bun run smoke:rust`，覆盖健康检查、静态资源、登录/注册、用户详情、Public、字体、Workspace、配置、普通关键词/筛选检索、笔记编辑、只改类型不丢正文、历史版本/引用/排序、标签、评论/回复/更新/删除/转 TODO、附件资源页文件夹创建/列表/重命名/移动/删除、文件上传、错误 workspace 文件读/删拒绝、同前缀兄弟文件夹不误删、导出、备份导入为新 Workspace、导入后附件路径替换与恢复文件读取、回收站、批量删除、MCP SSE 未鉴权拒绝、握手、工具清单、note/comment/tag tree 工具调用主路径、Workspace Agent token 创建/列表回显/资源下载/越权拒绝/撤销失效。设置 `BLINKORA_S3_SMOKE_*` 环境变量后，还会验证真实 S3 配置、`/api/s3file/*` 上传读取、资源移动和对象删除。
 - Workspace Agent 专项 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_ACCOUNT_TOKEN=<account_jwt> bun run smoke:agent`，只覆盖工作区令牌、MCP 工具、Skill/指南下载、Workspace 隔离、越权拒绝和刷新失效。
 - Web 端口固定使用 `6676`，避免 Chromium / Edge 的 unsafe port 限制。
@@ -39,8 +39,8 @@ Docker compose 文件：
 
 | 状态 | 检查项 | 操作 | 预期结果 |
 | --- | --- | --- | --- |
-| [ ] | 完整 Docker 服务健康 | 完整 Docker 模式下，在 `docker/` 执行 `docker compose ps` | Web 和 DB 容器均为 healthy |
-| [ ] | 本机持久化服务健康 | 本机持久化模式下，执行 `bun run deploy:local status` | `com.blinkora.local` 为 running，`blinkora-db` 为 healthy，不需要 `blinkora-web` |
+| [ ] | 完整 Docker 服务健康 | 完整 Docker 模式下，在 `docker/` 执行 `docker compose ps` | `blinkora-web` 为 healthy，`data/blinkora/blinkora.sqlite3` 存在 |
+| [ ] | 本机持久化服务健康 | 本机持久化模式下，执行 `bun run deploy:local status` | `com.blinkora.local` 为 running，SQLite 探针与健康接口均通过 |
 | [ ] | 本机部署更新生效 | 本机持久化模式下执行 `bun run deploy:local update`，再运行 `curl -I http://127.0.0.1:6676/` 并刷新 `http://localhost:6676` | `curl` 返回 `200 OK`；页面加载 `release/local/public` 中最新 `index-*.js`，新功能可见 |
 | [ ] | Web 端口正确 | 打开 Rust 主栈 `http://localhost:6676` | 页面可打开，不出现 `ERR_UNSAFE_PORT` |
 | [ ] | Web 端口统一 | 搜索当前文档或配置中的 Web 入口 | 运行入口使用 `6676` |

@@ -5,7 +5,6 @@
   ],
   "globalEnv": [
     "NODE_ENV",
-    "DATABASE_URL",
     "PORT",
     "PUBLIC_PATH",
     "DATA_DIR",

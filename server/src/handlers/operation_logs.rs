@@ -6,7 +6,7 @@ use anyhow::anyhow;
 use futures::FutureExt;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use sqlx::{Postgres, QueryBuilder, Row, Transaction};
+use sqlx::{QueryBuilder, Row, Sqlite, Transaction};
 use std::collections::{HashMap, HashSet};
 
 const DEFAULT_LOGGED_NOTE_TYPES: &[i32] = &[1];
@@ -43,7 +43,7 @@ struct OperationLogFilters<'a> {
 
 pub async fn insert_note_log_if_enabled_tx(
     ctx: &ProcedureContext,
-    tx: &mut Transaction<'_, Postgres>,
+    tx: &mut Transaction<'_, Sqlite>,
     user: &CurrentUser,
     draft: OperationLogDraft,
 ) -> anyhow::Result<()> {
@@ -206,14 +206,14 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         };
 
         let mut count_query =
-            QueryBuilder::<Postgres>::new(r#"SELECT COUNT(*) FROM "operationLog" l WHERE "#);
+            QueryBuilder::<Sqlite>::new(r#"SELECT COUNT(*) FROM "operationLog" l WHERE "#);
         push_filters(&mut count_query, &filters);
         let total = count_query
             .build_query_scalar::<i64>()
             .fetch_one(ctx.state.pool())
             .await?;
 
-        let mut query = QueryBuilder::<Postgres>::new(
+        let mut query = QueryBuilder::<Sqlite>::new(
             r#"SELECT id, "accountId", "workspaceId", "actorType", "actorAccountId",
                       "actorAgentTokenId", "actorLabel", action, "noteId", "noteType",
                       "noteTitle", "changedFields", summary, details, "createdAt"
@@ -243,7 +243,7 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     .boxed()
 }
 
-fn push_filters<'a>(query: &mut QueryBuilder<'a, Postgres>, filters: &'a OperationLogFilters<'a>) {
+fn push_filters<'a>(query: &mut QueryBuilder<'a, Sqlite>, filters: &'a OperationLogFilters<'a>) {
     query
         .push(r#"l."accountId"="#)
         .push_bind(filters.account_id)
@@ -256,41 +256,42 @@ fn push_filters<'a>(query: &mut QueryBuilder<'a, Postgres>, filters: &'a Operati
         query.push(" AND l.id<").push_bind(before_id);
     }
     if let Some(start_date) = filters.start_date {
-        query.push(r#" AND l."createdAt" >= "#);
+        query.push(r#" AND julianday(l."createdAt") >= julianday("#);
         query.push_bind(start_date.to_string());
-        query.push("::timestamptz");
+        query.push(")");
     }
     if let Some(end_date) = filters.end_date {
-        query.push(r#" AND l."createdAt" <= "#);
+        query.push(r#" AND julianday(l."createdAt") <= julianday("#);
         query.push_bind(end_date.to_string());
-        query.push("::timestamptz");
+        query.push(")");
     }
     if let Some(actor_type) = filters.actor_type {
         query.push(r#" AND l."actorType"="#).push_bind(actor_type);
     }
     if !filters.actions.is_empty() {
         query
-            .push(" AND l.action=ANY(")
-            .push_bind(&filters.actions)
-            .push(")");
+            .push(" AND l.action IN (SELECT value FROM json_each(")
+            .push_bind(crate::db::json_array(&filters.actions))
+            .push("))");
     }
     if !filters.note_types.is_empty() {
         query
-            .push(r#" AND l."noteType"=ANY("#)
-            .push_bind(&filters.note_types)
-            .push(")");
+            .push(r#" AND l."noteType" IN (SELECT value FROM json_each("#)
+            .push_bind(crate::db::json_array(&filters.note_types))
+            .push("))");
     }
     if let Some(note_id) = filters.note_id {
         query.push(r#" AND l."noteId"="#).push_bind(note_id);
     }
     if let Some(changed_field) = filters.changed_field {
         query
-            .push(r#" AND COALESCE(l."changedFields"::jsonb, '[]'::jsonb) ? "#)
-            .push_bind(changed_field);
+            .push(r#" AND EXISTS (SELECT 1 FROM json_each(COALESCE(l."changedFields", '[]')) WHERE value="#)
+            .push_bind(changed_field)
+            .push(")");
     }
 }
 
-fn log_json(row: sqlx::postgres::PgRow) -> Value {
+fn log_json(row: sqlx::sqlite::SqliteRow) -> Value {
     let changed_fields = row
         .get::<Option<Value>, _>("changedFields")
         .unwrap_or_else(|| json!([]));
@@ -319,7 +320,7 @@ fn log_json(row: sqlx::postgres::PgRow) -> Value {
 }
 
 async fn enabled_note_types_tx(
-    tx: &mut Transaction<'_, Postgres>,
+    tx: &mut Transaction<'_, Sqlite>,
     account_id: i32,
     workspace_id: i32,
 ) -> anyhow::Result<HashSet<i32>> {

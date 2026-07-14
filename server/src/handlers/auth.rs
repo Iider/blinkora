@@ -1,5 +1,7 @@
 use crate::app::AppState;
-use crate::auth::{generate_jwt, generate_totp_secret, hash_password, verify_password, verify_totp, CurrentUser};
+use crate::auth::{
+    generate_jwt, generate_totp_secret, hash_password, verify_password, verify_totp, CurrentUser,
+};
 use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
 use crate::util::config_json;
 use anyhow::{anyhow, bail};
@@ -10,7 +12,7 @@ use chrono::Utc;
 use futures::FutureExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::{PgPool, Row};
+use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
 pub fn router() -> Router<AppState> {
@@ -43,13 +45,18 @@ struct LoginRequest {
     password: String,
 }
 
-async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
+async fn login(
+    State(state): State<AppState>,
+    Json(req): Json<LoginRequest>,
+) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
     let username = req.name.or(req.username).unwrap_or_default();
-    let row = sqlx::query(r#"SELECT id, name, nickname, password, image, role FROM accounts WHERE name=$1"#)
-        .bind(username)
-        .fetch_one(state.pool())
-        .await
-        .map_err(|_| unauthorized())?;
+    let row = sqlx::query(
+        r#"SELECT id, name, nickname, password, image, role FROM accounts WHERE name=$1"#,
+    )
+    .bind(username)
+    .fetch_one(state.pool())
+    .await
+    .map_err(|_| unauthorized())?;
     let password_hash: String = row.get("password");
     if !verify_password(&req.password, &password_hash) {
         return Err(unauthorized());
@@ -59,7 +66,8 @@ async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> 
     let nickname: String = row.get("nickname");
     let image: String = row.get("image");
     let role: String = row.get("role");
-    let token = generate_jwt(id, &name, &nickname, &role, &state.config.auth_secret).map_err(|_| unauthorized())?;
+    let token = generate_jwt(id, &name, &nickname, &role, &state.config.auth_secret)
+        .map_err(|_| unauthorized())?;
     Ok(Json(json!({
         "user": { "id": id, "name": name, "nickname": nickname, "image": image, "role": role },
         "token": token
@@ -80,10 +88,25 @@ struct RegisterRequest {
     nickname: Option<String>,
 }
 
-async fn register_rest(State(state): State<AppState>, Json(req): Json<RegisterRequest>) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
-    match create_account_with_default_workspace(state.pool(), &state.config.auth_secret, &req.name, &req.password, req.nickname.as_deref()).await {
+async fn register_rest(
+    State(state): State<AppState>,
+    Json(req): Json<RegisterRequest>,
+) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
+    let _write_guard = state.write_guard().await;
+    match create_account_with_default_workspace(
+        state.pool(),
+        &state.config.auth_secret,
+        &req.name,
+        &req.password,
+        req.nickname.as_deref(),
+    )
+    .await
+    {
         Ok((id, token)) => Ok(Json(json!({ "success": true, "token": token, "id": id }))),
-        Err(err) => Err((axum::http::StatusCode::BAD_REQUEST, Json(json!({ "error": err.to_string() })))),
+        Err(err) => Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({ "error": err.to_string() })),
+        )),
     }
 }
 
@@ -91,12 +114,22 @@ async fn logout() -> Json<Value> {
     Json(json!({ "success": true }))
 }
 
-async fn profile(user: CurrentUser, State(state): State<AppState>) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
-    let row = sqlx::query(r#"SELECT id, name, nickname, "apiToken", image, role FROM accounts WHERE id=$1"#)
-        .bind(user.id)
-        .fetch_one(state.pool())
-        .await
-        .map_err(|_| (axum::http::StatusCode::NOT_FOUND, Json(json!({ "error": "User not found" }))))?;
+async fn profile(
+    user: CurrentUser,
+    State(state): State<AppState>,
+) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
+    let row = sqlx::query(
+        r#"SELECT id, name, nickname, "apiToken", image, role FROM accounts WHERE id=$1"#,
+    )
+    .bind(user.id)
+    .fetch_one(state.pool())
+    .await
+    .map_err(|_| {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({ "error": "User not found" })),
+        )
+    })?;
     Ok(Json(json!({
         "user": {
             "id": row.get::<i32, _>("id"),
@@ -147,7 +180,9 @@ fn user_detail(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
 
 fn can_register(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
     async move {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts").fetch_one(ctx.state.pool()).await?;
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
+            .fetch_one(ctx.state.pool())
+            .await?;
         Ok(json!(count == 0))
     }
     .boxed()
@@ -156,7 +191,14 @@ fn can_register(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
 fn register_user(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
         let req: RegisterRequest = serde_json::from_value(input)?;
-        create_account_with_default_workspace(ctx.state.pool(), &ctx.state.config.auth_secret, &req.name, &req.password, req.nickname.as_deref()).await?;
+        create_account_with_default_workspace(
+            ctx.state.pool(),
+            &ctx.state.config.auth_secret,
+            &req.name,
+            &req.password,
+            req.nickname.as_deref(),
+        )
+        .await?;
         Ok(json!(true))
     }
     .boxed()
@@ -166,11 +208,13 @@ fn login_user(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
         let req: LoginRequest = serde_json::from_value(input)?;
         let username = req.name.or(req.username).unwrap_or_default();
-        let row = sqlx::query(r#"SELECT id, name, nickname, password, image, role FROM accounts WHERE name=$1"#)
-            .bind(username)
-            .fetch_one(ctx.state.pool())
-            .await
-            .map_err(|_| anyhow!("user not found"))?;
+        let row = sqlx::query(
+            r#"SELECT id, name, nickname, password, image, role FROM accounts WHERE name=$1"#,
+        )
+        .bind(username)
+        .fetch_one(ctx.state.pool())
+        .await
+        .map_err(|_| anyhow!("user not found"))?;
         let password_hash: String = row.get("password");
         if !verify_password(&req.password, &password_hash) {
             bail!("password is incorrect");
@@ -181,7 +225,7 @@ fn login_user(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let image: String = row.get("image");
         let role: String = row.get("role");
         let token = generate_jwt(id, &name, &nickname, &role, &ctx.state.config.auth_secret)?;
-        sqlx::query(r#"UPDATE accounts SET "apiToken"=$1, "updatedAt"=NOW() WHERE id=$2"#)
+        sqlx::query(r#"UPDATE accounts SET "apiToken"=$1, "updatedAt"=blinkora_now() WHERE id=$2"#)
             .bind(&token)
             .bind(id)
             .execute(ctx.state.pool())
@@ -212,7 +256,7 @@ fn regen_token(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
             &row.get::<String, _>("role"),
             &ctx.state.config.auth_secret,
         )?;
-        sqlx::query(r#"UPDATE accounts SET "apiToken"=$1, "updatedAt"=NOW() WHERE id=$2"#)
+        sqlx::query(r#"UPDATE accounts SET "apiToken"=$1, "updatedAt"=blinkora_now() WHERE id=$2"#)
             .bind(token)
             .bind(user.id)
             .execute(ctx.state.pool())
@@ -229,14 +273,18 @@ fn upsert_user(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let nickname = input.get("nickname").and_then(Value::as_str).unwrap_or("");
         let image = input.get("image").and_then(Value::as_str).unwrap_or("");
         let password = input.get("password").and_then(Value::as_str).unwrap_or("");
-        let original = input.get("originalPassword").and_then(Value::as_str).unwrap_or("");
+        let original = input
+            .get("originalPassword")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let row = sqlx::query("SELECT name, password FROM accounts WHERE id=$1")
             .bind(user.id)
             .fetch_one(ctx.state.pool())
             .await?;
         let mut new_hash = String::new();
         if !password.is_empty() {
-            if original.is_empty() || !verify_password(original, &row.get::<String, _>("password")) {
+            if original.is_empty() || !verify_password(original, &row.get::<String, _>("password"))
+            {
                 bail!("original password is incorrect");
             }
             new_hash = hash_password(password);
@@ -247,7 +295,7 @@ fn upsert_user(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             nickname=COALESCE(NULLIF($2,''), nickname),
             image=COALESCE(NULLIF($3,''), image),
             password=COALESCE(NULLIF($4,''), password),
-            "updatedAt"=NOW()
+            "updatedAt"=blinkora_now()
             WHERE id=$5"#,
         )
         .bind(name)
@@ -304,7 +352,10 @@ fn native_account_list(ctx: ProcedureContext, _input: Value) -> ProcedureFuture 
 fn link_account(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
-        let password = input.get("originalPassword").and_then(Value::as_str).unwrap_or("");
+        let password = input
+            .get("originalPassword")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let hash: String = sqlx::query_scalar("SELECT password FROM accounts WHERE id=$1")
             .bind(id)
             .fetch_one(ctx.state.pool())
@@ -318,15 +369,23 @@ fn link_account(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     .boxed()
 }
 
-async fn create_account_with_default_workspace(pool: &PgPool, secret: &str, name: &str, password: &str, nickname: Option<&str>) -> anyhow::Result<(i32, String)> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts").fetch_one(pool).await?;
+async fn create_account_with_default_workspace(
+    pool: &SqlitePool,
+    secret: &str,
+    name: &str,
+    password: &str,
+    nickname: Option<&str>,
+) -> anyhow::Result<(i32, String)> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accounts")
+        .fetch_one(pool)
+        .await?;
     if count > 0 {
         bail!("registration is closed for single-account mode");
     }
     let nickname = nickname.filter(|v| !v.is_empty()).unwrap_or(name);
     let mut tx = pool.begin().await?;
     let password_hash = hash_password(password);
-    let user_id: i32 = sqlx::query_scalar(r#"INSERT INTO accounts (name, password, nickname, role, "updatedAt") VALUES ($1,$2,$3,$4,NOW()) RETURNING id"#)
+    let user_id: i32 = sqlx::query_scalar(r#"INSERT INTO accounts (name, password, nickname, role, "updatedAt") VALUES ($1,$2,$3,$4,blinkora_now()) RETURNING id"#)
         .bind(name)
         .bind(password_hash)
         .bind(nickname)
@@ -339,19 +398,21 @@ async fn create_account_with_default_workspace(pool: &PgPool, secret: &str, name
         .bind(user_id)
         .execute(&mut *tx)
         .await?;
-    let workspace_id: i32 = sqlx::query_scalar(r#"INSERT INTO workspaces (name, "accountId", "isDefault", "updatedAt") VALUES ($1,$2,true,NOW()) RETURNING id"#)
+    let workspace_id: i32 = sqlx::query_scalar(r#"INSERT INTO workspaces (name, "accountId", "isDefault", "updatedAt") VALUES ($1,$2,true,blinkora_now()) RETURNING id"#)
         .bind("默认工作区")
         .bind(user_id)
         .fetch_one(&mut *tx)
         .await?;
     for (key, value) in [("theme", json!("system")), ("language", json!("zh"))] {
-        sqlx::query(r#"INSERT INTO config (key, config, "userId", "workspaceId") VALUES ($1,$2,$3,$4)"#)
-            .bind(key)
-            .bind(config_json(value))
-            .bind(user_id)
-            .bind(workspace_id)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            r#"INSERT INTO config (key, config, "userId", "workspaceId") VALUES ($1,$2,$3,$4)"#,
+        )
+        .bind(key)
+        .bind(config_json(value))
+        .bind(user_id)
+        .bind(workspace_id)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await?;
     Ok((user_id, token))

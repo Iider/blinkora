@@ -42,10 +42,14 @@ build_with_cargo() {
   fi
   (
     cd server
-    rustup target list --installed | grep -qx "$RUST_TARGET" || {
-      echo "error: Rust target $RUST_TARGET is not installed. Run: rustup target add $RUST_TARGET" >&2
-      exit 1
-    }
+    if command -v rustup >/dev/null 2>&1; then
+      rustup target list --installed | grep -qx "$RUST_TARGET" || {
+        echo "error: Rust target $RUST_TARGET is not installed. Run: rustup target add $RUST_TARGET" >&2
+        exit 1
+      }
+    else
+      echo "warning: rustup is unavailable; attempting the configured cargo target directly" >&2
+    fi
     CARGO_TARGET_DIR="$TARGET_DIR" cargo build --release --locked --target "$RUST_TARGET"
     cp "$TARGET_DIR/$RUST_TARGET/release/blinkora-server" "$RELEASE_DIR/blinkora-server"
   )
@@ -87,13 +91,13 @@ fi
 cp -R dist/public "$RELEASE_DIR/public"
 
 mkdir -p "$RELEASE_DIR/db"
-cp db/schema.sql "$RELEASE_DIR/db/schema.sql"
+cp db/schema.sqlite.sql "$RELEASE_DIR/db/schema.sqlite.sql"
 
 mkdir -p "$DOCKER_RELEASE_DIR"
 cp "$RELEASE_DIR/blinkora-server" "$DOCKER_RELEASE_DIR/blinkora-server"
 cp -R "$RELEASE_DIR/public" "$DOCKER_RELEASE_DIR/public"
 mkdir -p "$DOCKER_RELEASE_DIR/db"
-cp "$RELEASE_DIR/db/schema.sql" "$DOCKER_RELEASE_DIR/db/schema.sql"
+cp "$RELEASE_DIR/db/schema.sqlite.sql" "$DOCKER_RELEASE_DIR/db/schema.sqlite.sql"
 
 chmod +x "$RELEASE_DIR/blinkora-server"
 chmod +x "$DOCKER_RELEASE_DIR/blinkora-server"

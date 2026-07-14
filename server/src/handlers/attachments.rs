@@ -35,14 +35,14 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
         let rows = if !search.is_empty() {
             sqlx::query(
-                r#"SELECT id, path, name, size::text AS size, type, "noteId", "sortOrder", "createdAt", "updatedAt",
-                          false AS is_folder, NULL::text AS folder_name
+                r#"SELECT id, path, name, CAST(size AS TEXT) AS size, type, "noteId", "sortOrder", "createdAt", "updatedAt",
+                          false AS is_folder, NULL AS folder_name
                    FROM attachments
                    WHERE (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$1 AND "workspaceId"=$2))
                       OR ("accountId"=$1 AND "workspaceId"=$2))
                      AND "workspaceId"=$2
-                     AND (name ILIKE $3 OR path ILIKE $3 OR COALESCE("perfixPath", '') ILIKE $3)
-                   ORDER BY "sortOrder" ASC, "updatedAt" DESC NULLS LAST
+                     AND (name LIKE $3 OR path LIKE $3 OR COALESCE("perfixPath", '') LIKE $3)
+                   ORDER BY "sortOrder" ASC, ("updatedAt" IS NULL) ASC, "updatedAt" DESC
                    LIMIT $4 OFFSET $5"#,
             )
             .bind(user.id)
@@ -55,35 +55,33 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         } else if !folder.is_empty() {
             let folder_path = slash_to_comma(folder);
             sqlx::query(
-                r#"WITH combined_items AS (
-                    SELECT DISTINCT ON (folder_name)
-                      NULL::int AS id,
-                      CASE WHEN path LIKE '/api/s3file/%' THEN '/api/s3file/' ELSE '/api/file/' END || split_part("perfixPath", ',', array_length(string_to_array($3, ','), 1) + 1) AS path,
-                      split_part("perfixPath", ',', array_length(string_to_array($3, ','), 1) + 1) AS name,
-                      NULL::text AS size,
-                      NULL::text AS type,
-                      NULL::int AS "noteId",
-                      0 AS "sortOrder",
-                      NULL::timestamptz AS "createdAt",
-                      NULL::timestamptz AS "updatedAt",
-                      true AS is_folder,
-                      split_part("perfixPath", ',', array_length(string_to_array($3, ','), 1) + 1) AS folder_name
-                    FROM attachments
+                r#"WITH owned AS (
+                    SELECT * FROM attachments
                     WHERE (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$1 AND "workspaceId"=$2))
                        OR ("accountId"=$1 AND "workspaceId"=$2))
                       AND "workspaceId"=$2
-                      AND "perfixPath" LIKE ($3 || ',%')
-                      AND array_length(string_to_array("perfixPath", ','), 1) > array_length(string_to_array($3, ','), 1)
+                  ), child_paths AS (
+                    SELECT *, substr("perfixPath", length($3) + 2) AS child_path
+                    FROM owned
+                    WHERE "perfixPath" LIKE ($3 || ',%')
+                  ), folders AS (
+                    SELECT NULL AS id,
+                      CASE WHEN MIN(path) LIKE '/api/s3file/%' THEN '/api/s3file/' ELSE '/api/file/' END ||
+                        CASE WHEN instr(child_path, ',') = 0 THEN child_path ELSE substr(child_path, 1, instr(child_path, ',') - 1) END AS path,
+                      CASE WHEN instr(child_path, ',') = 0 THEN child_path ELSE substr(child_path, 1, instr(child_path, ',') - 1) END AS name,
+                      NULL AS size, NULL AS type, NULL AS "noteId", 0 AS "sortOrder",
+                      NULL AS "createdAt", NULL AS "updatedAt", true AS is_folder,
+                      CASE WHEN instr(child_path, ',') = 0 THEN child_path ELSE substr(child_path, 1, instr(child_path, ',') - 1) END AS folder_name
+                    FROM child_paths
+                    GROUP BY CASE WHEN instr(child_path, ',') = 0 THEN child_path ELSE substr(child_path, 1, instr(child_path, ',') - 1) END
+                  ), combined_items AS (
+                    SELECT * FROM folders
                     UNION ALL
-                    SELECT id, path, name, size::text AS size, type, "noteId", "sortOrder", "createdAt", "updatedAt", false AS is_folder, NULL::text AS folder_name
-                    FROM attachments
-                    WHERE (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$1 AND "workspaceId"=$2))
-                       OR ("accountId"=$1 AND "workspaceId"=$2))
-                      AND "workspaceId"=$2
-                      AND "perfixPath"=$3
+                    SELECT id, path, name, CAST(size AS TEXT) AS size, type, "noteId", "sortOrder", "createdAt", "updatedAt", false AS is_folder, NULL AS folder_name
+                    FROM owned WHERE "perfixPath"=$3
                   )
                   SELECT * FROM combined_items
-                  ORDER BY is_folder DESC, "sortOrder" ASC, "updatedAt" DESC NULLS LAST
+                  ORDER BY is_folder DESC, "sortOrder" ASC, ("updatedAt" IS NULL) ASC, "updatedAt" DESC
                   LIMIT $4 OFFSET $5"#,
             )
             .bind(user.id)
@@ -95,34 +93,30 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .await?
         } else {
             sqlx::query(
-                r#"WITH combined_items AS (
-                    SELECT DISTINCT ON (folder_name)
-                      NULL::int AS id,
-                      CASE WHEN path LIKE '/api/s3file/%' THEN '/api/s3file/' ELSE '/api/file/' END || split_part("perfixPath", ',', 1) AS path,
-                      split_part("perfixPath", ',', 1) AS name,
-                      NULL::text AS size,
-                      NULL::text AS type,
-                      NULL::int AS "noteId",
-                      0 AS "sortOrder",
-                      NULL::timestamptz AS "createdAt",
-                      NULL::timestamptz AS "updatedAt",
-                      true AS is_folder,
-                      split_part("perfixPath", ',', 1) AS folder_name
-                    FROM attachments
+                r#"WITH owned AS (
+                    SELECT * FROM attachments
                     WHERE (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$1 AND "workspaceId"=$2))
                        OR ("accountId"=$1 AND "workspaceId"=$2))
                       AND "workspaceId"=$2
-                      AND COALESCE("perfixPath", '') != ''
+                  ), folders AS (
+                    SELECT NULL AS id,
+                      CASE WHEN MIN(path) LIKE '/api/s3file/%' THEN '/api/s3file/' ELSE '/api/file/' END ||
+                        CASE WHEN instr("perfixPath", ',') = 0 THEN "perfixPath" ELSE substr("perfixPath", 1, instr("perfixPath", ',') - 1) END AS path,
+                      CASE WHEN instr("perfixPath", ',') = 0 THEN "perfixPath" ELSE substr("perfixPath", 1, instr("perfixPath", ',') - 1) END AS name,
+                      NULL AS size, NULL AS type, NULL AS "noteId", 0 AS "sortOrder",
+                      NULL AS "createdAt", NULL AS "updatedAt", true AS is_folder,
+                      CASE WHEN instr("perfixPath", ',') = 0 THEN "perfixPath" ELSE substr("perfixPath", 1, instr("perfixPath", ',') - 1) END AS folder_name
+                    FROM owned
+                    WHERE COALESCE("perfixPath", '') != ''
+                    GROUP BY CASE WHEN instr("perfixPath", ',') = 0 THEN "perfixPath" ELSE substr("perfixPath", 1, instr("perfixPath", ',') - 1) END
+                  ), combined_items AS (
+                    SELECT * FROM folders
                     UNION ALL
-                    SELECT id, path, name, size::text AS size, type, "noteId", "sortOrder", "createdAt", "updatedAt", false AS is_folder, NULL::text AS folder_name
-                    FROM attachments
-                    WHERE (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$1 AND "workspaceId"=$2))
-                       OR ("accountId"=$1 AND "workspaceId"=$2))
-                      AND "workspaceId"=$2
-                      AND COALESCE(depth, 0)=0
+                    SELECT id, path, name, CAST(size AS TEXT) AS size, type, "noteId", "sortOrder", "createdAt", "updatedAt", false AS is_folder, NULL AS folder_name
+                    FROM owned WHERE COALESCE(depth, 0)=0
                   )
                   SELECT * FROM combined_items
-                  ORDER BY is_folder DESC, "sortOrder" ASC, "updatedAt" DESC NULLS LAST
+                  ORDER BY is_folder DESC, "sortOrder" ASC, ("updatedAt" IS NULL) ASC, "updatedAt" DESC
                   LIMIT $3 OFFSET $4"#,
             )
             .bind(user.id)
@@ -158,7 +152,7 @@ fn create_folder(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let api_path = format!("/api/file/{}/.folder", folder_path.split(',').collect::<Vec<_>>().join("/"));
         sqlx::query(
             r#"INSERT INTO attachments (name, path, size, type, "accountId", "workspaceId", "perfixPath", depth, "sortOrder", "updatedAt")
-               VALUES ('.folder',$1,0,'folder',$2,$3,$4,$5,0,NOW())"#,
+               VALUES ('.folder',$1,0,'folder',$2,$3,$4,$5,0,blinkora_now())"#,
         )
         .bind(api_path)
         .bind(user.id)
@@ -213,7 +207,7 @@ fn rename(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 let next_prefix = replace_prefix(&old_prefix, &old_folder_path, &new_folder_path);
                 let next_path = replace_api_folder_prefix(&old_path, &old_folder_path, &new_folder_path);
                 move_local_file(&ctx, &old_path, &next_path).await;
-                sqlx::query(r#"UPDATE attachments SET "perfixPath"=$1, path=$2, depth=$3, "updatedAt"=NOW() WHERE id=$4"#)
+                sqlx::query(r#"UPDATE attachments SET "perfixPath"=$1, path=$2, depth=$3, "updatedAt"=blinkora_now() WHERE id=$4"#)
                     .bind(&next_prefix)
                     .bind(&next_path)
                     .bind(prefix_depth(&next_prefix))
@@ -243,7 +237,7 @@ fn rename(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let old_path = row.get::<String, _>("path");
         let next_path = old_path.rsplit_once('/').map(|(dir, _)| format!("{dir}/{new_name}")).unwrap_or_else(|| old_path.replace(&old_name, new_name));
         move_local_file(&ctx, &old_path, &next_path).await;
-        sqlx::query(r#"UPDATE attachments SET name=$1, path=$2, "updatedAt"=NOW() WHERE id=$3"#)
+        sqlx::query(r#"UPDATE attachments SET name=$1, path=$2, "updatedAt"=blinkora_now() WHERE id=$3"#)
             .bind(new_name)
             .bind(next_path)
             .bind(id)
@@ -275,10 +269,10 @@ fn move_item(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         }
         let rows = sqlx::query(
             r#"SELECT id, name, path FROM attachments
-               WHERE id=ANY($1) AND (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$2 AND "workspaceId"=$3))
+               WHERE id IN (SELECT value FROM json_each($1)) AND (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$2 AND "workspaceId"=$3))
                   OR ("accountId"=$2 AND "workspaceId"=$3)) AND "workspaceId"=$3"#,
         )
-        .bind(&source_ids)
+        .bind(crate::db::json_array(&source_ids))
         .bind(user.id)
         .bind(ws)
         .fetch_all(ctx.state.pool())
@@ -297,7 +291,7 @@ fn move_item(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 format!("{}{}/{}", base, target_folder.split(',').collect::<Vec<_>>().join("/"), name)
             };
             move_local_file(&ctx, &old_path, &next_path).await;
-            sqlx::query(r#"UPDATE attachments SET "perfixPath"=$1, depth=$2, path=$3, "updatedAt"=NOW() WHERE id=$4"#)
+            sqlx::query(r#"UPDATE attachments SET "perfixPath"=$1, depth=$2, path=$3, "updatedAt"=blinkora_now() WHERE id=$4"#)
                 .bind(&target_folder)
                 .bind(prefix_depth(&target_folder))
                 .bind(next_path)
@@ -312,9 +306,16 @@ fn move_item(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
 fn delete(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
-        let is_folder = input.get("isFolder").and_then(Value::as_bool).unwrap_or(false);
+        let is_folder = input
+            .get("isFolder")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         if is_folder {
-            let folder_path = input.get("folderPath").and_then(Value::as_str).map(slash_to_comma).unwrap_or_default();
+            let folder_path = input
+                .get("folderPath")
+                .and_then(Value::as_str)
+                .map(slash_to_comma)
+                .unwrap_or_default();
             return delete_folder(ctx, &folder_path).await;
         }
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
@@ -328,7 +329,12 @@ fn delete_many(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let ids: Vec<i32> = input
             .get("ids")
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(|v| v.as_i64().map(|n| n as i32)).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| v.as_i64().map(|n| n as i32))
+                    .collect()
+            })
             .unwrap_or_default();
         delete_ids(ctx, ids).await
     }
@@ -350,12 +356,18 @@ async fn delete_folder(ctx: ProcedureContext, folder_path: &str) -> anyhow::Resu
     .bind(folder_path)
     .fetch_all(ctx.state.pool())
     .await?;
-    let ids = rows.iter().map(|row| row.get::<i32, _>("id")).collect::<Vec<_>>();
+    let ids = rows
+        .iter()
+        .map(|row| row.get::<i32, _>("id"))
+        .collect::<Vec<_>>();
     for row in rows {
         delete_local_file(&ctx, &row.get::<String, _>("path")).await;
     }
     if !ids.is_empty() {
-        sqlx::query(r#"DELETE FROM attachments WHERE id=ANY($1)"#).bind(&ids).execute(ctx.state.pool()).await?;
+        sqlx::query(r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#)
+            .bind(crate::db::json_array(&ids))
+            .execute(ctx.state.pool())
+            .await?;
     }
     Ok(json!({ "success": true, "message": "Folder and its contents deleted successfully" }))
 }
@@ -368,25 +380,31 @@ async fn delete_ids(ctx: ProcedureContext, ids: Vec<i32>) -> anyhow::Result<Valu
     }
     let rows = sqlx::query(
         r#"SELECT id, path FROM attachments
-           WHERE id=ANY($1) AND (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$2 AND "workspaceId"=$3))
+           WHERE id IN (SELECT value FROM json_each($1)) AND (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$2 AND "workspaceId"=$3))
               OR ("accountId"=$2 AND "workspaceId"=$3)) AND "workspaceId"=$3"#,
     )
-    .bind(&ids)
+    .bind(crate::db::json_array(&ids))
     .bind(user.id)
     .bind(ws)
     .fetch_all(ctx.state.pool())
     .await?;
-    let owned_ids = rows.iter().map(|row| row.get::<i32, _>("id")).collect::<Vec<_>>();
+    let owned_ids = rows
+        .iter()
+        .map(|row| row.get::<i32, _>("id"))
+        .collect::<Vec<_>>();
     for row in rows {
         delete_local_file(&ctx, &row.get::<String, _>("path")).await;
     }
     if !owned_ids.is_empty() {
-        sqlx::query(r#"DELETE FROM attachments WHERE id=ANY($1)"#).bind(&owned_ids).execute(ctx.state.pool()).await?;
+        sqlx::query(r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#)
+            .bind(crate::db::json_array(&owned_ids))
+            .execute(ctx.state.pool())
+            .await?;
     }
     Ok(json!({ "success": true, "message": "Files deleted successfully" }))
 }
 
-fn resource_json(row: sqlx::postgres::PgRow) -> Value {
+fn resource_json(row: sqlx::sqlite::SqliteRow) -> Value {
     let is_folder = row.get::<bool, _>("is_folder");
     json!({
         "id": row.get::<Option<i32>, _>("id"),
@@ -404,11 +422,19 @@ fn resource_json(row: sqlx::postgres::PgRow) -> Value {
 }
 
 fn slash_to_comma(path: &str) -> String {
-    path.trim_matches('/').split('/').filter(|part| !part.is_empty()).collect::<Vec<_>>().join(",")
+    path.trim_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn prefix_depth(prefix: &str) -> i32 {
-    if prefix.is_empty() { 0 } else { prefix.split(',').count() as i32 }
+    if prefix.is_empty() {
+        0
+    } else {
+        prefix.split(',').count() as i32
+    }
 }
 
 fn replace_prefix(value: &str, old_prefix: &str, new_prefix: &str) -> String {
@@ -424,13 +450,22 @@ fn replace_prefix(value: &str, old_prefix: &str, new_prefix: &str) -> String {
 fn replace_api_folder_prefix(path: &str, old_prefix: &str, new_prefix: &str) -> String {
     let old_slash = old_prefix.split(',').collect::<Vec<_>>().join("/");
     let new_slash = new_prefix.split(',').collect::<Vec<_>>().join("/");
-    path.replace(&format!("/api/file/{old_slash}"), &format!("/api/file/{new_slash}"))
-        .replace(&format!("/api/s3file/{old_slash}"), &format!("/api/s3file/{new_slash}"))
+    path.replace(
+        &format!("/api/file/{old_slash}"),
+        &format!("/api/file/{new_slash}"),
+    )
+    .replace(
+        &format!("/api/s3file/{old_slash}"),
+        &format!("/api/s3file/{new_slash}"),
+    )
 }
 
 async fn move_local_file(ctx: &ProcedureContext, old_api_path: &str, new_api_path: &str) {
     if old_api_path.starts_with("/api/s3file/") || new_api_path.starts_with("/api/s3file/") {
-        let (Some(old_key), Some(new_key)) = (s3_key_from_api_path(old_api_path), s3_key_from_api_path(new_api_path)) else {
+        let (Some(old_key), Some(new_key)) = (
+            s3_key_from_api_path(old_api_path),
+            s3_key_from_api_path(new_api_path),
+        ) else {
             return;
         };
         if let Ok(Some(config)) = s3::load_s3_config(&ctx.state).await {
@@ -440,7 +475,10 @@ async fn move_local_file(ctx: &ProcedureContext, old_api_path: &str, new_api_pat
         }
         return;
     }
-    let (Some(old_path), Some(new_path)) = (api_file_relative_path(old_api_path), api_file_relative_path(new_api_path)) else {
+    let (Some(old_path), Some(new_path)) = (
+        api_file_relative_path(old_api_path),
+        api_file_relative_path(new_api_path),
+    ) else {
         return;
     };
     let root = Path::new(&ctx.state.config.data_dir).join("files");
@@ -456,7 +494,10 @@ async fn move_local_file(ctx: &ProcedureContext, old_api_path: &str, new_api_pat
 
 async fn delete_local_file(ctx: &ProcedureContext, api_path: &str) {
     if api_path.starts_with("/api/s3file/") {
-        if let (Ok(Some(config)), Some(key)) = (s3::load_s3_config(&ctx.state).await, s3_key_from_api_path(api_path)) {
+        if let (Ok(Some(config)), Some(key)) = (
+            s3::load_s3_config(&ctx.state).await,
+            s3_key_from_api_path(api_path),
+        ) {
             let _ = s3::delete_object(&config, &key).await;
         }
         return;
@@ -464,13 +505,21 @@ async fn delete_local_file(ctx: &ProcedureContext, api_path: &str) {
     let Some(relative_path) = api_file_relative_path(api_path) else {
         return;
     };
-    let path = Path::new(&ctx.state.config.data_dir).join("files").join(relative_path);
+    let path = Path::new(&ctx.state.config.data_dir)
+        .join("files")
+        .join(relative_path);
     let _ = fs::remove_file(path).await;
 }
 
 fn api_file_relative_path(path: &str) -> Option<PathBuf> {
-    let relative = path.strip_prefix("/api/file/").or_else(|| path.strip_prefix("/api/s3file/"))?;
-    if relative.contains('\0') || relative.contains('\\') || relative.starts_with('/') || relative.split('/').any(|part| part == "..") {
+    let relative = path
+        .strip_prefix("/api/file/")
+        .or_else(|| path.strip_prefix("/api/s3file/"))?;
+    if relative.contains('\0')
+        || relative.contains('\\')
+        || relative.starts_with('/')
+        || relative.split('/').any(|part| part == "..")
+    {
         return None;
     }
     Some(PathBuf::from(relative))
@@ -478,7 +527,11 @@ fn api_file_relative_path(path: &str) -> Option<PathBuf> {
 
 fn s3_key_from_api_path(path: &str) -> Option<String> {
     let key = path.strip_prefix("/api/s3file/")?;
-    if key.contains('\0') || key.contains('\\') || key.starts_with('/') || key.split('/').any(|part| part == "..") {
+    if key.contains('\0')
+        || key.contains('\\')
+        || key.starts_with('/')
+        || key.split('/').any(|part| part == "..")
+    {
         return None;
     }
     Some(key.to_string())

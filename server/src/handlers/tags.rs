@@ -6,8 +6,8 @@ use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
 use anyhow::{anyhow, bail};
 use futures::FutureExt;
 use serde_json::{json, Value};
-use sqlx::Postgres;
 use sqlx::Row;
+use sqlx::Sqlite;
 use std::collections::{HashMap, HashSet};
 
 const DEFAULT_ORPHAN_TAG_CLEANUP_LIMIT: usize = 200;
@@ -113,8 +113,8 @@ fn update_many(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         if ids.is_empty() || tag.is_empty() {
             return Ok(json!(true));
         }
-        let rows = sqlx::query(r#"SELECT id, type, content FROM notes WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
-            .bind(&ids)
+        let rows = sqlx::query(r#"SELECT id, type, content FROM notes WHERE id IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3"#)
+            .bind(crate::db::json_array(&ids))
             .bind(user.id)
             .bind(ws)
             .fetch_all(ctx.state.pool())
@@ -125,7 +125,7 @@ fn update_many(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             let note_type = row.get::<i32, _>("type");
             let old_content = row.get::<String, _>("content");
             let content = format!("{} #{}", old_content, tag);
-            sqlx::query(r#"UPDATE notes SET content=$1, "updatedAt"=NOW() WHERE id=$2"#)
+            sqlx::query(r#"UPDATE notes SET content=$1, "updatedAt"=blinkora_now() WHERE id=$2"#)
                 .bind(&content)
                 .bind(note_id)
                 .execute(&mut *tx)
@@ -187,7 +187,7 @@ struct OrphanTagCleanupPlan {
 }
 
 pub(crate) async fn cleanup_unused_tags<'a>(
-    tx: &mut sqlx::Transaction<'a, Postgres>,
+    tx: &mut sqlx::Transaction<'a, Sqlite>,
     tag_ids: &[i32],
     account_id: i32,
     workspace_id: i32,
@@ -211,7 +211,7 @@ pub(crate) async fn cleanup_unused_tags<'a>(
 }
 
 pub(crate) async fn cleanup_orphan_tags_tx<'a>(
-    tx: &mut sqlx::Transaction<'a, Postgres>,
+    tx: &mut sqlx::Transaction<'a, Sqlite>,
     account_id: i32,
     workspace_id: i32,
     options: OrphanTagCleanupOptions,
@@ -256,8 +256,8 @@ pub(crate) async fn cleanup_orphan_tags_tx<'a>(
         options.limit.max(1),
     );
     if !options.dry_run && !plan.candidate_ids.is_empty() {
-        sqlx::query(r#"DELETE FROM tag WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
-            .bind(&plan.candidate_ids)
+        sqlx::query(r#"DELETE FROM tag WHERE id IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3"#)
+            .bind(crate::db::json_array(&plan.candidate_ids))
             .bind(account_id)
             .bind(workspace_id)
             .execute(&mut **tx)
@@ -524,7 +524,7 @@ fn update_name(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let ws = workspace_id(&ctx).await?;
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
         let new_name = input.get("newName").and_then(Value::as_str).unwrap_or("");
-        sqlx::query(r#"UPDATE tag SET name=$1, "updatedAt"=NOW() WHERE id=$2 AND "accountId"=$3 AND "workspaceId"=$4"#)
+        sqlx::query(r#"UPDATE tag SET name=$1, "updatedAt"=blinkora_now() WHERE id=$2 AND "accountId"=$3 AND "workspaceId"=$4"#)
             .bind(new_name)
             .bind(id)
             .bind(user.id)
@@ -547,7 +547,7 @@ fn update_order(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
         let sort_order = input.get("sortOrder").and_then(Value::as_i64).unwrap_or_default() as i32;
         let row = sqlx::query(
-            r#"UPDATE tag SET "sortOrder"=$1, "updatedAt"=NOW()
+            r#"UPDATE tag SET "sortOrder"=$1, "updatedAt"=blinkora_now()
                WHERE id=$2 AND "accountId"=$3 AND "workspaceId"=$4
                RETURNING id, name, icon, parent, "accountId", "workspaceId", "sortOrder", "createdAt", "updatedAt""#,
         )
@@ -569,7 +569,7 @@ fn update_tag_field(ctx: ProcedureContext, input: Value, field: &'static str) ->
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
         let value = input.get(field).and_then(Value::as_str).unwrap_or("");
         let sql = format!(
-            r#"UPDATE tag SET {field}=$1, "updatedAt"=NOW()
+            r#"UPDATE tag SET {field}=$1, "updatedAt"=blinkora_now()
                WHERE id=$2 AND "accountId"=$3 AND "workspaceId"=$4
                RETURNING id, name, icon, parent, "accountId", "workspaceId", "sortOrder", "createdAt", "updatedAt""#
         );
@@ -627,8 +627,8 @@ fn delete_with_notes(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .collect::<Vec<_>>();
         let mut tx = ctx.state.pool().begin().await?;
         if !note_ids.is_empty() {
-            sqlx::query(r#"UPDATE notes SET "isRecycle"=true, "updatedAt"=NOW() WHERE id=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3"#)
-                .bind(&note_ids)
+            sqlx::query(r#"UPDATE notes SET "isRecycle"=true, "updatedAt"=blinkora_now() WHERE id IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3"#)
+                .bind(crate::db::json_array(&note_ids))
                 .bind(user.id)
                 .bind(ws)
                 .execute(&mut *tx)

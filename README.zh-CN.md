@@ -10,7 +10,7 @@ Blinkora 由 Rust 后端直接托管浏览器应用。原生客户端、离线�
 | --- | --- | --- |
 | Web 前端 | `app/` | React/Vite 前端 |
 | Rust 后端 | `server/` | 唯一维护的服务端 |
-| 数据库结构 | `db/schema.sql` | 首版 PostgreSQL 建库脚本 |
+| 数据库结构 | `db/schema.sqlite.sql` | 运行时 SQLite schema |
 | 共享代码 | `shared/` | 前端和 Rust API 兼容的共享类型/工具 |
 | Docker 部署 | `docker/` | 默认部署入口 |
 
@@ -53,8 +53,7 @@ bun run verify:rust
 
 ## 数据目录
 
-- 应用数据：`docker/data/blinkora`
-- Postgres 数据：`docker/data/postgres`
+- SQLite、附件和应用数据：`docker/data/blinkora`
 - 备份/导出目录：`docker/data/backup`
 
 ## 存储配置

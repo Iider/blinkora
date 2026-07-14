@@ -22,10 +22,9 @@ http://localhost:6676
 
 - Compose project：`blinkora`
 - Web container：`blinkora-web`
-- Postgres container：`blinkora-db`
 - Web image：`blinkora-web:latest`
 - Port mapping：`6676:6676`
-- Postgres data：`docker/data/postgres`
+- SQLite 与附件数据：`docker/data/blinkora`
 
 
 ## 最小烟测
@@ -34,7 +33,7 @@ http://localhost:6676
 curl -I http://localhost:6676/
 curl -I http://localhost:6676/signin
 curl -s http://localhost:6676/health
-docker exec blinkora-db psql -U postgres -d postgres -Atc "select to_regclass('public.accounts');"
+sqlite3 docker/data/blinkora/blinkora.sqlite3 'PRAGMA integrity_check;'
 ```
 
 ## 固化烟测

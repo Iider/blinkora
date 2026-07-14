@@ -82,7 +82,7 @@ fn create(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
         let row = sqlx::query(
             r#"INSERT INTO "agentAccessTokens" (name, "tokenHash", token, "accountId", "workspaceId", permissions, "expiresAt", "updatedAt")
-               VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+               VALUES ($1,$2,$3,$4,$5,$6,$7,blinkora_now())
                RETURNING id, name, token, "accountId", "workspaceId",
                          (SELECT name FROM workspaces WHERE id=$5) AS "workspaceName",
                          permissions, "expiresAt", "revokedAt", "lastUsedAt", "createdAt", "updatedAt""#,
@@ -116,7 +116,7 @@ fn revoke(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
         let row = sqlx::query(
             r#"UPDATE "agentAccessTokens"
-               SET "revokedAt"=NOW(), "updatedAt"=NOW()
+               SET "revokedAt"=blinkora_now(), "updatedAt"=blinkora_now()
                WHERE id=$1 AND "accountId"=$2
                RETURNING id, name, "accountId", "workspaceId",
                          token,
@@ -149,7 +149,7 @@ fn parse_expires_at(value: Option<&Value>) -> anyhow::Result<Option<DateTime<Utc
     ))
 }
 
-fn token_json(row: sqlx::postgres::PgRow, token: Option<String>) -> Value {
+fn token_json(row: sqlx::sqlite::SqliteRow, token: Option<String>) -> Value {
     let mut value = json!({
         "id": row.get::<i32, _>("id"),
         "name": row.get::<String, _>("name"),

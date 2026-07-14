@@ -45,9 +45,8 @@ openssl rand -hex 32
 | --- | --- | --- |
 | `data/blinkora` | `/app/.blinkora` | 附件、图片和临时上传 |
 | `data/backup` | `/app/backup` | 导出备份目录 |
-| `data/postgres` | `/var/lib/postgresql/data` | PostgreSQL 数据目录 |
 
-Postgres 官方镜像初始化数据库时要求数据目录为空；首次启动前不要在 `data/postgres` 放 `.gitkeep` 或其他占位文件。
+SQLite 文件为 `data/blinkora/blinkora.sqlite3`，与附件一起持久化。目录会由服务设为仅当前运行用户可读写。
 
 ## 存储
 

@@ -26,7 +26,7 @@ pub async fn workspace_id(ctx: &ProcedureContext) -> anyhow::Result<i32> {
     .ok_or_else(|| anyhow!("workspace not found"))
 }
 
-pub fn tag_json(row: sqlx::postgres::PgRow) -> Value {
+pub fn tag_json(row: sqlx::sqlite::SqliteRow) -> Value {
     json!({
         "id": row.get::<i32, _>("id"),
         "name": row.get::<String, _>("name"),
@@ -40,7 +40,7 @@ pub fn tag_json(row: sqlx::postgres::PgRow) -> Value {
     })
 }
 
-pub fn attachment_json(row: sqlx::postgres::PgRow) -> Value {
+pub fn attachment_json(row: sqlx::sqlite::SqliteRow) -> Value {
     json!({
         "id": row.get::<i32, _>("id"),
         "name": row.get::<String, _>("name"),
@@ -91,7 +91,7 @@ pub async fn load_note_attachments(
     note_id: i32,
 ) -> anyhow::Result<Vec<Value>> {
     let rows = sqlx::query(
-        r#"SELECT id, name, path, size::text AS size, type, "noteId", "accountId", "workspaceId", "sortOrder", "perfixPath", depth, metadata, "createdAt", "updatedAt"
+        r#"SELECT id, name, path, CAST(size AS TEXT) AS size, type, "noteId", "accountId", "workspaceId", "sortOrder", "perfixPath", depth, metadata, "createdAt", "updatedAt"
            FROM attachments WHERE "noteId"=$1 ORDER BY "sortOrder" ASC, id ASC"#,
     )
     .bind(note_id)
@@ -102,7 +102,7 @@ pub async fn load_note_attachments(
 
 pub async fn note_json(
     ctx: &ProcedureContext,
-    row: sqlx::postgres::PgRow,
+    row: sqlx::sqlite::SqliteRow,
 ) -> anyhow::Result<Value> {
     let id = row.get::<i32, _>("id");
     let account_id = row.get::<Option<i32>, _>("accountId").unwrap_or_default();

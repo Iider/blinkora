@@ -37,12 +37,23 @@ fn link_preview(_ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         };
         let html = resp.text().await.unwrap_or_default();
         let title = first_match(&html, r#"(?is)<title[^>]*>(.*?)</title>"#);
-        let description = first_match(&html, r#"(?is)<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']"#)
-            .or_else(|| first_match(&html, r#"(?is)<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']"#))
-            .unwrap_or_default();
-        let favicon = first_match(&html, r#"(?is)<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]+href=["']([^"']*)["']"#)
-            .and_then(|value| parsed.join(&value).ok().map(|u| u.to_string()))
-            .unwrap_or_default();
+        let description = first_match(
+            &html,
+            r#"(?is)<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']"#,
+        )
+        .or_else(|| {
+            first_match(
+                &html,
+                r#"(?is)<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']*)["']"#,
+            )
+        })
+        .unwrap_or_default();
+        let favicon = first_match(
+            &html,
+            r#"(?is)<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]+href=["']([^"']*)["']"#,
+        )
+        .and_then(|value| parsed.join(&value).ok().map(|u| u.to_string()))
+        .unwrap_or_default();
         Ok(json!({
             "title": html_unescape(&title.unwrap_or_default()),
             "favicon": favicon,

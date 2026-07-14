@@ -2,7 +2,7 @@
 
 Blinkora is a Docker-first Web-only private note and memory base for long-term notes, wiki-style memory, tags, attachments, references, daily review, operation logs, search, export, and private annotations.
 
-Blinkora is served as a browser app by the Rust backend. Default deployment uses Docker; personal macOS machines can also run the Rust service locally with Docker only keeping PostgreSQL. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
+Blinkora is served as a browser app by the Rust backend. Default deployment uses one Docker Web container; personal macOS machines can run the same Rust service locally without Docker. SQLite and attachments are stored together under `DATA_DIR`. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
 
 ## Runtime
 
@@ -10,9 +10,9 @@ Blinkora is served as a browser app by the Rust backend. Default deployment uses
 | --- | --- | --- |
 | Web frontend | `app/` | React/Vite frontend |
 | Rust backend | `server/` | Only maintained server runtime |
-| Database schema | `db/schema.sql` | First-release PostgreSQL schema |
+| Database schema | `db/schema.sqlite.sql` | Runtime SQLite schema |
 | Shared code | `shared/` | Frontend-friendly shared types and utilities |
-| Docker deployment | `docker/` | Default full Docker entry and PostgreSQL compose entry |
+| Docker deployment | `docker/` | Default single-container Docker entry |
 
 The Rust backend serves REST APIs, tRPC-compatible endpoints, file APIs, MCP SSE, health checks, first-run database initialization, and React/Vite static assets from one binary.
 
@@ -54,13 +54,13 @@ The local URL is [http://localhost:6676](http://localhost:6676). For public or p
 
 ## Local Persistent Deployment
 
-如果只想用 Docker 跑 PostgreSQL，而 Blinkora Web/Rust 服务跑在 macOS 本机：
+macOS 本机持久化模式不需要 Docker：
 
 ```bash
 bun run deploy:local install
 ```
 
-脚本会启动 Docker `db` 服务，停掉旧的 `web` 容器，构建 macOS 本机 Rust 服务，并安装 `launchd` 常驻服务。完整说明见 [docs/LOCAL_PERSISTENT_DEPLOYMENT.md](docs/LOCAL_PERSISTENT_DEPLOYMENT.md)。
+脚本会构建 macOS 本机 Rust 服务，并安装 `launchd` 常驻服务。完整说明见 [docs/LOCAL_PERSISTENT_DEPLOYMENT.md](docs/LOCAL_PERSISTENT_DEPLOYMENT.md)。
 
 常用检查：
 
@@ -69,7 +69,7 @@ bun run deploy:local status
 bun run deploy:local logs
 ```
 
-访问地址仍是 [http://localhost:6676](http://localhost:6676)。这种模式下只需要 `blinkora-db` 容器，不需要 `blinkora-web` 容器。
+访问地址仍是 [http://localhost:6676](http://localhost:6676)。
 
 ## Development Commands
 
@@ -103,11 +103,10 @@ Frontend dev uses `http://localhost:5173` and proxies API requests to the Rust d
 
 ## Data
 
-- App data: `docker/data/blinkora`
-- Postgres data: `docker/data/postgres`
+- SQLite, attachments and app data: `docker/data/blinkora`
 - Backup/export directory: `docker/data/backup`
 
-本机持久化部署时，附件和运行数据改放在 `~/.blinkora/local/data`，PostgreSQL 仍使用 `docker/data/postgres`。
+本机持久化部署时，SQLite、附件和运行数据都在 `~/.blinkora/local/data`。
 
 ## Storage Configuration
 

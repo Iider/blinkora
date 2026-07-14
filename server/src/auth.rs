@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha512};
-use sqlx::PgPool;
 use sqlx::Row;
+use sqlx::SqlitePool;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -243,7 +243,7 @@ async fn authenticate_agent_token(
            JOIN workspaces w ON w.id=t."workspaceId" AND w."accountId"=t."accountId"
            WHERE t."tokenHash"=$1
              AND t."revokedAt" IS NULL
-             AND (t."expiresAt" IS NULL OR t."expiresAt" > NOW())"#,
+             AND (t."expiresAt" IS NULL OR t."expiresAt" > blinkora_now())"#,
     )
     .bind(token_hash)
     .fetch_optional(state.pool())
@@ -267,8 +267,9 @@ async fn authenticate_agent_token(
         .map(AgentPermissions::from_json)
         .unwrap_or_else(|_| AgentPermissions::workspace_default());
 
+    let _write_guard = state.write_guard().await;
     sqlx::query(
-        r#"UPDATE "agentAccessTokens" SET "lastUsedAt"=NOW(), "updatedAt"=NOW() WHERE id=$1"#,
+        r#"UPDATE "agentAccessTokens" SET "lastUsedAt"=blinkora_now(), "updatedAt"=blinkora_now() WHERE id=$1"#,
     )
     .bind(token_id)
     .execute(state.pool())
@@ -308,11 +309,12 @@ fn agent_endpoint_allowed(method: &Method, path: &str) -> bool {
 }
 
 fn is_agent_readable_file_path(path: &str) -> bool {
-    (path.starts_with("/api/file/")
-        && path != "/api/file/upload"
-        && path != "/api/file/upload-by-url"
-        && path != "/api/file/delete")
-        || path.starts_with("/api/s3file/")
+    let local_file = path.strip_prefix("/api").unwrap_or(path);
+    (local_file.starts_with("/file/")
+        && local_file != "/file/upload"
+        && local_file != "/file/upload-by-url"
+        && local_file != "/file/delete")
+        || local_file.starts_with("/s3file/")
 }
 
 fn is_trpc_procedure_path(path: &str) -> bool {
@@ -348,7 +350,7 @@ fn extract_token(parts: &Parts) -> Option<String> {
 
 async fn validate_workspace_header(
     parts: &Parts,
-    pool: &PgPool,
+    pool: &SqlitePool,
     user_id: i32,
 ) -> Result<Option<i32>, String> {
     let Some(workspace_id) = workspace_header(parts)? else {
@@ -609,10 +611,12 @@ mod tests {
             &Method::GET,
             "/api/file/folder/example.txt"
         ));
+        assert!(agent_endpoint_allowed(&Method::GET, "/file/example.txt"));
         assert!(agent_endpoint_allowed(
             &Method::GET,
             "/api/s3file/workspace/example.txt"
         ));
+        assert!(agent_endpoint_allowed(&Method::GET, "/s3file/example.txt"));
         assert!(!agent_endpoint_allowed(
             &Method::POST,
             "/api/file/example.txt"

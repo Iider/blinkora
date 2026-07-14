@@ -31,7 +31,9 @@ async fn serve_file(path: PathBuf, request_path: &str, fallback: bool) -> Respon
             let mut response = (StatusCode::OK, bytes).into_response();
             set_cache_headers(response.headers_mut(), request_path, fallback);
             if let Some(content_type) = content_type(request_path) {
-                response.headers_mut().insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_TYPE, content_type.parse().unwrap());
             }
             response
         }

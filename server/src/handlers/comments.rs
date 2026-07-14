@@ -18,20 +18,27 @@ fn list(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
-        let note_id = input.get("noteId").and_then(Value::as_i64).unwrap_or_default() as i32;
-        let exists: Option<i32> = sqlx::query_scalar(r#"SELECT id FROM notes WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
-            .bind(note_id)
-            .bind(user.id)
-            .bind(ws)
-            .fetch_optional(ctx.state.pool())
-            .await?;
+        let note_id = input
+            .get("noteId")
+            .and_then(Value::as_i64)
+            .unwrap_or_default() as i32;
+        let exists: Option<i32> = sqlx::query_scalar(
+            r#"SELECT id FROM notes WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#,
+        )
+        .bind(note_id)
+        .bind(user.id)
+        .bind(ws)
+        .fetch_optional(ctx.state.pool())
+        .await?;
         if exists.is_none() {
             bail!("note not found");
         }
-        let rows = sqlx::query(&comment_select_sql(r#""noteId"=$1 AND "parentId" IS NULL ORDER BY "createdAt" ASC, id ASC"#))
-            .bind(note_id)
-            .fetch_all(ctx.state.pool())
-            .await?;
+        let rows = sqlx::query(&comment_select_sql(
+            r#""noteId"=$1 AND "parentId" IS NULL ORDER BY "createdAt" ASC, id ASC"#,
+        ))
+        .bind(note_id)
+        .fetch_all(ctx.state.pool())
+        .await?;
         let mut items = Vec::new();
         for row in rows {
             items.push(comment_json(&ctx, row, true).await?);
@@ -70,7 +77,7 @@ fn create(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         }
         let row = sqlx::query(
             r#"INSERT INTO comments (content, kind, status, metadata, "accountId", "noteId", "workspaceId", "parentId", "updatedAt")
-               VALUES ($1,$2,'open',$3,$4,$5,$6,$7,NOW())
+               VALUES ($1,$2,'open',$3,$4,$5,$6,$7,blinkora_now())
                RETURNING id, content, kind, status, metadata, "accountId", "noteId", "workspaceId", "parentId", "createdAt", "updatedAt""#,
         )
         .bind(content)
@@ -104,16 +111,16 @@ fn update(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             bail!("annotation not found");
         }
         if let Some(content) = input.get("content").and_then(Value::as_str) {
-            sqlx::query(r#"UPDATE comments SET content=$1, "updatedAt"=NOW() WHERE id=$2"#).bind(content).bind(id).execute(ctx.state.pool()).await?;
+            sqlx::query(r#"UPDATE comments SET content=$1, "updatedAt"=blinkora_now() WHERE id=$2"#).bind(content).bind(id).execute(ctx.state.pool()).await?;
         }
         if let Some(kind) = input.get("kind").and_then(Value::as_str) {
-            sqlx::query(r#"UPDATE comments SET kind=$1, "updatedAt"=NOW() WHERE id=$2"#).bind(kind).bind(id).execute(ctx.state.pool()).await?;
+            sqlx::query(r#"UPDATE comments SET kind=$1, "updatedAt"=blinkora_now() WHERE id=$2"#).bind(kind).bind(id).execute(ctx.state.pool()).await?;
         }
         if let Some(status) = input.get("status").and_then(Value::as_str) {
-            sqlx::query(r#"UPDATE comments SET status=$1, "updatedAt"=NOW() WHERE id=$2"#).bind(status).bind(id).execute(ctx.state.pool()).await?;
+            sqlx::query(r#"UPDATE comments SET status=$1, "updatedAt"=blinkora_now() WHERE id=$2"#).bind(status).bind(id).execute(ctx.state.pool()).await?;
         }
         if let Some(metadata) = input.get("metadata") {
-            sqlx::query(r#"UPDATE comments SET metadata=$1, "updatedAt"=NOW() WHERE id=$2"#).bind(metadata).bind(id).execute(ctx.state.pool()).await?;
+            sqlx::query(r#"UPDATE comments SET metadata=$1, "updatedAt"=blinkora_now() WHERE id=$2"#).bind(metadata).bind(id).execute(ctx.state.pool()).await?;
         }
         let row = sqlx::query(&comment_select_sql("id=$1")).bind(id).fetch_one(ctx.state.pool()).await?;
         Ok(comment_json(&ctx, row, false).await?)
@@ -169,7 +176,7 @@ fn convert_to_todo(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         });
         let todo_id: i32 = sqlx::query_scalar(
             r#"INSERT INTO notes (content, type, "accountId", "workspaceId", metadata, "updatedAt")
-               VALUES ($1,2,$2,$3,$4,NOW()) RETURNING id"#,
+               VALUES ($1,2,$2,$3,$4,blinkora_now()) RETURNING id"#,
         )
         .bind(content)
         .bind(user.id)
@@ -182,7 +189,7 @@ fn convert_to_todo(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .bind(note_id)
             .execute(ctx.state.pool())
             .await?;
-        sqlx::query(r#"UPDATE comments SET status='resolved', metadata=((COALESCE(metadata,'{}'::json))::jsonb || $1::jsonb)::json, "updatedAt"=NOW() WHERE id=$2"#)
+        sqlx::query(r#"UPDATE comments SET status='resolved', metadata=blinkora_json_merge(COALESCE(metadata,'{}'), $1), "updatedAt"=blinkora_now() WHERE id=$2"#)
             .bind(json!({ "convertedToTodoId": todo_id, "convertedAt": chrono::Utc::now() }))
             .bind(id)
             .execute(ctx.state.pool())
@@ -205,14 +212,20 @@ fn comment_select_sql(extra: &str) -> String {
     )
 }
 
-async fn comment_json(ctx: &ProcedureContext, row: sqlx::postgres::PgRow, with_replies: bool) -> anyhow::Result<Value> {
+async fn comment_json(
+    ctx: &ProcedureContext,
+    row: sqlx::sqlite::SqliteRow,
+    with_replies: bool,
+) -> anyhow::Result<Value> {
     let id = row.get::<i32, _>("id");
     let account_id = row.get::<Option<i32>, _>("accountId");
     let replies = if with_replies {
-        let rows = sqlx::query(&comment_select_sql(r#""parentId"=$1 ORDER BY "createdAt" ASC, id ASC"#))
-            .bind(id)
-            .fetch_all(ctx.state.pool())
-            .await?;
+        let rows = sqlx::query(&comment_select_sql(
+            r#""parentId"=$1 ORDER BY "createdAt" ASC, id ASC"#,
+        ))
+        .bind(id)
+        .fetch_all(ctx.state.pool())
+        .await?;
         let mut out = Vec::new();
         for row in rows {
             out.push(Box::pin(comment_json(ctx, row, false)).await?);

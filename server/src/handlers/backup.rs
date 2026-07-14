@@ -43,35 +43,57 @@ async fn import_backup(
             continue;
         };
         if name == "mode" {
-            mode = field.text().await.unwrap_or_else(|_| "workspace".to_string());
+            mode = field
+                .text()
+                .await
+                .unwrap_or_else(|_| "workspace".to_string());
         } else if name == "file" {
             archive_bytes = field.bytes().await.map_err(bad_request)?.to_vec();
         }
     }
 
     if archive_bytes.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "backup file is required" }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "backup file is required" })),
+        ));
     }
     if mode != "workspace" && mode != "full" {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "unsupported import mode" }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "unsupported import mode" })),
+        ));
     }
 
-    let manifest = read_manifest_from_zip(&archive_bytes)
-        .map_err(|err| (StatusCode::BAD_REQUEST, Json(json!({ "error": err.to_string() }))))?;
+    let manifest = read_manifest_from_zip(&archive_bytes).map_err(|err| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": err.to_string() })),
+        )
+    })?;
     if manifest.get("schema").and_then(Value::as_str) != Some("blinkora.backup.v1") {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "unsupported backup schema" }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "unsupported backup schema" })),
+        ));
     }
 
     let workspaces = manifest
         .get("workspaces")
         .and_then(Value::as_array)
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid backup manifest" }))))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invalid backup manifest" })),
+            )
+        })?;
     let selected_workspaces: Vec<&Value> = if mode == "workspace" {
         workspaces.iter().take(1).collect()
     } else {
         workspaces.iter().collect()
     };
 
+    let _write_guard = state.write_guard().await;
     let mut tx = state.pool().begin().await.map_err(internal_error)?;
     let mut imported_workspace_ids = Vec::new();
     let mut imported_note_count = 0usize;
@@ -81,14 +103,24 @@ async fn import_backup(
 
     for item in selected_workspaces {
         let workspace = item.get("workspace").unwrap_or(item);
-        let source_name = workspace.get("name").and_then(Value::as_str).unwrap_or("Imported Workspace");
-        let imported_name = format!("Imported - {} - {}", source_name, chrono::Utc::now().format("%Y%m%d%H%M%S"));
-        let description = workspace.get("description").and_then(Value::as_str).unwrap_or("");
+        let source_name = workspace
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Imported Workspace");
+        let imported_name = format!(
+            "Imported - {} - {}",
+            source_name,
+            chrono::Utc::now().format("%Y%m%d%H%M%S")
+        );
+        let description = workspace
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
         let icon = workspace.get("icon").and_then(Value::as_str).unwrap_or("");
         let color = workspace.get("color").and_then(Value::as_str).unwrap_or("");
         let new_workspace_id: i32 = sqlx::query_scalar(
             r#"INSERT INTO workspaces (name, description, icon, color, "accountId", "isDefault", "updatedAt")
-               VALUES ($1,$2,$3,$4,$5,false,NOW()) RETURNING id"#,
+               VALUES ($1,$2,$3,$4,$5,false,blinkora_now()) RETURNING id"#,
         )
         .bind(imported_name)
         .bind(description)
@@ -101,14 +133,19 @@ async fn import_backup(
         imported_workspace_ids.push(new_workspace_id);
 
         let mut tag_id_map: HashMap<i32, i32> = HashMap::new();
-        for tag in item.get("tags").and_then(Value::as_array).into_iter().flatten() {
+        for tag in item
+            .get("tags")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let old_id = tag.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
             let name = tag.get("name").and_then(Value::as_str).unwrap_or("");
             let icon = tag.get("icon").and_then(Value::as_str).unwrap_or("");
             let sort_order = tag.get("sortOrder").and_then(Value::as_i64).unwrap_or(0) as i32;
             let new_tag_id: i32 = sqlx::query_scalar(
                 r#"INSERT INTO tag (name, icon, parent, "accountId", "workspaceId", "sortOrder", "updatedAt")
-                   VALUES ($1,$2,0,$3,$4,$5,NOW()) RETURNING id"#,
+                   VALUES ($1,$2,0,$3,$4,$5,blinkora_now()) RETURNING id"#,
             )
             .bind(name)
             .bind(icon)
@@ -122,16 +159,24 @@ async fn import_backup(
                 tag_id_map.insert(old_id, new_tag_id);
             }
         }
-        for tag in item.get("tags").and_then(Value::as_array).into_iter().flatten() {
+        for tag in item
+            .get("tags")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let old_id = tag.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
-            let old_parent = tag.get("parent").and_then(Value::as_i64).unwrap_or_default() as i32;
+            let old_parent = tag
+                .get("parent")
+                .and_then(Value::as_i64)
+                .unwrap_or_default() as i32;
             let Some(new_id) = tag_id_map.get(&old_id).copied() else {
                 continue;
             };
             let Some(new_parent) = tag_id_map.get(&old_parent).copied() else {
                 continue;
             };
-            sqlx::query(r#"UPDATE tag SET parent=$1, "updatedAt"=NOW() WHERE id=$2"#)
+            sqlx::query(r#"UPDATE tag SET parent=$1, "updatedAt"=blinkora_now() WHERE id=$2"#)
                 .bind(new_parent)
                 .bind(new_id)
                 .execute(&mut *tx)
@@ -140,7 +185,12 @@ async fn import_backup(
         }
 
         let mut attachment_path_map: HashMap<String, String> = HashMap::new();
-        for attachment in item.get("attachments").and_then(Value::as_array).into_iter().flatten() {
+        for attachment in item
+            .get("attachments")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let old_path = attachment.get("path").and_then(Value::as_str).unwrap_or("");
             let Some(file_ref) = attachment.get("fileRef").and_then(Value::as_str) else {
                 if is_restorable_attachment(attachment) {
@@ -148,8 +198,16 @@ async fn import_backup(
                 }
                 continue;
             };
-            let original_name = attachment.get("name").and_then(Value::as_str).unwrap_or("attachment");
-            match restore_zip_file(&state.config.data_dir, &archive_bytes, file_ref, original_name) {
+            let original_name = attachment
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("attachment");
+            match restore_zip_file(
+                &state.config.data_dir,
+                &archive_bytes,
+                file_ref,
+                original_name,
+            ) {
                 Ok(new_path) => {
                     attachment_path_map.insert(old_path.to_string(), new_path);
                     restored_attachment_files += 1;
@@ -161,22 +219,36 @@ async fn import_backup(
         }
 
         let mut note_id_map: HashMap<i32, i32> = HashMap::new();
-        for note in item.get("notes").and_then(Value::as_array).into_iter().flatten() {
+        for note in item
+            .get("notes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let old_id = note.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
             let content = replace_attachment_paths(
                 note.get("content").and_then(Value::as_str).unwrap_or(""),
                 &attachment_path_map,
             );
             let note_type = note.get("type").and_then(Value::as_i64).unwrap_or(0) as i32;
-            let is_archived = note.get("isArchived").and_then(Value::as_bool).unwrap_or(false);
-            let is_recycle = note.get("isRecycle").and_then(Value::as_bool).unwrap_or(false);
+            let is_archived = note
+                .get("isArchived")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let is_recycle = note
+                .get("isRecycle")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let is_top = note.get("isTop").and_then(Value::as_bool).unwrap_or(false);
-            let is_reviewed = note.get("isReviewed").and_then(Value::as_bool).unwrap_or(false);
+            let is_reviewed = note
+                .get("isReviewed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let metadata = note.get("metadata").cloned();
             let sort_order = note.get("sortOrder").and_then(Value::as_i64).unwrap_or(0) as i32;
             let new_note_id: i32 = sqlx::query_scalar(
                 r#"INSERT INTO notes (type, content, "isArchived", "isRecycle", "isTop", "isReviewed", metadata, "accountId", "workspaceId", "sortOrder", "updatedAt")
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()) RETURNING id"#,
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,blinkora_now()) RETURNING id"#,
             )
             .bind(note_type)
             .bind(content)
@@ -197,12 +269,22 @@ async fn import_backup(
             imported_note_count += 1;
         }
 
-        for note in item.get("notes").and_then(Value::as_array).into_iter().flatten() {
+        for note in item
+            .get("notes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let old_note_id = note.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
             let Some(new_note_id) = note_id_map.get(&old_note_id).copied() else {
                 continue;
             };
-            for old_tag_id in note.get("tagIds").and_then(Value::as_array).into_iter().flatten() {
+            for old_tag_id in note
+                .get("tagIds")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 let old_tag_id = old_tag_id.as_i64().unwrap_or_default() as i32;
                 let Some(new_tag_id) = tag_id_map.get(&old_tag_id).copied() else {
                     continue;
@@ -216,21 +298,45 @@ async fn import_backup(
             }
         }
 
-        for attachment in item.get("attachments").and_then(Value::as_array).into_iter().flatten() {
-            let old_note_id = attachment.get("noteId").and_then(Value::as_i64).map(|value| value as i32);
+        for attachment in item
+            .get("attachments")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let old_note_id = attachment
+                .get("noteId")
+                .and_then(Value::as_i64)
+                .map(|value| value as i32);
             let new_note_id = old_note_id.and_then(|id| note_id_map.get(&id).copied());
             let name = attachment.get("name").and_then(Value::as_str).unwrap_or("");
             let old_path = attachment.get("path").and_then(Value::as_str).unwrap_or("");
-            let path = attachment_path_map.get(old_path).map(String::as_str).unwrap_or(old_path);
-            let size = attachment.get("size").and_then(Value::as_str).and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
+            let path = attachment_path_map
+                .get(old_path)
+                .map(String::as_str)
+                .unwrap_or(old_path);
+            let size = attachment
+                .get("size")
+                .and_then(Value::as_str)
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0);
             let kind = attachment.get("type").and_then(Value::as_str).unwrap_or("");
-            let sort_order = attachment.get("sortOrder").and_then(Value::as_i64).unwrap_or(0) as i32;
-            let prefix = attachment.get("perfixPath").and_then(Value::as_str).unwrap_or("");
-            let depth = attachment.get("depth").and_then(Value::as_i64).map(|value| value as i32);
+            let sort_order = attachment
+                .get("sortOrder")
+                .and_then(Value::as_i64)
+                .unwrap_or(0) as i32;
+            let prefix = attachment
+                .get("perfixPath")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let depth = attachment
+                .get("depth")
+                .and_then(Value::as_i64)
+                .map(|value| value as i32);
             let metadata = attachment.get("metadata").cloned();
             sqlx::query(
                 r#"INSERT INTO attachments (name, path, size, type, "noteId", "accountId", "workspaceId", "sortOrder", "perfixPath", depth, metadata, "updatedAt")
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())"#,
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,blinkora_now())"#,
             )
             .bind(name)
             .bind(path)
@@ -249,9 +355,20 @@ async fn import_backup(
             imported_attachment_count += 1;
         }
 
-        for reference in item.get("noteReferences").and_then(Value::as_array).into_iter().flatten() {
-            let old_from = reference.get("fromNoteId").and_then(Value::as_i64).unwrap_or_default() as i32;
-            let old_to = reference.get("toNoteId").and_then(Value::as_i64).unwrap_or_default() as i32;
+        for reference in item
+            .get("noteReferences")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let old_from = reference
+                .get("fromNoteId")
+                .and_then(Value::as_i64)
+                .unwrap_or_default() as i32;
+            let old_to = reference
+                .get("toNoteId")
+                .and_then(Value::as_i64)
+                .unwrap_or_default() as i32;
             let Some(new_from) = note_id_map.get(&old_from).copied() else {
                 continue;
             };
@@ -267,19 +384,36 @@ async fn import_backup(
         }
 
         let mut comment_id_map: HashMap<i32, i32> = HashMap::new();
-        for comment in item.get("comments").and_then(Value::as_array).into_iter().flatten() {
-            let old_id = comment.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
-            let old_note_id = comment.get("noteId").and_then(Value::as_i64).unwrap_or_default() as i32;
+        for comment in item
+            .get("comments")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let old_id = comment
+                .get("id")
+                .and_then(Value::as_i64)
+                .unwrap_or_default() as i32;
+            let old_note_id = comment
+                .get("noteId")
+                .and_then(Value::as_i64)
+                .unwrap_or_default() as i32;
             let Some(new_note_id) = note_id_map.get(&old_note_id).copied() else {
                 continue;
             };
             let content = comment.get("content").and_then(Value::as_str).unwrap_or("");
-            let kind = comment.get("kind").and_then(Value::as_str).unwrap_or("annotation");
-            let status = comment.get("status").and_then(Value::as_str).unwrap_or("open");
+            let kind = comment
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("annotation");
+            let status = comment
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("open");
             let metadata = comment.get("metadata").cloned();
             let new_comment_id: i32 = sqlx::query_scalar(
                 r#"INSERT INTO comments (content, kind, status, metadata, "accountId", "noteId", "workspaceId", "parentId", "updatedAt")
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,NOW()) RETURNING id"#,
+                   VALUES ($1,$2,$3,$4,$5,$6,$7,NULL,blinkora_now()) RETURNING id"#,
             )
             .bind(content)
             .bind(kind)
@@ -295,25 +429,46 @@ async fn import_backup(
                 comment_id_map.insert(old_id, new_comment_id);
             }
         }
-        for comment in item.get("comments").and_then(Value::as_array).into_iter().flatten() {
-            let old_id = comment.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
-            let old_parent = comment.get("parentId").and_then(Value::as_i64).unwrap_or_default() as i32;
+        for comment in item
+            .get("comments")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let old_id = comment
+                .get("id")
+                .and_then(Value::as_i64)
+                .unwrap_or_default() as i32;
+            let old_parent = comment
+                .get("parentId")
+                .and_then(Value::as_i64)
+                .unwrap_or_default() as i32;
             let Some(new_id) = comment_id_map.get(&old_id).copied() else {
                 continue;
             };
             let Some(new_parent) = comment_id_map.get(&old_parent).copied() else {
                 continue;
             };
-            sqlx::query(r#"UPDATE comments SET "parentId"=$1, "updatedAt"=NOW() WHERE id=$2"#)
-                .bind(new_parent)
-                .bind(new_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(internal_error)?;
+            sqlx::query(
+                r#"UPDATE comments SET "parentId"=$1, "updatedAt"=blinkora_now() WHERE id=$2"#,
+            )
+            .bind(new_parent)
+            .bind(new_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(internal_error)?;
         }
 
-        for history in item.get("noteHistory").and_then(Value::as_array).into_iter().flatten() {
-            let old_note_id = history.get("noteId").and_then(Value::as_i64).unwrap_or_default() as i32;
+        for history in item
+            .get("noteHistory")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let old_note_id = history
+                .get("noteId")
+                .and_then(Value::as_i64)
+                .unwrap_or_default() as i32;
             let Some(new_note_id) = note_id_map.get(&old_note_id).copied() else {
                 continue;
             };
@@ -335,8 +490,16 @@ async fn import_backup(
             .map_err(internal_error)?;
         }
 
-        for log in item.get("operationLogs").and_then(Value::as_array).into_iter().flatten() {
-            let old_note_id = log.get("noteId").and_then(Value::as_i64).unwrap_or_default() as i32;
+        for log in item
+            .get("operationLogs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let old_note_id = log
+                .get("noteId")
+                .and_then(Value::as_i64)
+                .unwrap_or_default() as i32;
             let new_note_id = note_id_map.get(&old_note_id).copied();
             let mut details = log.get("details").cloned().unwrap_or_else(|| json!({}));
             if !details.is_object() {
@@ -354,19 +517,31 @@ async fn import_backup(
                     object.insert("originalNoteId".to_string(), json!(old_note_id));
                 }
             }
-            let actor_type = log.get("actorType").and_then(Value::as_str).unwrap_or("user");
+            let actor_type = log
+                .get("actorType")
+                .and_then(Value::as_str)
+                .unwrap_or("user");
             let actor_label = log.get("actorLabel").and_then(Value::as_str).unwrap_or("");
             let action = log.get("action").and_then(Value::as_str).unwrap_or("");
-            let note_type = log.get("noteType").and_then(Value::as_i64).map(|value| value as i32);
+            let note_type = log
+                .get("noteType")
+                .and_then(Value::as_i64)
+                .map(|value| value as i32);
             let note_title = log.get("noteTitle").and_then(Value::as_str).unwrap_or("");
-            let changed_fields = log.get("changedFields").cloned().unwrap_or_else(|| json!([]));
+            let changed_fields = log
+                .get("changedFields")
+                .cloned()
+                .unwrap_or_else(|| json!([]));
             let summary = log.get("summary").and_then(Value::as_str).unwrap_or("");
-            let created_at = log.get("createdAt").and_then(Value::as_str).map(str::to_string);
+            let created_at = log
+                .get("createdAt")
+                .and_then(Value::as_str)
+                .map(str::to_string);
             sqlx::query(
                 r#"INSERT INTO "operationLog"
                    ("accountId", "workspaceId", "actorType", "actorAccountId", "actorAgentTokenId",
                     "actorLabel", action, "noteId", "noteType", "noteTitle", "changedFields", summary, details, "createdAt")
-                   VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE($13::timestamptz, NOW()))"#,
+                   VALUES ($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9,$10,$11,$12,COALESCE($13, blinkora_now()))"#,
             )
             .bind(user.id)
             .bind(new_workspace_id)
@@ -386,20 +561,27 @@ async fn import_backup(
             .map_err(internal_error)?;
         }
 
-        for config in item.get("configs").and_then(Value::as_array).into_iter().flatten() {
+        for config in item
+            .get("configs")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
             let key = config.get("key").and_then(Value::as_str).unwrap_or("");
             let value = config.get("config").cloned();
             if key.is_empty() {
                 continue;
             }
-            sqlx::query(r#"INSERT INTO config (key, config, "userId", "workspaceId") VALUES ($1,$2,$3,$4)"#)
-                .bind(key)
-                .bind(value)
-                .bind(user.id)
-                .bind(new_workspace_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(internal_error)?;
+            sqlx::query(
+                r#"INSERT INTO config (key, config, "userId", "workspaceId") VALUES ($1,$2,$3,$4)"#,
+            )
+            .bind(key)
+            .bind(value)
+            .bind(user.id)
+            .bind(new_workspace_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(internal_error)?;
         }
     }
 
@@ -456,7 +638,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .fetch_all(ctx.state.pool())
             .await?;
             let attachments = sqlx::query(
-                r#"SELECT id, name, path, size::text AS size, type, "noteId", "sortOrder", "perfixPath", depth, metadata, "createdAt", "updatedAt"
+                r#"SELECT id, name, path, CAST(size AS TEXT) AS size, type, "noteId", "sortOrder", "perfixPath", depth, metadata, "createdAt", "updatedAt"
                    FROM attachments WHERE "accountId"=$1 AND "workspaceId"=$2 ORDER BY id ASC"#,
             )
             .bind(user.id)
@@ -482,8 +664,8 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             let tag_links = if note_ids.is_empty() {
                 Vec::new()
             } else {
-                sqlx::query(r#"SELECT "noteId", "tagId" FROM "tagsToNote" WHERE "noteId"=ANY($1)"#)
-                    .bind(&note_ids)
+                sqlx::query(r#"SELECT "noteId", "tagId" FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#)
+                    .bind(crate::db::json_array(&note_ids))
                     .fetch_all(ctx.state.pool())
                     .await?
             };
@@ -492,9 +674,9 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             } else {
                 sqlx::query(
                     r#"SELECT id, "noteId", content, kind, status, metadata, "parentId", "createdAt", "updatedAt"
-                       FROM comments WHERE "noteId"=ANY($1) AND "workspaceId"=$2 ORDER BY "createdAt" ASC, id ASC"#,
+                       FROM comments WHERE "noteId" IN (SELECT value FROM json_each($1)) AND "workspaceId"=$2 ORDER BY "createdAt" ASC, id ASC"#,
                 )
-                .bind(&note_ids)
+                .bind(crate::db::json_array(&note_ids))
                 .bind(workspace_id)
                 .fetch_all(ctx.state.pool())
                 .await?
@@ -504,10 +686,10 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             } else {
                 sqlx::query(
                     r#"SELECT id, "fromNoteId", "toNoteId", "createdAt"
-                       FROM "noteReference" WHERE "fromNoteId"=ANY($1) AND "toNoteId"=ANY($1)
+                       FROM "noteReference" WHERE "fromNoteId" IN (SELECT value FROM json_each($1)) AND "toNoteId" IN (SELECT value FROM json_each($1))
                        ORDER BY "createdAt" ASC, id ASC"#,
                 )
-                .bind(&note_ids)
+                .bind(crate::db::json_array(&note_ids))
                 .fetch_all(ctx.state.pool())
                 .await?
             };
@@ -516,10 +698,10 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             } else {
                 sqlx::query(
                     r#"SELECT id, "noteId", content, metadata, version, "createdAt"
-                       FROM "noteHistory" WHERE "noteId"=ANY($1) AND "accountId"=$2 AND "workspaceId"=$3
+                       FROM "noteHistory" WHERE "noteId" IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3
                        ORDER BY "noteId" ASC, version ASC, id ASC"#,
                 )
-                .bind(&note_ids)
+                .bind(crate::db::json_array(&note_ids))
                 .bind(user.id)
                 .bind(workspace_id)
                 .fetch_all(ctx.state.pool())
@@ -745,7 +927,11 @@ fn sanitize_note_properties(properties: &Value) -> Option<Map<String, Value>> {
         }
     }
 
-    if sanitized.is_empty() { None } else { Some(sanitized) }
+    if sanitized.is_empty() {
+        None
+    } else {
+        Some(sanitized)
+    }
 }
 
 fn is_supported_note_property_value(value: &Value) -> bool {
@@ -756,7 +942,6 @@ fn is_supported_note_property_value(value: &Value) -> bool {
         Value::Object(_) => false,
     }
 }
-
 
 fn add_attachment_files_to_zip(
     zip: &mut zip::ZipWriter<File>,
@@ -775,7 +960,10 @@ fn add_attachment_files_to_zip(
             .and_then(|value| value.get("id"))
             .and_then(Value::as_i64)
             .unwrap_or_default();
-        let Some(attachments) = workspace.get_mut("attachments").and_then(Value::as_array_mut) else {
+        let Some(attachments) = workspace
+            .get_mut("attachments")
+            .and_then(Value::as_array_mut)
+        else {
             continue;
         };
         for attachment in attachments {
@@ -794,14 +982,23 @@ fn add_attachment_files_to_zip(
                 attachment["fileMissing"] = json!(true);
                 continue;
             };
-            let attachment_id = attachment.get("id").and_then(Value::as_i64).unwrap_or_default();
+            let attachment_id = attachment
+                .get("id")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
             let name = sanitize_file_name(
                 attachment
                     .get("name")
                     .and_then(Value::as_str)
-                    .unwrap_or_else(|| file_path.file_name().and_then(|value| value.to_str()).unwrap_or("attachment")),
+                    .unwrap_or_else(|| {
+                        file_path
+                            .file_name()
+                            .and_then(|value| value.to_str())
+                            .unwrap_or("attachment")
+                    }),
             );
-            let file_ref = format!("files/workspace-{workspace_id}/attachment-{attachment_id}/{name}");
+            let file_ref =
+                format!("files/workspace-{workspace_id}/attachment-{attachment_id}/{name}");
             zip.start_file(&file_ref, options)?;
             zip.write_all(&content)?;
             attachment["fileRef"] = json!(file_ref);
@@ -811,7 +1008,12 @@ fn add_attachment_files_to_zip(
     Ok((attachment_file_count, missing_file_count))
 }
 
-fn restore_zip_file(data_dir: &str, archive_bytes: &[u8], file_ref: &str, original_name: &str) -> anyhow::Result<String> {
+fn restore_zip_file(
+    data_dir: &str,
+    archive_bytes: &[u8],
+    file_ref: &str,
+    original_name: &str,
+) -> anyhow::Result<String> {
     let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes))?;
     let mut file = archive.by_name(file_ref)?;
     let mut content = Vec::new();
@@ -822,7 +1024,12 @@ fn restore_zip_file(data_dir: &str, archive_bytes: &[u8], file_ref: &str, origin
         .and_then(|value| value.to_str())
         .map(|value| format!(".{value}"))
         .unwrap_or_default();
-    let file_name = format!("{}_{}{}", chrono::Utc::now().timestamp_millis(), Uuid::new_v4().simple(), extension);
+    let file_name = format!(
+        "{}_{}{}",
+        chrono::Utc::now().timestamp_millis(),
+        Uuid::new_v4().simple(),
+        extension
+    );
     let root = Path::new(data_dir).join("files");
     fs::create_dir_all(&root)?;
     fs::write(root.join(&file_name), content)?;
@@ -848,19 +1055,34 @@ fn is_restorable_attachment(attachment: &Value) -> bool {
 }
 
 fn api_file_relative_path(path: &str) -> Option<PathBuf> {
-    let relative = path.strip_prefix("/api/file/").or_else(|| path.strip_prefix("/api/s3file/"))?;
-    if relative.contains('\0') || relative.contains('\\') || relative.starts_with('/') || relative.split('/').any(|part| part == "..") {
+    let relative = path
+        .strip_prefix("/api/file/")
+        .or_else(|| path.strip_prefix("/api/s3file/"))?;
+    if relative.contains('\0')
+        || relative.contains('\\')
+        || relative.starts_with('/')
+        || relative.split('/').any(|part| part == "..")
+    {
         return None;
     }
     Some(PathBuf::from(relative))
 }
 
 fn sanitize_file_name(name: impl AsRef<str>) -> String {
-    let name = name.as_ref().rsplit('/').next().unwrap_or("").rsplit('\\').next().unwrap_or("");
+    let name = name
+        .as_ref()
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .rsplit('\\')
+        .next()
+        .unwrap_or("");
     let sanitized: String = name
         .chars()
         .map(|ch| {
-            if ch.is_ascii_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            if ch.is_ascii_control()
+                || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+            {
                 '_'
             } else if ch.is_whitespace() {
                 '_'
@@ -870,7 +1092,11 @@ fn sanitize_file_name(name: impl AsRef<str>) -> String {
         })
         .collect();
     let trimmed = sanitized.trim_matches('_');
-    if trimmed.is_empty() { "attachment".to_string() } else { trimmed.to_string() }
+    if trimmed.is_empty() {
+        "attachment".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn read_manifest_from_zip(bytes: &[u8]) -> anyhow::Result<Value> {
@@ -887,9 +1113,15 @@ fn read_manifest_from_zip(bytes: &[u8]) -> anyhow::Result<Value> {
 }
 
 fn bad_request(error: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
-    (StatusCode::BAD_REQUEST, Json(json!({ "error": error.to_string() })))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": error.to_string() })),
+    )
 }
 
 fn internal_error(error: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
-    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": error.to_string() })))
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": error.to_string() })),
+    )
 }

@@ -60,7 +60,9 @@ async fn upload_file(
         } else {
             let value = field.text().await.unwrap_or_default();
             match name.as_str() {
-                "isUserVoiceRecording" if value == "true" => metadata["isUserVoiceRecording"] = json!(true),
+                "isUserVoiceRecording" if value == "true" => {
+                    metadata["isUserVoiceRecording"] = json!(true)
+                }
                 "audioDuration" if !value.is_empty() => metadata["audioDuration"] = json!(value),
                 "audioDurationSeconds" => {
                     if let Ok(seconds) = value.parse::<i64>() {
@@ -73,18 +75,28 @@ async fn upload_file(
     }
 
     let Some(file_name) = original_name else {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "No files received." }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "No files received." })),
+        ));
     };
 
-    let upload = persist_upload(&state, &file_name, &bytes, &content_type).await.map_err(internal_error)?;
-    let metadata_value = if metadata.as_object().map(|map| !map.is_empty()).unwrap_or(false) {
+    let upload = persist_upload(&state, &file_name, &bytes, &content_type)
+        .await
+        .map_err(internal_error)?;
+    let metadata_value = if metadata
+        .as_object()
+        .map(|map| !map.is_empty())
+        .unwrap_or(false)
+    {
         Some(metadata)
     } else {
         None
     };
+    let _write_guard = state.write_guard().await;
     sqlx::query(
         r#"INSERT INTO attachments (name, path, size, type, "accountId", "workspaceId", metadata, "updatedAt")
-           VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())"#,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,blinkora_now())"#,
     )
     .bind(&file_name)
     .bind(&upload.api_path)
@@ -120,7 +132,10 @@ async fn upload_by_url(
     Json(req): Json<UploadByUrlRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
     if req.url.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(json!({ "error": "No URL provided" }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "No URL provided" })),
+        ));
     }
     let ctx = ProcedureContext {
         state: state.clone(),
@@ -154,10 +169,13 @@ async fn upload_by_url(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("upload_{}", chrono::Utc::now().timestamp_millis()));
     let bytes = response.bytes().await.map_err(internal_error)?;
-    let upload = persist_upload(&state, &name, &bytes, &content_type).await.map_err(internal_error)?;
+    let upload = persist_upload(&state, &name, &bytes, &content_type)
+        .await
+        .map_err(internal_error)?;
+    let _write_guard = state.write_guard().await;
     sqlx::query(
         r#"INSERT INTO attachments (name, path, size, type, "accountId", "workspaceId", "updatedAt")
-           VALUES ($1,$2,$3,$4,$5,$6,NOW())"#,
+           VALUES ($1,$2,$3,$4,$5,$6,blinkora_now())"#,
     )
     .bind(&name)
     .bind(&upload.api_path)
@@ -214,14 +232,20 @@ async fn delete_file(
     .await
     .map_err(internal_error)?;
     let Some(row) = row else {
-        return Err((StatusCode::NOT_FOUND, Json(json!({ "error": "File not found" }))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "File not found" })),
+        ));
     };
     let attachment_account = row.get::<Option<i32>, _>("accountId");
     let attachment_workspace = row.get::<Option<i32>, _>("workspaceId");
     let note_account = row.get::<Option<i32>, _>("noteAccountId");
     let note_workspace = row.get::<Option<i32>, _>("noteWorkspaceId");
-    let is_owner = user.role == "superadmin" || attachment_account == Some(user.id) || note_account == Some(user.id);
-    let is_same_workspace = attachment_workspace == Some(workspace_id) || note_workspace == Some(workspace_id);
+    let is_owner = user.role == "superadmin"
+        || attachment_account == Some(user.id)
+        || note_account == Some(user.id);
+    let is_same_workspace =
+        attachment_workspace == Some(workspace_id) || note_workspace == Some(workspace_id);
     if !is_owner || !is_same_workspace {
         return Err((
             StatusCode::FORBIDDEN,
@@ -238,6 +262,7 @@ async fn delete_file(
     } else if let Some(relative_path) = api_file_relative_path(&req.attachment_path) {
         let _ = tokio::fs::remove_file(files_root(&state).join(relative_path)).await;
     }
+    let _write_guard = state.write_guard().await;
     sqlx::query(r#"DELETE FROM attachments WHERE id=$1"#)
         .bind(row.get::<i32, _>("id"))
         .execute(state.pool())
@@ -299,16 +324,31 @@ async fn serve_file(
     let mut response = Body::from(bytes).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_str(&content_type).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
+        HeaderValue::from_str(&content_type)
+            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
-    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=3600"));
-    if query.get("download").map(|value| value == "true").unwrap_or(false) {
-        response.headers_mut().insert(header::CONTENT_DISPOSITION, HeaderValue::from_static("attachment"));
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=3600"),
+    );
+    if query
+        .get("download")
+        .map(|value| value == "true")
+        .unwrap_or(false)
+    {
+        response.headers_mut().insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("attachment"),
+        );
     }
     response
 }
 
-async fn authorize_file_read(user: &CurrentUser, state: &AppState, api_path: &str) -> Result<(), Response> {
+async fn authorize_file_read(
+    user: &CurrentUser,
+    state: &AppState,
+    api_path: &str,
+) -> Result<(), Response> {
     let ctx = ProcedureContext {
         state: state.clone(),
         user: Some(user.clone()),
@@ -345,7 +385,12 @@ struct UploadResult {
     api_path: String,
 }
 
-async fn persist_upload(state: &AppState, original_name: &str, bytes: &[u8], content_type: &str) -> anyhow::Result<UploadResult> {
+async fn persist_upload(
+    state: &AppState,
+    original_name: &str,
+    bytes: &[u8],
+    content_type: &str,
+) -> anyhow::Result<UploadResult> {
     let safe_name = sanitize_file_name(original_name);
     let extension = FsPath::new(&safe_name)
         .extension()
@@ -359,14 +404,23 @@ async fn persist_upload(state: &AppState, original_name: &str, bytes: &[u8], con
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "upload".to_string());
     if let Some(config) = s3::load_s3_config(state).await? {
-        let file_name = format!("{}_{}{}", base_name, chrono::Utc::now().timestamp_millis(), extension);
+        let file_name = format!(
+            "{}_{}{}",
+            base_name,
+            chrono::Utc::now().timestamp_millis(),
+            extension
+        );
         let key = s3::object_key(&config, &file_name);
         s3::put_object(&config, &key, bytes, content_type).await?;
         return Ok(UploadResult {
             api_path: format!("/api/s3file/{key}"),
         });
     }
-    let stored_name = format!("{}_{}", chrono::Utc::now().timestamp_millis(), Uuid::new_v4().simple());
+    let stored_name = format!(
+        "{}_{}",
+        chrono::Utc::now().timestamp_millis(),
+        Uuid::new_v4().simple()
+    );
     let file_name = format!("{stored_name}{extension}");
     let root = files_root(state);
     tokio::fs::create_dir_all(&root).await?;
@@ -390,7 +444,11 @@ fn api_file_relative_path(path: &str) -> Option<PathBuf> {
 
 fn s3_key_from_api_path(path: &str) -> Option<String> {
     let key = path.strip_prefix("/api/s3file/")?;
-    if key.contains('\0') || key.contains('\\') || key.starts_with('/') || key.split('/').any(|part| part == "..") {
+    if key.contains('\0')
+        || key.contains('\\')
+        || key.starts_with('/')
+        || key.split('/').any(|part| part == "..")
+    {
         return None;
     }
     Some(key.to_string())
@@ -410,11 +468,20 @@ fn safe_relative_path(path: &str, allow_temp: bool) -> anyhow::Result<PathBuf> {
 }
 
 fn sanitize_file_name(name: impl AsRef<str>) -> String {
-    let name = name.as_ref().rsplit('/').next().unwrap_or("").rsplit('\\').next().unwrap_or("");
+    let name = name
+        .as_ref()
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .rsplit('\\')
+        .next()
+        .unwrap_or("");
     let sanitized: String = name
         .chars()
         .map(|ch| {
-            if ch.is_ascii_control() || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+            if ch.is_ascii_control()
+                || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
+            {
                 '_'
             } else if ch.is_whitespace() {
                 '_'
@@ -427,11 +494,20 @@ fn sanitize_file_name(name: impl AsRef<str>) -> String {
 }
 
 fn content_type_for_path(path: &FsPath) -> &'static str {
-    content_type_for_extension(path.extension().and_then(|value| value.to_str()).unwrap_or(""))
+    content_type_for_extension(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or(""),
+    )
 }
 
 fn content_type_for_name(name: &str) -> &'static str {
-    content_type_for_extension(FsPath::new(name).extension().and_then(|value| value.to_str()).unwrap_or(""))
+    content_type_for_extension(
+        FsPath::new(name)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or(""),
+    )
 }
 
 fn content_type_for_extension(extension: &str) -> &'static str {
@@ -455,7 +531,10 @@ fn content_type_for_extension(extension: &str) -> &'static str {
 }
 
 fn bad_request(err: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
-    (StatusCode::BAD_REQUEST, Json(json!({ "error": err.to_string() })))
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": err.to_string() })),
+    )
 }
 
 fn internal_error(err: impl std::fmt::Display) -> (StatusCode, Json<Value>) {

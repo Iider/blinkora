@@ -246,7 +246,13 @@ async fn execute_path(
         return trpc_error(&format!("Not found: {path}"), -32601, id);
     };
     let ctx = ProcedureContext { state, user };
-    match handler(ctx, unwrap_superjson(input)).await {
+    let result = if is_write_procedure(path) {
+        let _write_guard = ctx.state.write_guard().await;
+        handler(ctx, unwrap_superjson(input)).await
+    } else {
+        handler(ctx, unwrap_superjson(input)).await
+    };
+    match result {
         Ok(result) => {
             let mut response = json!({ "result": { "data": { "json": result } } });
             if let Some(id) = id {
@@ -275,7 +281,66 @@ pub async fn execute_procedure(
         state,
         user: Some(user),
     };
-    handler(ctx, unwrap_superjson(input)).await
+    if is_write_procedure(path) {
+        let _write_guard = ctx.state.write_guard().await;
+        handler(ctx, unwrap_superjson(input)).await
+    } else {
+        handler(ctx, unwrap_superjson(input)).await
+    }
+}
+
+/// Mutations are intentionally listed rather than inferred from HTTP method:
+/// tRPC procedures use both GET and POST, and a few "list" paths repair a
+/// missing default workspace. Keeping this contract next to dispatch makes
+/// new writers opt in during review.
+pub fn is_write_procedure(path: &str) -> bool {
+    matches!(
+        path,
+        "agentTokens.create"
+            | "agentTokens.revoke"
+            | "attachments.createFolder"
+            | "attachments.rename"
+            | "attachments.move"
+            | "attachments.delete"
+            | "attachments.deleteMany"
+            | "comments.create"
+            | "comments.update"
+            | "comments.delete"
+            | "comments.convertToTodo"
+            | "config.update"
+            | "config.saveAndValidateS3"
+            | "fonts.create"
+            | "fonts.update"
+            | "fonts.delete"
+            | "fonts.upload"
+            | "notes.reviewNote"
+            | "notes.upsert"
+            | "notes.moveToWorkspace"
+            | "notes.updateMany"
+            | "notes.trashMany"
+            | "notes.deleteMany"
+            | "notes.addReference"
+            | "notes.removeReference"
+            | "notes.setReferences"
+            | "notes.clearRecycleBin"
+            | "notes.updateAttachmentsOrder"
+            | "notes.updateNotesOrder"
+            | "tags.cleanupOrphanTags"
+            | "tags.updateTagMany"
+            | "tags.updateTagName"
+            | "tags.updateTagIcon"
+            | "tags.deleteOnlyTag"
+            | "tags.deleteTagWithAllNote"
+            | "tags.updateTagOrder"
+            | "users.register"
+            | "users.regenToken"
+            | "users.upsertUser"
+            | "workspaces.create"
+            | "workspaces.update"
+            | "workspaces.delete"
+            | "workspaces.setDefault"
+            | "workspaces.list"
+    )
 }
 
 fn unwrap_superjson(value: Value) -> Value {

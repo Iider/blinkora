@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = config::Config::from_env();
     cfg.validate()?;
-    let pool = db::connect(&cfg.database_url).await?;
+    let pool = db::connect(&cfg.data_dir).await?;
     db::init_schema(&pool, &cfg.schema_path).await?;
     let state = app::AppState::new(cfg.clone(), pool);
 
@@ -37,7 +37,10 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api", handlers::router())
         .route("/sse", axum::routing::get(handlers::mcp::sse))
         .route("/messages", axum::routing::post(handlers::mcp::messages))
-        .route("/health", axum::routing::get(handlers::health).head(handlers::health_head))
+        .route(
+            "/health",
+            axum::routing::get(handlers::health).head(handlers::health_head),
+        )
         .fallback(static_files::static_handler)
         .layer(cors)
         .layer(TraceLayer::new_for_http())
