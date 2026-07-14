@@ -5,7 +5,7 @@
 ## 本次候选
 
 - 基线提交：`f061365fa802e63ccbe1090aa9c0c837b8064057`（迁移前运行时）。
-- 候选提交：`906a37b`（SQLite 运行时替换、验收门禁、浏览器兼容性、两步验证登录与浏览器控制台诊断修复）。
+- 候选提交：`22a46bf`（SQLite 运行时替换、验收门禁、浏览器兼容性、两步验证登录、浏览器控制台诊断修复与 PostgreSQL 残留防回归）。
 - 平台：macOS arm64、本地文件系统、OrbStack Docker、PostgreSQL 14.23、SQLite CLI 3.x、Rust 1.96。
 - 数据规模：真实接口 smoke；2,000 条批量笔记；10 客户端 300 秒并发；物理备份/空目录恢复；PostgreSQL 真实迁移夹具。
 
@@ -29,6 +29,7 @@
 | 同机 p95 性能 | 同一 macOS arm64 主机、同一迁移夹具、PostgreSQL 与 SQLite macOS release 二进制各采样 100 次、预热 20 次：SQLite/PG p95 为列表 27.6%（2.604/9.446 ms）、详情 36.5%（2.470/6.770 ms）、子串搜索 40.0%（3.014/7.540 ms）、写入 21.8%（3.290/15.091 ms），均低于 120% 门槛。 |
 | 导入导出性能 | 同机 release 夹具执行 Workspace/full × Markdown/JSON 各 5 次；每次导入后删除导入 Workspace，双方都回到 2 个 Workspace。SQLite/PG 的导出、导入 p95 比例分别为：Workspace Markdown 24.1%/13.2%、Workspace JSON 27.5%/14.4%、full Markdown 39.7%/11.8%、full JSON 28.6%/13.0%，全部低于 150% 门槛。 |
 | 构建与 Docker 运行时 | `bun run build:web --force`、`bun run verify:rust`、macOS 原生 `cargo build --release --locked --manifest-path server/Cargo.toml`、当前候选的 `bun run build:rust-release`（arm64）及强制 amd64 Docker build 均通过，产物分别为 aarch64 与 x86-64 Linux ELF。`docker compose config --services` 仅输出 `web`，无 PostgreSQL 端口或服务。隔离 arm64 runtime 实际将临时 `DATA_DIR` 挂载到 `/app/.blinkora`（正式镜像的默认路径）：健康检查、静态首页、完整 `smoke:rust` 与 `smoke:agent` 均通过。容器重建后原账号可登录；离线前后账号/笔记/附件行数均为 `1/16/6`，`integrity_check=ok`、外键检查为 0。数据目录为 `0700`，数据库及 WAL 为 `0600`。 |
+| PostgreSQL 残留防回归 | `verify:rust` 会执行 `scripts/verify-sqlite-runtime-residuals.mjs`：检查 17 个部署文档、模板与 Compose 文件不含 PostgreSQL URL、`psql`、旧容器名、默认端口或运行时环境变量；检查 30 个正式运行时源文件不含 PostgreSQL 专用 backend 或 SQL 语法，并要求 Compose 只定义 `web` 服务。 |
 | 浏览器核心 smoke | 同一隔离 SQLite Docker 实例中，桌面和 390×844 移动视口均完成真实登录与主界面验证；笔记列表、带附件笔记、底部导航与移动侧栏开合正常。最新候选重新构建后，以全新登录标签页验证桌面待办页和编辑器，以及 390×844 待办页；控制台 error、warn、warning 均为 0。 |
 | 浏览器扩展 smoke | 新建隔离 Docker 实例后，完整 `smoke:rust` 先通过；浏览器随后真实创建闪念、笔记、待办各一条，标签树筛选和全局搜索均能找到新闪念，资源页能列出既有附件并创建/进入嵌套目录，设置页能读取操作日志及新建笔记的日志记录。最新候选通过 UI 将 `type=2` 待办更新为带 `（再次编辑）` 的内容；离线检查确认 `noteHistory.version=1` 保存前一版本，`integrity_check=ok`，`foreign_key_check` 为 0 行，容器重启后 `/health` 恢复正常。基础设置与 2FA 入口均正常渲染。 |
 | macOS 本机持久化 | 在隔离用户目录中实际执行 `install → update → smoke:rust → smoke:agent → stop → start → uninstall`，全程不启动 Docker。重启后原账号能登录、笔记数不变；卸载后 `blinkora.sqlite3` 保留，`integrity_check=ok`、`foreign_key_check` 为 0。发布产物位于用户目录；启动前清理二进制 provenance 并进行 ad-hoc 签名，静态页面可访问，服务不会因 `OS_REASON_CODESIGNING` 退出。 |
