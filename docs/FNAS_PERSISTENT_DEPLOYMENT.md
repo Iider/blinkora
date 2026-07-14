@@ -16,7 +16,7 @@ Blinkora 在飞牛上以单个 Rust 服务运行，SQLite 与附件使用本地�
 
 ## 首次安装
 
-以下命令以独立的 `blinkora` 服务账号为例；路径必须位于飞牛本机磁盘，不能是 NFS 或 SMB 挂载。开发机先执行 `bun run build:rust-release`，把生成的 `release/rust/` 传到飞牛的临时发布目录，并在该目录中执行下面的文件安装命令。
+以下命令以独立的 `blinkora` 服务账号为例；路径必须位于飞牛本机磁盘，不能是 NFS 或 SMB 挂载。开发机先执行 `bun run build:rust-release`，将 `release/rust/` 与 `deploy/fnas/blinkora.service` 一起传到飞牛的临时发布目录，并保留相对路径；在该目录中执行下面的文件安装命令。
 
 ```bash
 install -d -o blinkora -g blinkora -m 0700 \
@@ -45,29 +45,15 @@ RUST_LOG=info
 
 先用 `install -o blinkora -g blinkora -m 0600 /dev/null /vol1/1000/docker/blinkora/local/blinkora.env` 创建该文件，再写入实际的随机密钥；不要保留示例中的 `<...>`。
 
-创建 `/etc/systemd/system/blinkora.service`：
+安装仓库中的 systemd unit：
 
-```ini
-[Unit]
-Description=Blinkora SQLite Web service
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=blinkora
-Group=blinkora
-WorkingDirectory=/vol1/1000/docker/blinkora/local
-EnvironmentFile=/vol1/1000/docker/blinkora/local/blinkora.env
-ExecStart=/vol1/1000/docker/blinkora/local/bin/blinkora-server
-Restart=on-failure
-RestartSec=3
-NoNewPrivileges=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
+```bash
+install -m 0644 deploy/fnas/blinkora.service /etc/systemd/system/blinkora.service
 ```
+
+模板默认使用本节的 `blinkora` 服务账号和 `/vol1/1000/docker/blinkora` 路径；改动账号或目录时，必须同步修改 unit、`blinkora.env` 和目录属主。
+
+开发机可运行 `bun run verify:fnas-systemd`，校验 unit 的 section、关键值、服务账号与运行路径。该命令只验证部署定义，不能替代飞牛实机验收。
 
 最后启用服务：
 

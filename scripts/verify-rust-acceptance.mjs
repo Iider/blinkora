@@ -20,6 +20,8 @@ function run(name, command, args, env = {}) {
 }
 
 run('rust smoke script syntax', 'node', ['--check', 'scripts/rust-smoke.mjs']);
+run('strict S3 smoke script syntax', 'node', ['--check', 'scripts/s3-smoke.mjs']);
+run('FNAS systemd unit template', 'node', ['scripts/verify-fnas-systemd-unit.mjs']);
 run('workspace agent smoke script syntax', 'node', ['--check', 'scripts/workspace-agent-smoke.mjs']);
 run('SQLite concurrency script syntax', 'node', ['--check', 'scripts/sqlite-concurrency.mjs']);
 run('SQLite bulk script syntax', 'node', ['--check', 'scripts/sqlite-bulk.mjs']);

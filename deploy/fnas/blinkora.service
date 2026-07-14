@@ -1,0 +1,19 @@
+[Unit]
+Description=Blinkora SQLite Web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blinkora
+Group=blinkora
+WorkingDirectory=/vol1/1000/docker/blinkora/local
+EnvironmentFile=/vol1/1000/docker/blinkora/local/blinkora.env
+ExecStart=/vol1/1000/docker/blinkora/local/bin/blinkora-server
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

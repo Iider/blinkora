@@ -24,8 +24,10 @@
     "test:postgres-sqlite-contract": "node scripts/postgres-sqlite-contract.mjs",
     "test:postgres-sqlite-performance": "node scripts/postgres-sqlite-performance.mjs",
     "test:postgres-sqlite-backup-performance": "node scripts/postgres-sqlite-backup-performance.mjs",
+    "verify:fnas-systemd": "node scripts/verify-fnas-systemd-unit.mjs",
     "skill:sync": "bash scripts/sync-blinkora-workspace-skill.sh",
     "smoke:rust": "node scripts/rust-smoke.mjs",
+    "smoke:s3": "node scripts/s3-smoke.mjs",
     "smoke:agent": "node scripts/workspace-agent-smoke.mjs",
     "verify:rust": "node scripts/verify-rust-acceptance.mjs"
   },

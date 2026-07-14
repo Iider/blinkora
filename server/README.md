@@ -36,7 +36,7 @@ bun run deploy:local install
 
 ```bash
 bun run deploy:local status
-curl -I http://127.0.0.1:6676/
+curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:6676/
 ```
 
 本机持久化部署不需要 Docker。
@@ -54,4 +54,4 @@ BLINKORA_SMOKE_PASSWORD=<test-password> \
 bun run smoke:rust
 ```
 
-设置 `BLINKORA_S3_SMOKE_*` 环境变量后，smoke 会验证 S3 配置保存、上传、读取、移动、删除和本地存储回退。S3 依赖请自行使用真实服务或外部 S3 兼容服务，默认 Docker 部署不内置 S3 服务。
+使用隔离验收实例、上方的 `BLINKORA_BASE_URL`/测试账号，以及完整 `BLINKORA_S3_SMOKE_*` 变量时，执行 `BLINKORA_S3_SMOKE_ISOLATED=1 bun run smoke:s3`。该命令会验证 S3 配置保存、上传、读取、移动、删除和本地存储回退；缺少变量会失败，且不应在生产实例运行。默认 Docker 部署不内置 S3 服务。

@@ -29,11 +29,13 @@
 | 导入导出性能 | 同机 release 夹具执行 Workspace/full × Markdown/JSON 各 5 次；每次导入后删除导入 Workspace，双方都回到 2 个 Workspace。SQLite/PG 的导出、导入 p95 比例分别为：Workspace Markdown 24.1%/13.2%、Workspace JSON 27.5%/14.4%、full Markdown 39.7%/11.8%、full JSON 28.6%/13.0%，全部低于 150% 门槛。 |
 | 构建与 Docker 运行时 | `bun run build:web --force`、`bun run verify:rust`、macOS 原生 `cargo build --release --locked --manifest-path server/Cargo.toml`、Linux arm64 与 amd64 Docker release 均通过。arm64 运行时镜像在没有 PostgreSQL 容器的情况下启动，`/health` 返回 `{"status":"ok"}`；容器内数据目录为 `0700`，数据库及 WAL 为 `0600`。 |
 | macOS 本机持久化 | 在隔离用户目录中实际执行 `install → update → smoke:rust → smoke:agent → stop → start → uninstall`，全程不启动 Docker。重启后原账号能登录、笔记数不变；卸载后 `blinkora.sqlite3` 保留，`integrity_check=ok`、`foreign_key_check` 为 0。发布产物位于用户目录；启动前清理二进制 provenance 并进行 ad-hoc 签名，静态页面可访问，服务不会因 `OS_REASON_CODESIGNING` 退出。 |
+| 飞牛 unit 模板 | `bun run verify:fnas-systemd` 校验 `deploy/fnas/blinkora.service` 的 section、关键值、服务账号、环境文件和 `ExecStart` 路径。该项仅验证部署定义。 |
 
 ## 待验 / 阻断发布
 
-- 已在真实 S3-compatible MinIO 服务验证附件链路；尚未使用第三方云厂商账户执行同一清单。
+- 已在真实 S3-compatible MinIO 服务验证附件链路；`bun run smoke:s3` 现在强制要求完整凭据与隔离实例确认。尚未使用第三方云厂商账户执行该命令。
 - 数据相关浏览器 smoke 尚未完成：本环境的浏览器运行时拒绝访问本机 `127.0.0.1`（`ERR_BLOCKED_BY_CLIENT`），需要可访问候选服务的桌面/移动端浏览器执行清单。
 - 飞牛实际机器的 systemd 安装、更新、启动、停止和卸载尚未执行；已有单服务部署说明，但不能用 Linux Docker 构建结果代替飞牛实机验收。
+- 本轮复跑 `bun run build:rust-release` 时，本机 Homebrew Rust 缺少 `aarch64-unknown-linux-musl` target，Docker fallback 又被卡住的临时测试容器阻断；此前 Linux amd64/arm64 构建证据仍保留，但当前候选必须在干净构建环境重跑该命令。
 
 在以上项目补齐并记录结果前，本次不能标记为“全部验收通过”。
