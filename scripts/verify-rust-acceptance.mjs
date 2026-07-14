@@ -23,6 +23,8 @@ run('rust smoke script syntax', 'node', ['--check', 'scripts/rust-smoke.mjs']);
 run('workspace agent smoke script syntax', 'node', ['--check', 'scripts/workspace-agent-smoke.mjs']);
 run('SQLite concurrency script syntax', 'node', ['--check', 'scripts/sqlite-concurrency.mjs']);
 run('SQLite bulk script syntax', 'node', ['--check', 'scripts/sqlite-bulk.mjs']);
+run('PostgreSQL/SQLite contract script syntax', 'node', ['--check', 'scripts/postgres-sqlite-contract.mjs']);
+run('PostgreSQL/SQLite performance script syntax', 'node', ['--check', 'scripts/postgres-sqlite-performance.mjs']);
 run('SQLite backup shell syntax', 'bash', ['-n', 'scripts/sqlite-backup.sh']);
 run('SQLite restore shell syntax', 'bash', ['-n', 'scripts/sqlite-restore.sh']);
 run('rust unit tests', 'cargo', ['test', '--manifest-path', 'server/Cargo.toml']);

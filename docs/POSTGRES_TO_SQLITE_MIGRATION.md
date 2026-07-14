@@ -31,6 +31,36 @@ sqlite3 '<DATA_DIR>/blinkora.sqlite3' 'SELECT COUNT(*) FROM pragma_foreign_key_c
 
 然后启动 SQLite 版本，使用原账号、账号 API token 和未撤销工作区 token 完成登录、字体读取、S3 校验、历史、引用、评论与 MCP smoke。新建记录的 ID 必须大于迁移前该表的最大 ID。
 
+## 双后端差分
+
+在隔离夹具上同时启动迁移前 PostgreSQL 服务和迁移后的 SQLite 服务后，执行：
+
+```bash
+BLINKORA_POSTGRES_BASE_URL='http://127.0.0.1:16676' \
+BLINKORA_SQLITE_BASE_URL='http://127.0.0.1:16678' \
+BLINKORA_SMOKE_USER='<夹具账号>' \
+BLINKORA_SMOKE_PASSWORD='<夹具密码>' \
+BLINKORA_CONTRACT_REPORT_PATH='/受限目录/contract.json' \
+bun run test:postgres-sqlite-contract
+```
+
+脚本从当前服务端注册表读取全部 74 个 procedure，拒绝数量漂移；确定性读接口逐值比较，原本无排序约束的列表按成员集合比较，随机和写入接口比较 HTTP/tRPC envelope、业务错误和返回结构。它还比较 `/health`、认证资料、同一路径附件内容和 MCP `tools/list`。报告不写入 token 或密码。
+
+## 同机 p95 对比
+
+在同一固定夹具、同一台机器上，启动 PostgreSQL 基线和刚迁移的 SQLite 候选后执行：
+
+```bash
+BLINKORA_POSTGRES_BASE_URL='http://127.0.0.1:16676' \
+BLINKORA_SQLITE_BASE_URL='http://127.0.0.1:16678' \
+BLINKORA_SMOKE_USER='<夹具账号>' \
+BLINKORA_SMOKE_PASSWORD='<夹具密码>' \
+BLINKORA_PERF_REPORT_PATH='/受限目录/performance.json' \
+bun run test:postgres-sqlite-performance
+```
+
+脚本交替预热并分别采样列表、详情、子串搜索和写入，逐项计算 p95；SQLite 任一 p95 超过 PostgreSQL 的 120% 会以非零状态退出。默认采样 100 次，`BLINKORA_PERF_SAMPLES` 可增加样本量。
+
 ## 回滚演练
 
 1. 停止 SQLite 服务，保留 `blinkora.sqlite3` 供排查。

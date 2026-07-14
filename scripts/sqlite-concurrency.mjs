@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { writeFile } from 'node:fs/promises';
+
 // A long-running SQLite write test. It is intentionally opt-in because the
 // default acceptance duration is five minutes and it creates visible test
 // notes/comments in the supplied account workspace.
@@ -8,6 +10,7 @@ const user = process.env.BLINKORA_SMOKE_USER || '';
 const password = process.env.BLINKORA_SMOKE_PASSWORD || '';
 const clients = Math.max(1, Number(process.env.BLINKORA_CONCURRENCY_CLIENTS || 10));
 const durationMs = Math.max(1_000, Number(process.env.BLINKORA_CONCURRENCY_DURATION_MS || 300_000));
+const reportPath = process.env.BLINKORA_CONCURRENCY_REPORT_PATH || '';
 const stamp = Date.now();
 
 if (!user || !password) {
@@ -98,6 +101,11 @@ async function mcpWrite(token, content) {
   }
 }
 
+async function saveReport(report) {
+  if (!reportPath) return;
+  await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
+}
+
 const login = await request('/api/auth/login', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
@@ -150,7 +158,11 @@ const versions = (history || []).map((entry) => Number(entry.version)).sort((a, 
 const continuous = versions.every((version, index) => version === index + 1);
 
 if (failures.length || !continuous) {
-  console.error(JSON.stringify({ ok: false, failures, versions }, null, 2));
+  const report = { ok: false, clients, durationMs, reads, writes, noteId: seed.id, failures, versions };
+  await saveReport(report);
+  console.error(JSON.stringify(report, null, 2));
   process.exit(1);
 }
-console.log(JSON.stringify({ ok: true, clients, durationMs, reads, writes, noteId: seed.id, historyVersions: versions.length }));
+const report = { ok: true, clients, durationMs, reads, writes, noteId: seed.id, historyVersions: versions.length };
+await saveReport(report);
+console.log(JSON.stringify(report));

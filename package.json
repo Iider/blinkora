@@ -21,6 +21,8 @@
     "deploy:local": "bash scripts/local-persistent-deploy.sh",
     "migrate:postgres-to-sqlite": "cargo run --manifest-path tools/postgres-to-sqlite/Cargo.toml --",
     "test:sqlite-bulk": "node scripts/sqlite-bulk.mjs",
+    "test:postgres-sqlite-contract": "node scripts/postgres-sqlite-contract.mjs",
+    "test:postgres-sqlite-performance": "node scripts/postgres-sqlite-performance.mjs",
     "skill:sync": "bash scripts/sync-blinkora-workspace-skill.sh",
     "smoke:rust": "node scripts/rust-smoke.mjs",
     "smoke:agent": "node scripts/workspace-agent-smoke.mjs",
