@@ -44,7 +44,9 @@ BLINKORA_CONTRACT_REPORT_PATH='/受限目录/contract.json' \
 bun run test:postgres-sqlite-contract
 ```
 
-脚本从当前服务端注册表读取全部 74 个 procedure，拒绝数量漂移；确定性读接口逐值比较，原本无排序约束的列表按成员集合比较，随机和写入接口比较 HTTP/tRPC envelope、业务错误和返回结构。它还比较 `/health`、认证资料、同一路径附件内容和 MCP `tools/list`。报告不写入 token 或密码。
+脚本从当前服务端注册表读取全部 74 个 procedure，拒绝数量漂移；确定性读接口逐值比较，原本无排序约束的列表按成员集合比较，随机和写入接口比较 HTTP/tRPC envelope、业务错误和返回结构。它还比较 `/health`、认证资料、同一路径附件内容和 MCP `tools/list`。
+
+脚本会在两端各创建并清理两条临时笔记，比较 ASCII 大小写、中文、Emoji、`@`、`%` 与 `_` 搜索的目标/非目标成员关系；`%` 和 `_` 按 PostgreSQL 既有通配符语义对照，不在迁移时改成新规则。报告不写入 token 或密码。
 
 ## 同机 p95 对比
 
