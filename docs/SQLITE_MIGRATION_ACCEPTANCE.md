@@ -28,10 +28,12 @@
 | 同机 p95 性能 | 同一 macOS arm64 主机、同一迁移夹具、PostgreSQL 与 SQLite macOS release 二进制各采样 100 次、预热 20 次：SQLite/PG p95 为列表 27.6%（2.604/9.446 ms）、详情 36.5%（2.470/6.770 ms）、子串搜索 40.0%（3.014/7.540 ms）、写入 21.8%（3.290/15.091 ms），均低于 120% 门槛。 |
 | 导入导出性能 | 同机 release 夹具执行 Workspace/full × Markdown/JSON 各 5 次；每次导入后删除导入 Workspace，双方都回到 2 个 Workspace。SQLite/PG 的导出、导入 p95 比例分别为：Workspace Markdown 24.1%/13.2%、Workspace JSON 27.5%/14.4%、full Markdown 39.7%/11.8%、full JSON 28.6%/13.0%，全部低于 150% 门槛。 |
 | 构建与 Docker 运行时 | `bun run build:web --force`、`bun run verify:rust`、macOS 原生 `cargo build --release --locked --manifest-path server/Cargo.toml`、Linux arm64 与 amd64 Docker release 均通过。arm64 运行时镜像在没有 PostgreSQL 容器的情况下启动，`/health` 返回 `{"status":"ok"}`；容器内数据目录为 `0700`，数据库及 WAL 为 `0600`。 |
+| macOS 本机持久化 | 在隔离用户目录中实际执行 `install → update → smoke:rust → smoke:agent → stop → start → uninstall`，全程不启动 Docker。重启后原账号能登录、笔记数不变；卸载后 `blinkora.sqlite3` 保留，`integrity_check=ok`、`foreign_key_check` 为 0。发布产物位于用户目录；启动前清理二进制 provenance 并进行 ad-hoc 签名，静态页面可访问，服务不会因 `OS_REASON_CODESIGNING` 退出。 |
 
 ## 待验 / 阻断发布
 
 - 已在真实 S3-compatible MinIO 服务验证附件链路；尚未使用第三方云厂商账户执行同一清单。
 - 数据相关浏览器 smoke 尚未完成：本环境的浏览器运行时拒绝访问本机 `127.0.0.1`（`ERR_BLOCKED_BY_CLIENT`），需要可访问候选服务的桌面/移动端浏览器执行清单。
+- 飞牛实际机器的 systemd 安装、更新、启动、停止和卸载尚未执行；已有单服务部署说明，但不能用 Linux Docker 构建结果代替飞牛实机验收。
 
 在以上项目补齐并记录结果前，本次不能标记为“全部验收通过”。

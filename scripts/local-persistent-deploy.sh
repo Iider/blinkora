@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.bun/bin:$HOME/.cargo/bin:$PATH"
 APP_HOME="${BLINKORA_LOCAL_HOME:-$HOME/.blinkora/local}"
-RELEASE_DIR="$ROOT_DIR/release/local"
+RELEASE_DIR="$APP_HOME/release"
 ENV_FILE="$APP_HOME/blinkora.env"
 RUNNER="$APP_HOME/run-blinkora.sh"
 LOG_DIR="$APP_HOME/logs"
@@ -50,6 +50,21 @@ require_bun_and_cargo() {
   require_cmd cargo "Install Rust first: https://rustup.rs"
 }
 
+sign_local_binary() {
+  if [[ ! -x "$LOCAL_BIN" ]]; then
+    echo "error: local Blinkora binary is missing: $LOCAL_BIN" >&2
+    exit 1
+  fi
+  require_cmd codesign "Install Xcode Command Line Tools; launchd requires a signed local binary."
+  # A copied Rust binary can retain Finder provenance. Re-signing the actual
+  # launchd executable after clearing that metadata prevents macOS from
+  # terminating it with OS_REASON_CODESIGNING.
+  xattr -d com.apple.quarantine "$LOCAL_BIN" >/dev/null 2>&1 || true
+  xattr -d com.apple.provenance "$LOCAL_BIN" >/dev/null 2>&1 || true
+  codesign --force --sign - "$LOCAL_BIN"
+  codesign --verify --strict "$LOCAL_BIN"
+}
+
 ensure_node_deps() {
   if [[ -x "$ROOT_DIR/node_modules/.bin/turbo" ]]; then
     return
@@ -68,15 +83,32 @@ generate_secret() {
   openssl rand -hex 32
 }
 
+set_env_value() {
+  local key="$1"
+  local value="$2"
+  local temporary
+  temporary="$(mktemp "$APP_HOME/.blinkora.env.XXXXXX")"
+  awk -v key="$key" -v value="$value" '
+    index($0, key "=") == 1 { print key "=" value; found = 1; next }
+    { print }
+    END { if (!found) print key "=" value }
+  ' "$ENV_FILE" > "$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$ENV_FILE"
+}
+
+sync_runtime_paths() {
+  set_env_value PUBLIC_PATH "$RELEASE_DIR/public"
+  set_env_value SCHEMA_PATH "$RELEASE_DIR/db/schema.sqlite.sql"
+}
+
 ensure_env_file() {
   ensure_dirs
-  if [[ -f "$ENV_FILE" ]]; then
-    return
-  fi
-  require_cmd openssl "macOS should include openssl; install it if missing."
-  local secret
-  secret="$(generate_secret)"
-  cat > "$ENV_FILE" <<EOF
+  if [[ ! -f "$ENV_FILE" ]]; then
+    require_cmd openssl "macOS should include openssl; install it if missing."
+    local secret
+    secret="$(generate_secret)"
+    cat > "$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=$PORT
 PUBLIC_PATH=$RELEASE_DIR/public
@@ -85,8 +117,10 @@ SCHEMA_PATH=$RELEASE_DIR/db/schema.sqlite.sql
 BLINKORA_SECRET=$secret
 RUST_LOG=info
 EOF
-  chmod 600 "$ENV_FILE"
-  echo "created $ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    echo "created $ENV_FILE"
+  fi
+  sync_runtime_paths
 }
 
 build_native() {
@@ -103,6 +137,7 @@ build_native() {
   mkdir -p "$RELEASE_DIR/db"
   cp db/schema.sqlite.sql "$RELEASE_DIR/db/schema.sqlite.sql"
   chmod +x "$RELEASE_DIR/blinkora-server" "$LOCAL_BIN"
+  sign_local_binary
   echo "native release artifacts are ready in $RELEASE_DIR"
 }
 
@@ -113,6 +148,7 @@ write_runner() {
     cp "$RELEASE_DIR/blinkora-server" "$LOCAL_BIN"
     chmod +x "$LOCAL_BIN"
   fi
+  sign_local_binary
   cat > "$RUNNER" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail

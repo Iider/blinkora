@@ -1,10 +1,11 @@
 # 本机持久化部署
 
-这个模式直接在 macOS 上用 `launchd` 运行 Blinkora，不需要 Docker。SQLite、附件和运行配置都放在用户目录，重启、升级和卸载服务都不会删除数据。
+这个模式直接在 macOS 上用 `launchd` 运行 Blinkora，不需要 Docker。SQLite、附件、运行配置和本机发布产物都放在用户目录，重启、升级和卸载服务都不会删除数据。
 
 - 数据目录：`~/.blinkora/local/data`（含 `blinkora.sqlite3` 与 `files/`）
 - 服务配置：`~/.blinkora/local/blinkora.env`，权限为 `0600`
 - 服务日志：`~/.blinkora/local/logs`
+- 本机发布产物：`~/.blinkora/local/release`，避免 `launchd` 读取受 macOS 文件访问控制保护的项目目录
 - 访问地址：`http://localhost:6676`
 
 ## 前置条件
@@ -44,6 +45,8 @@ sqlite3 ~/.blinkora/local/data/blinkora.sqlite3 'SELECT COUNT(*) FROM pragma_for
 ```
 
 健康接口仅在 SQLite 已打开、schema 已完成且探针成功时返回 `200`。页面打不开时先检查 `bun run deploy:local status`、端口监听和 `~/.blinkora/local/logs/blinkora.err.log`。若数据目录只读、磁盘空间不足、数据库损坏或 schema 版本过新，服务会拒绝提供健康状态；先保留原文件，再根据错误恢复。
+
+macOS 可能因复制后二进制保留的 Finder provenance 而以 `OS_REASON_CODESIGNING` 终止 `launchd` 服务。`install`、`update` 和 `start` 会清理该元数据并重新进行 ad-hoc 签名；若系统提示缺少 `codesign`，先安装 Xcode Command Line Tools。
 
 ## 物理备份与恢复
 
