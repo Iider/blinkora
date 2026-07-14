@@ -5,7 +5,7 @@
 ## 本次候选
 
 - 基线提交：`f061365fa802e63ccbe1090aa9c0c837b8064057`（迁移前运行时）。
-- 候选提交：`f5e5664`（SQLite 运行时替换及验收门禁）。
+- 候选提交：`e7c9841`（SQLite 运行时替换、验收门禁及浏览器兼容性修复）。
 - 平台：macOS arm64、本地文件系统、OrbStack Docker、PostgreSQL 14.23、SQLite CLI 3.x、Rust 1.96。
 - 数据规模：真实接口 smoke；2,000 条批量笔记；10 客户端 300 秒并发；物理备份/空目录恢复；PostgreSQL 真实迁移夹具。
 
@@ -27,14 +27,15 @@
 | 强制终止恢复 | 在 20,000 个 hashtag 的笔记写入/标签同步请求中对服务发送 `SIGKILL`，客户端请求失败。重启后健康检查正常，`integrity_check=ok`、外键检查为 0，写入中的笔记、标签关系和标签均为 0 条，未出现半写。 |
 | 同机 p95 性能 | 同一 macOS arm64 主机、同一迁移夹具、PostgreSQL 与 SQLite macOS release 二进制各采样 100 次、预热 20 次：SQLite/PG p95 为列表 27.6%（2.604/9.446 ms）、详情 36.5%（2.470/6.770 ms）、子串搜索 40.0%（3.014/7.540 ms）、写入 21.8%（3.290/15.091 ms），均低于 120% 门槛。 |
 | 导入导出性能 | 同机 release 夹具执行 Workspace/full × Markdown/JSON 各 5 次；每次导入后删除导入 Workspace，双方都回到 2 个 Workspace。SQLite/PG 的导出、导入 p95 比例分别为：Workspace Markdown 24.1%/13.2%、Workspace JSON 27.5%/14.4%、full Markdown 39.7%/11.8%、full JSON 28.6%/13.0%，全部低于 150% 门槛。 |
-| 构建与 Docker 运行时 | `bun run build:web --force`、`bun run verify:rust`、macOS 原生 `cargo build --release --locked --manifest-path server/Cargo.toml`、当前候选的 `bun run build:rust-release`（arm64）及强制 amd64 Docker build 均通过，产物分别为 aarch64 与 x86-64 Linux ELF。`docker compose config --services` 仅输出 `web`，无 PostgreSQL 端口或服务。隔离 arm64 runtime 的 `/health` 与静态首页返回 `200`，完整 `smoke:rust`、`smoke:agent` 通过；容器重建后账号、笔记、附件计数和登录保持，`integrity_check=ok`、外键检查为 0。数据目录为 `0700`，数据库及 WAL 为 `0600`。 |
+| 构建与 Docker 运行时 | `bun run build:web --force`、`bun run verify:rust`、macOS 原生 `cargo build --release --locked --manifest-path server/Cargo.toml`、当前候选的 `bun run build:rust-release`（arm64）及强制 amd64 Docker build 均通过，产物分别为 aarch64 与 x86-64 Linux ELF。`docker compose config --services` 仅输出 `web`，无 PostgreSQL 端口或服务。隔离 arm64 runtime 实际将临时 `DATA_DIR` 挂载到 `/app/.blinkora`（正式镜像的默认路径）：健康检查、静态首页、完整 `smoke:rust` 与 `smoke:agent` 均通过。容器重建后原账号可登录；离线前后账号/笔记/附件行数均为 `1/16/6`，`integrity_check=ok`、外键检查为 0。数据目录为 `0700`，数据库及 WAL 为 `0600`。 |
+| 浏览器核心 smoke | 同一隔离 SQLite Docker 实例中，桌面和 390×844 移动视口均完成真实登录与主界面验证；笔记列表、带附件笔记、底部导航与移动侧栏开合正常，无白屏、控制台 error 或 warning。 |
 | macOS 本机持久化 | 在隔离用户目录中实际执行 `install → update → smoke:rust → smoke:agent → stop → start → uninstall`，全程不启动 Docker。重启后原账号能登录、笔记数不变；卸载后 `blinkora.sqlite3` 保留，`integrity_check=ok`、`foreign_key_check` 为 0。发布产物位于用户目录；启动前清理二进制 provenance 并进行 ad-hoc 签名，静态页面可访问，服务不会因 `OS_REASON_CODESIGNING` 退出。 |
 | 飞牛 unit 模板 | `bun run verify:fnas-systemd` 校验 `deploy/fnas/blinkora.service` 的 section、关键值、服务账号、环境文件和 `ExecStart` 路径。该项仅验证部署定义。 |
 
 ## 待验 / 阻断发布
 
 - 已在真实 S3-compatible MinIO 服务验证附件链路；`bun run smoke:s3` 现在强制要求完整凭据与隔离实例确认。尚未使用第三方云厂商账户执行该命令。
-- 数据相关浏览器 smoke 尚未完成：本环境的浏览器运行时拒绝访问本机 `127.0.0.1`（`ERR_BLOCKED_BY_CLIENT`），需要可访问候选服务的桌面/移动端浏览器执行清单。
+- 桌面和移动端核心浏览器 smoke 已完成，但完整数据浏览器清单尚未逐项执行；仍需覆盖 2FA、Workspace 移动、三类笔记编辑/历史、标签树、评论树、搜索高级筛选、设置/S3、字体、导入导出以及 MCP/Agent 的全部 UI 路径。
 - 飞牛实际机器的 systemd 安装、更新、启动、停止和卸载尚未执行；已有单服务部署说明，但不能用 Linux Docker 构建结果代替飞牛实机验收。
 
 在以上项目补齐并记录结果前，本次不能标记为“全部验收通过”。
