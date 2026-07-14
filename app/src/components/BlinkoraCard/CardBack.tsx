@@ -8,6 +8,7 @@ import type React from 'react';
 import { useTranslation } from 'react-i18next';
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { LeftCickMenu } from '../BlinkoraRightClickMenu';
+import { PropertyValue } from './PropertyValue';
 
 type CardBackProps = {
   blinkoraItem: Note;
@@ -96,7 +97,7 @@ export const CardBack = ({
                     {row.key}
                   </div>
                   <div className="min-w-0 break-words px-2.5 py-2 text-default-700 dark:text-default-300">
-                    {row.value}
+                    <PropertyValue value={row.value} />
                   </div>
                 </div>
               ))}

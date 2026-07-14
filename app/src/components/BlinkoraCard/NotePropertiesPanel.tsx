@@ -14,6 +14,7 @@ import {
   stringifyNotePropertyValueInput,
 } from '@/lib/noteProperties';
 import { BlinkoraItem } from './index';
+import { PropertyValue } from './PropertyValue';
 
 type PropertyRow = {
   id: string;
@@ -233,7 +234,7 @@ export const NotePropertiesPanel = observer(({
                         {row.key}
                       </div>
                       <div className="min-w-0 break-words px-3 py-2 text-default-700 dark:text-default-300">
-                        {row.value}
+                        <PropertyValue value={row.value} />
                       </div>
                     </div>
                   ))}

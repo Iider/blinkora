@@ -109,6 +109,7 @@ Blinkora 的闪念、笔记和待办都存放在 `notes` 表。归档和回收�
 - 保存属性时只替换 `metadata.properties`，不能覆盖 `metadata` 下的导入来源等系统字段。
 - 属性编辑区使用两列表格填写“属性 / 内容”；空白行不保存，清空所有行后从 `metadata` 中移除 `properties`。
 - 属性内容按单个 YAML 值解析，普通文字直接保存，`4`、`true`、`null`、`[自媒体, IP]` 会保存成对应类型。
+- 只读属性值支持紧凑 Markdown；例如 `GitHub：[browser-use/browser-harness](https://github.com/browser-use/browser-harness)` 会把链接渲染为可点击的新标签页链接。属性中的原始 HTML 不渲染，危险链接协议会被过滤。
 - 卡片正面列表、普通摘要和引用摘要都不展示属性；列表卡片的卡背会只读展示属性。
 - 全屏阅读底部展示“属性”折叠区，默认只读表格，点击编辑后可手动增删改。
 - Markdown 导出时，有属性的 `.md` 文件会在开头写标准 YAML frontmatter；没有属性的笔记不输出空 frontmatter。
