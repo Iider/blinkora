@@ -3,7 +3,7 @@ use crate::auth::{
     generate_jwt, generate_totp_secret, hash_password, verify_password, verify_totp, CurrentUser,
 };
 use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
-use crate::util::config_json;
+use crate::util::{config_json, unwrap_config_value};
 use anyhow::{anyhow, bail};
 use axum::extract::State;
 use axum::routing::{get, post};
@@ -12,7 +12,7 @@ use chrono::Utc;
 use futures::FutureExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::{Row, SqlitePool};
+use sqlx::{sqlite::SqliteRow, Row, SqlitePool};
 use std::collections::HashMap;
 
 pub fn router() -> Router<AppState> {
@@ -45,31 +45,70 @@ struct LoginRequest {
     password: String,
 }
 
+#[derive(Deserialize)]
+struct VerifyTwoFactorRequest {
+    #[serde(rename = "userId")]
+    user_id: i32,
+    code: String,
+}
+
+struct LoginAccount {
+    id: i32,
+    name: String,
+    nickname: String,
+    password: String,
+    image: String,
+    role: String,
+}
+
+enum TwoFactorState {
+    Disabled,
+    Enabled { secret: String },
+    Misconfigured,
+}
+
 async fn login(
     State(state): State<AppState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
     let username = req.name.or(req.username).unwrap_or_default();
-    let row = sqlx::query(
-        r#"SELECT id, name, nickname, password, image, role FROM accounts WHERE name=$1"#,
-    )
-    .bind(username)
-    .fetch_one(state.pool())
-    .await
-    .map_err(|_| unauthorized())?;
-    let password_hash: String = row.get("password");
-    if !verify_password(&req.password, &password_hash) {
+    let account = find_account_by_name(state.pool(), &username)
+        .await
+        .map_err(|_| unauthorized())?;
+    if !verify_password(&req.password, &account.password) {
         return Err(unauthorized());
     }
-    let id: i32 = row.get("id");
-    let name: String = row.get("name");
-    let nickname: String = row.get("nickname");
-    let image: String = row.get("image");
-    let role: String = row.get("role");
-    let token = generate_jwt(id, &name, &nickname, &role, &state.config.auth_secret)
-        .map_err(|_| unauthorized())?;
+
+    match two_factor_state(state.pool(), account.id)
+        .await
+        .map_err(|_| unauthorized())?
+    {
+        TwoFactorState::Enabled { .. } => {
+            return Ok(Json(json!({
+                "requiresTwoFactor": true,
+                "userId": account.id,
+            })));
+        }
+        TwoFactorState::Misconfigured => return Err(two_factor_unavailable()),
+        TwoFactorState::Disabled => {}
+    }
+
+    let token = generate_jwt(
+        account.id,
+        &account.name,
+        &account.nickname,
+        &account.role,
+        &state.config.auth_secret,
+    )
+    .map_err(|_| unauthorized())?;
     Ok(Json(json!({
-        "user": { "id": id, "name": name, "nickname": nickname, "image": image, "role": role },
+        "user": {
+            "id": account.id,
+            "name": account.name,
+            "nickname": account.nickname,
+            "image": account.image,
+            "role": account.role,
+        },
         "token": token
     })))
 }
@@ -78,6 +117,20 @@ fn unauthorized() -> (axum::http::StatusCode, Json<Value>) {
     (
         axum::http::StatusCode::UNAUTHORIZED,
         Json(json!({ "error": "Invalid username or password" })),
+    )
+}
+
+fn two_factor_unavailable() -> (axum::http::StatusCode, Json<Value>) {
+    (
+        axum::http::StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "Two-factor authentication is not configured" })),
+    )
+}
+
+fn invalid_two_factor_code() -> (axum::http::StatusCode, Json<Value>) {
+    (
+        axum::http::StatusCode::UNAUTHORIZED,
+        Json(json!({ "error": "Invalid verification code" })),
     )
 }
 
@@ -142,8 +195,52 @@ async fn profile(
     })))
 }
 
-async fn verify_2fa_rest() -> Json<Value> {
-    Json(json!({ "success": true }))
+async fn verify_2fa_rest(
+    State(state): State<AppState>,
+    Json(req): Json<VerifyTwoFactorRequest>,
+) -> Result<Json<Value>, (axum::http::StatusCode, Json<Value>)> {
+    let account = find_account_by_id(state.pool(), req.user_id)
+        .await
+        .map_err(|_| invalid_two_factor_code())?;
+    let secret = match two_factor_state(state.pool(), account.id)
+        .await
+        .map_err(|_| invalid_two_factor_code())?
+    {
+        TwoFactorState::Enabled { secret } => secret,
+        TwoFactorState::Disabled | TwoFactorState::Misconfigured => {
+            return Err(invalid_two_factor_code());
+        }
+    };
+    if !verify_totp(&secret, &req.code, Utc::now().timestamp()) {
+        return Err(invalid_two_factor_code());
+    }
+
+    let token = generate_jwt(
+        account.id,
+        &account.name,
+        &account.nickname,
+        &account.role,
+        &state.config.auth_secret,
+    )
+    .map_err(|_| invalid_two_factor_code())?;
+    let _write_guard = state.write_guard().await;
+    sqlx::query(r#"UPDATE accounts SET "apiToken"=$1, "updatedAt"=blinkora_now() WHERE id=$2"#)
+        .bind(&token)
+        .bind(account.id)
+        .execute(state.pool())
+        .await
+        .map_err(|_| invalid_two_factor_code())?;
+
+    Ok(Json(json!({
+        "user": {
+            "id": account.id,
+            "name": account.name,
+            "nickname": account.nickname,
+            "image": account.image,
+            "role": account.role,
+        },
+        "token": token,
+    })))
 }
 
 async fn validate_token(user: CurrentUser) -> Json<Value> {
@@ -208,38 +305,115 @@ fn login_user(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
         let req: LoginRequest = serde_json::from_value(input)?;
         let username = req.name.or(req.username).unwrap_or_default();
-        let row = sqlx::query(
-            r#"SELECT id, name, nickname, password, image, role FROM accounts WHERE name=$1"#,
-        )
-        .bind(username)
-        .fetch_one(ctx.state.pool())
-        .await
-        .map_err(|_| anyhow!("user not found"))?;
-        let password_hash: String = row.get("password");
-        if !verify_password(&req.password, &password_hash) {
+        let account = find_account_by_name(ctx.state.pool(), &username)
+            .await
+            .map_err(|_| anyhow!("user not found"))?;
+        if !verify_password(&req.password, &account.password) {
             bail!("password is incorrect");
         }
-        let id: i32 = row.get("id");
-        let name: String = row.get("name");
-        let nickname: String = row.get("nickname");
-        let image: String = row.get("image");
-        let role: String = row.get("role");
-        let token = generate_jwt(id, &name, &nickname, &role, &ctx.state.config.auth_secret)?;
+
+        match two_factor_state(ctx.state.pool(), account.id).await? {
+            TwoFactorState::Enabled { .. } => {
+                return Ok(json!({
+                    "requiresTwoFactor": true,
+                    "userId": account.id,
+                }));
+            }
+            TwoFactorState::Misconfigured => bail!("two-factor authentication is not configured"),
+            TwoFactorState::Disabled => {}
+        }
+
+        let token = generate_jwt(
+            account.id,
+            &account.name,
+            &account.nickname,
+            &account.role,
+            &ctx.state.config.auth_secret,
+        )?;
         sqlx::query(r#"UPDATE accounts SET "apiToken"=$1, "updatedAt"=blinkora_now() WHERE id=$2"#)
             .bind(&token)
-            .bind(id)
+            .bind(account.id)
             .execute(ctx.state.pool())
             .await?;
         Ok(json!({
-            "id": id,
-            "name": name,
-            "nickname": nickname,
-            "role": role,
+            "id": account.id,
+            "name": account.name,
+            "nickname": account.nickname,
+            "role": account.role,
             "token": token,
-            "image": image
+            "image": account.image
         }))
     }
     .boxed()
+}
+
+fn login_account_from_row(row: &SqliteRow) -> LoginAccount {
+    LoginAccount {
+        id: row.get("id"),
+        name: row.get("name"),
+        nickname: row.get("nickname"),
+        password: row.get("password"),
+        image: row.get("image"),
+        role: row.get("role"),
+    }
+}
+
+async fn find_account_by_name(pool: &SqlitePool, name: &str) -> anyhow::Result<LoginAccount> {
+    let row = sqlx::query(
+        r#"SELECT id, name, nickname, password, image, role FROM accounts WHERE name=$1"#,
+    )
+    .bind(name)
+    .fetch_one(pool)
+    .await?;
+    Ok(login_account_from_row(&row))
+}
+
+async fn find_account_by_id(pool: &SqlitePool, id: i32) -> anyhow::Result<LoginAccount> {
+    let row = sqlx::query(
+        r#"SELECT id, name, nickname, password, image, role FROM accounts WHERE id=$1"#,
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    Ok(login_account_from_row(&row))
+}
+
+async fn two_factor_state(pool: &SqlitePool, user_id: i32) -> anyhow::Result<TwoFactorState> {
+    let rows = sqlx::query(
+        r#"SELECT key, config
+           FROM config
+           WHERE key IN ('twoFactorEnabled', 'twoFactorSecret')
+             AND "userId"=$1
+           ORDER BY CASE WHEN "workspaceId" IS NULL THEN 0 ELSE 1 END, id DESC"#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut enabled = None;
+    let mut secret = None;
+    for row in rows {
+        let key: String = row.get("key");
+        let value = unwrap_config_value(row.get::<Option<Value>, _>("config"));
+        match key.as_str() {
+            "twoFactorEnabled" if enabled.is_none() => enabled = value.as_bool(),
+            "twoFactorSecret" if secret.is_none() => {
+                secret = value
+                    .as_str()
+                    .map(str::to_owned)
+                    .filter(|value| !value.is_empty());
+            }
+            _ => {}
+        }
+    }
+
+    match enabled {
+        Some(true) if secret.is_some() => Ok(TwoFactorState::Enabled {
+            secret: secret.expect("checked above"),
+        }),
+        Some(true) => Ok(TwoFactorState::Misconfigured),
+        _ => Ok(TwoFactorState::Disabled),
+    }
 }
 
 fn regen_token(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
@@ -416,4 +590,98 @@ async fn create_account_with_default_workspace(
     }
     tx.commit().await?;
     Ok((user_id, token))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{two_factor_state, TwoFactorState};
+    use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+
+    async fn two_factor_test_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory SQLite database");
+        sqlx::query(
+            r#"CREATE TABLE config (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL,
+                config TEXT,
+                "userId" INTEGER,
+                "workspaceId" INTEGER
+            )"#,
+        )
+        .execute(&pool)
+        .await
+        .expect("create config table");
+        pool
+    }
+
+    #[tokio::test]
+    async fn two_factor_state_requires_a_verified_secret() {
+        let pool = two_factor_test_pool().await;
+        assert!(matches!(
+            two_factor_state(&pool, 7).await.unwrap(),
+            TwoFactorState::Disabled
+        ));
+
+        sqlx::query(
+            r#"INSERT INTO config (key, config, "userId", "workspaceId")
+               VALUES ('twoFactorEnabled', '{"value":true}', 7, 1)"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(matches!(
+            two_factor_state(&pool, 7).await.unwrap(),
+            TwoFactorState::Misconfigured
+        ));
+
+        sqlx::query(
+            r#"INSERT INTO config (key, config, "userId", "workspaceId")
+               VALUES ('twoFactorSecret', '{"value":"JBSWY3DPEHPK3PXP"}', 7, 1)"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        match two_factor_state(&pool, 7).await.unwrap() {
+            TwoFactorState::Enabled { secret } => assert_eq!(secret, "JBSWY3DPEHPK3PXP"),
+            TwoFactorState::Disabled | TwoFactorState::Misconfigured => {
+                panic!("enabled two-factor configuration was not recognized")
+            }
+        }
+
+        sqlx::query(
+            r#"INSERT INTO config (key, config, "userId", "workspaceId")
+               VALUES ('twoFactorEnabled', '{"value":false}', 7, 2)"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"INSERT INTO config (key, config, "userId")
+               VALUES ('twoFactorSecret', '{"value":"ACCOUNTSECRET"}', 7)"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"INSERT INTO config (key, config, "userId")
+               VALUES ('twoFactorEnabled', '{"value":true}', 7)"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        match two_factor_state(&pool, 7).await.unwrap() {
+            TwoFactorState::Enabled { secret } => assert_eq!(secret, "ACCOUNTSECRET"),
+            TwoFactorState::Disabled | TwoFactorState::Misconfigured => {
+                panic!(
+                    "account-level two-factor configuration must override legacy workspace values"
+                )
+            }
+        }
+
+        pool.close().await;
+    }
 }

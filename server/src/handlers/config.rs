@@ -20,9 +20,14 @@ fn list(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
             .unwrap_or_default();
         let rows = if user_id > 0 {
             sqlx::query(
-                r#"SELECT key, config, "userId" FROM config
-                   WHERE "userId" IS NULL OR ("userId"=$1 AND "workspaceId"=$2)
-                   ORDER BY CASE WHEN "userId" IS NULL THEN 0 ELSE 1 END"#,
+                r#"SELECT key, config, "userId", "workspaceId" FROM config
+                   WHERE "userId" IS NULL
+                      OR ("userId"=$1 AND ("workspaceId"=$2 OR "workspaceId" IS NULL))
+                   ORDER BY CASE
+                       WHEN "userId" IS NULL THEN 0
+                       WHEN "workspaceId" IS NULL THEN 1
+                       ELSE 2
+                   END"#,
             )
             .bind(user_id)
             .bind(workspace_id)
@@ -37,7 +42,15 @@ fn list(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
         for row in rows {
             let key: String = row.get("key");
             let scoped_user_id: Option<i32> = row.get("userId");
+            let scoped_workspace_id: Option<i32> = row.get("workspaceId");
             if scoped_user_id.is_some() && is_global_config_key(&key) {
+                continue;
+            }
+            if scoped_user_id.is_some()
+                && scoped_workspace_id.is_some()
+                && is_account_scoped_config_key(&key)
+                && out.contains_key(&key)
+            {
                 continue;
             }
             let value: Option<Value> = row.get("config");
@@ -60,7 +73,9 @@ fn update(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .cloned()
             .or_else(|| input.get("config").cloned())
             .unwrap_or(Value::Null);
-        if is_global_config_key(key) {
+        if is_account_scoped_config_key(key) {
+            upsert_config(&ctx, key, config_json(value), Some(user.id), None).await?;
+        } else if is_global_config_key(key) {
             if user.role != "superadmin" {
                 return Err(anyhow!("You are not allowed to update global config"));
             }
@@ -219,51 +234,78 @@ async fn upsert_config(
     user_id: Option<i32>,
     workspace_id: Option<i32>,
 ) -> anyhow::Result<()> {
-    if let (Some(user_id), Some(workspace_id)) = (user_id, workspace_id) {
-        let existing: Option<i32> = sqlx::query_scalar(
-            r#"SELECT id FROM config WHERE key=$1 AND "userId"=$2 AND "workspaceId"=$3"#,
-        )
-        .bind(key)
-        .bind(user_id)
-        .bind(workspace_id)
-        .fetch_optional(ctx.state.pool())
-        .await?;
-        if let Some(id) = existing {
-            sqlx::query("UPDATE config SET config=$1 WHERE id=$2")
-                .bind(value)
-                .bind(id)
-                .execute(ctx.state.pool())
-                .await?;
-        } else {
-            sqlx::query(
-                r#"INSERT INTO config (key, config, "userId", "workspaceId") VALUES ($1,$2,$3,$4)"#,
+    match (user_id, workspace_id) {
+        (Some(user_id), Some(workspace_id)) => {
+            let existing: Option<i32> = sqlx::query_scalar(
+                r#"SELECT id FROM config WHERE key=$1 AND "userId"=$2 AND "workspaceId"=$3"#,
             )
             .bind(key)
-            .bind(value)
             .bind(user_id)
             .bind(workspace_id)
-            .execute(ctx.state.pool())
+            .fetch_optional(ctx.state.pool())
             .await?;
-        }
-    } else {
-        let existing: Option<i32> =
-            sqlx::query_scalar(r#"SELECT id FROM config WHERE key=$1 AND "userId" IS NULL"#)
-                .bind(key)
-                .fetch_optional(ctx.state.pool())
-                .await?;
-        if let Some(id) = existing {
-            sqlx::query("UPDATE config SET config=$1 WHERE id=$2")
-                .bind(value)
-                .bind(id)
-                .execute(ctx.state.pool())
-                .await?;
-        } else {
-            sqlx::query(r#"INSERT INTO config (key, config) VALUES ($1,$2)"#)
+            if let Some(id) = existing {
+                sqlx::query("UPDATE config SET config=$1 WHERE id=$2")
+                    .bind(value)
+                    .bind(id)
+                    .execute(ctx.state.pool())
+                    .await?;
+            } else {
+                sqlx::query(
+                    r#"INSERT INTO config (key, config, "userId", "workspaceId") VALUES ($1,$2,$3,$4)"#,
+                )
                 .bind(key)
                 .bind(value)
+                .bind(user_id)
+                .bind(workspace_id)
                 .execute(ctx.state.pool())
                 .await?;
+            }
         }
+        (Some(user_id), None) => {
+            let existing: Option<i32> = sqlx::query_scalar(
+                r#"SELECT id FROM config WHERE key=$1 AND "userId"=$2 AND "workspaceId" IS NULL"#,
+            )
+            .bind(key)
+            .bind(user_id)
+            .fetch_optional(ctx.state.pool())
+            .await?;
+            if let Some(id) = existing {
+                sqlx::query("UPDATE config SET config=$1 WHERE id=$2")
+                    .bind(value)
+                    .bind(id)
+                    .execute(ctx.state.pool())
+                    .await?;
+            } else {
+                sqlx::query(r#"INSERT INTO config (key, config, "userId") VALUES ($1,$2,$3)"#)
+                    .bind(key)
+                    .bind(value)
+                    .bind(user_id)
+                    .execute(ctx.state.pool())
+                    .await?;
+            }
+        }
+        (None, None) => {
+            let existing: Option<i32> =
+                sqlx::query_scalar(r#"SELECT id FROM config WHERE key=$1 AND "userId" IS NULL"#)
+                    .bind(key)
+                    .fetch_optional(ctx.state.pool())
+                    .await?;
+            if let Some(id) = existing {
+                sqlx::query("UPDATE config SET config=$1 WHERE id=$2")
+                    .bind(value)
+                    .bind(id)
+                    .execute(ctx.state.pool())
+                    .await?;
+            } else {
+                sqlx::query(r#"INSERT INTO config (key, config) VALUES ($1,$2)"#)
+                    .bind(key)
+                    .bind(value)
+                    .execute(ctx.state.pool())
+                    .await?;
+            }
+        }
+        (None, Some(_)) => return Err(anyhow!("workspace config requires an account")),
     }
     Ok(())
 }
@@ -295,6 +337,10 @@ fn is_global_config_key(key: &str) -> bool {
             | "s3ForcePathStyle"
             | "localCustomPath"
     )
+}
+
+fn is_account_scoped_config_key(key: &str) -> bool {
+    matches!(key, "twoFactorEnabled" | "twoFactorSecret")
 }
 
 async fn save_s3_values(

@@ -101,15 +101,12 @@ export class UserStore implements Store {
   handleTwoFactorAuth = async (twoFactorCode: string, userId: string) => {
     try {
       if (!userId) {
-        console.log('Missing user ID for 2FA verification');
         eventBus.emit('user:twoFactorResult', {
           success: false,
           error: 'Missing user ID'
         });
         return false;
       }
-
-      console.log('Verifying 2FA with userId:', userId, 'Full tokenData:', JSON.stringify(this.tokenData.value));
 
       const res = await signIn('two-factor', {
         userId,
@@ -123,14 +120,12 @@ export class UserStore implements Store {
         return true;
       }
 
-      console.error('2FA verification failed:', res?.error);
       eventBus.emit('user:twoFactorResult', {
         success: false,
         error: res?.error || 'Invalid verification code'
       });
       return false;
-    } catch (error) {
-      console.error('Failed to handle 2FA:', error);
+    } catch {
       return false;
     }
   };
@@ -302,8 +297,6 @@ export class UserStore implements Store {
 
   showTwoFactorDialog(userId: string) {
     if (this.requiresTwoFactor) {
-      console.log('Showing 2FA modal due to requiresTwoFactor flag');
-
       ShowTwoFactorModal(async (code) => {
         try {
           await this.handleTwoFactorAuth(code, userId);
