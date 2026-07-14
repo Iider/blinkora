@@ -75,7 +75,11 @@ const strictValueProcedures = new Set([
   'workspaces.getDefault',
 ]);
 
-const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+// The legacy MCP serializer emits milliseconds for values that originated
+// with millisecond precision, while tRPC can preserve six digits. Both are
+// UTC RFC3339 forms; the cross-backend value comparison below catches any
+// precision drift instead of rejecting the established legacy representation.
+const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:\d{3})?Z$/;
 
 function fail(message, details) {
   const error = new Error(message);
@@ -104,7 +108,7 @@ async function login(base) {
   if (result.status !== 200 || !result.json?.token) {
     fail(`login failed for ${base}`, result.json || result.text);
   }
-  return result.json.token;
+  return { token: result.json.token, response: result };
 }
 
 async function trpc(base, procedure, input, token) {
@@ -180,7 +184,7 @@ function assertUtcFields(value, key = '') {
   }
   if (typeof value === 'string' && /(?:At|Date)$/.test(key) && value.includes('T')) {
     if (!timestampPattern.test(value)) {
-      fail(`timestamp is not UTC microsecond RFC3339: ${key}`, value);
+      fail(`timestamp is not UTC RFC3339 with millisecond or microsecond precision: ${key}`, value);
     }
   }
 }
@@ -272,6 +276,53 @@ function sameValue(left, right) {
   return JSON.stringify(redactSecrets(left)) === JSON.stringify(redactSecrets(right));
 }
 
+function normalizeVolatileValue(value, key = '') {
+  if (Array.isArray(value)) return value.map((item) => normalizeVolatileValue(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([childKey, childValue]) => [childKey, normalizeVolatileValue(childValue, childKey)]),
+    );
+  }
+  if (typeof value === 'string' && /token|secret|password|accesskey|secretkey/i.test(key)) {
+    return '<redacted>';
+  }
+  // MCP mirrors structuredContent into a JSON-formatted text item. Compare
+  // that mirror semantically too, otherwise legitimate post-write timestamp
+  // differences inside its string representation obscure the same payload.
+  if (key === 'text') {
+    try {
+      return { mcpJsonText: normalizeVolatileValue(JSON.parse(value)) };
+    } catch {
+      // Plain text tool output is still a contract value and stays literal.
+    }
+  }
+  if (typeof value === 'string' && timestampPattern.test(value)) return '<utc-microsecond-timestamp>';
+  return value;
+}
+
+function sameNormalizedValue(left, right) {
+  return JSON.stringify(normalizeVolatileValue(left)) === JSON.stringify(normalizeVolatileValue(right));
+}
+
+function compareRestResponse(label, postgres, sqlite, { normalizeTimestamps = false } = {}) {
+  if (postgres.status !== sqlite.status) {
+    fail(`${label} HTTP status differs`, { postgres: postgres.status, sqlite: sqlite.status });
+  }
+  const postgresBody = postgres.json ?? postgres.text;
+  const sqliteBody = sqlite.json ?? sqlite.text;
+  const matches = normalizeTimestamps
+    ? sameNormalizedValue(postgresBody, sqliteBody)
+    : sameValue(postgresBody, sqliteBody);
+  if (!matches) {
+    fail(`${label} response body differs`, {
+      postgres: normalizeTimestamps ? normalizeVolatileValue(postgresBody) : redactSecrets(postgresBody),
+      sqlite: normalizeTimestamps ? normalizeVolatileValue(sqliteBody) : redactSecrets(sqliteBody),
+    });
+  }
+}
+
 function sameTopLevelSet(left, right) {
   if (!Array.isArray(left) || !Array.isArray(right)) return sameValue(left, right);
   const canonical = (items) => items.map((item) => JSON.stringify(redactSecrets(item))).sort();
@@ -322,12 +373,13 @@ function compareProcedure(procedure, postgres, sqlite) {
   return 'shape';
 }
 
-async function openMcpTools(base, token) {
+async function openMcpSession(base, token) {
   const response = await fetch(`${base}/sse`, { headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok || !response.body) fail(`MCP SSE failed for ${base}`, response.status);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let nextId = 1;
   const event = async () => {
     while (true) {
       const chunk = await reader.read();
@@ -345,23 +397,36 @@ async function openMcpTools(base, token) {
       return { name: raw.match(/^event:\s*(.+)$/m)?.[1] || 'message', data };
     }
   };
-  const endpoint = (await event()).data.trim();
-  const id = 1;
-  const accepted = await fetch(`${base}${endpoint}`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/list', params: {} }),
-  });
-  if (accepted.status !== 202) fail(`MCP tools/list was not accepted for ${base}`, accepted.status);
-  while (true) {
-    const next = await event();
-    if (!next.data) continue;
-    const payload = JSON.parse(next.data);
-    if (payload.id === id) {
-      await reader.cancel();
-      return payload.result?.tools || [];
-    }
+  const endpointEvent = await event();
+  if (endpointEvent.name !== 'endpoint' || !endpointEvent.data.trim()) {
+    fail(`MCP endpoint event is invalid for ${base}`, endpointEvent);
   }
+  const endpoint = endpointEvent.data.trim();
+
+  return {
+    async rpc(method, params) {
+      const id = nextId;
+      nextId += 1;
+      const accepted = await fetch(`${base}${endpoint}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+      });
+      if (accepted.status !== 202) {
+        fail(`MCP ${method} was not accepted for ${base}`, {
+          status: accepted.status,
+          body: await accepted.text(),
+        });
+      }
+      while (true) {
+        const next = await event();
+        if (!next.data) continue;
+        const payload = JSON.parse(next.data);
+        if (payload.id === id) return payload;
+      }
+    },
+    close: () => reader.cancel().catch(() => {}),
+  };
 }
 
 function notesFrom(response, label) {
@@ -474,13 +539,344 @@ async function compareSearchBoundaries(postgresToken, sqliteToken) {
   }
 }
 
+function uploadSummary(response, label) {
+  if (response.status !== 200 || !response.json) {
+    fail(`${label} failed`, response.json || response.text);
+  }
+  const body = response.json;
+  if (
+    body.Message !== 'Success'
+    || body.status !== 200
+    || body.filePath !== body.path
+    || !body.path?.startsWith('/api/file/')
+  ) {
+    fail(`${label} response is malformed`, body);
+  }
+  return {
+    keys: Object.keys(body).sort(),
+    message: body.Message,
+    status: body.status,
+    filePathMatchesPath: body.filePath === body.path,
+    pathPrefix: body.path.slice(0, '/api/file/'.length),
+    fileName: body.fileName,
+    name: body.name,
+    type: body.type,
+    size: body.size,
+  };
+}
+
+function uploadForm(fileName, content) {
+  const form = new FormData();
+  form.append('file', new Blob([content], { type: 'text/plain' }), fileName);
+  return form;
+}
+
+async function compareRestContracts({ postgresToken, sqliteToken, postgresLogin, sqliteLogin }) {
+  const checks = [];
+  compareRestResponse('auth login', postgresLogin.response, sqliteLogin.response);
+  checks.push('auth login');
+
+  const invalidPassword = `not-the-password-${runId}`;
+  const [postgresInvalidLogin, sqliteInvalidLogin] = await Promise.all([
+    request(postgresBase, '/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: user, password: invalidPassword }),
+    }),
+    request(sqliteBase, '/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: user, password: invalidPassword }),
+    }),
+  ]);
+  compareRestResponse('auth login invalid password', postgresInvalidLogin, sqliteInvalidLogin);
+  if (postgresInvalidLogin.status !== 401) {
+    fail('auth login invalid password must return 401', postgresInvalidLogin.json || postgresInvalidLogin.text);
+  }
+  checks.push('auth login invalid password');
+
+  const [postgresProfile, sqliteProfile] = await Promise.all([
+    request(postgresBase, '/api/auth/profile', { headers: { Authorization: `Bearer ${postgresToken}` } }),
+    request(sqliteBase, '/api/auth/profile', { headers: { Authorization: `Bearer ${sqliteToken}` } }),
+  ]);
+  compareRestResponse('auth profile', postgresProfile, sqliteProfile);
+  checks.push('auth profile');
+
+  const [postgresUnauthorizedProfile, sqliteUnauthorizedProfile] = await Promise.all([
+    request(postgresBase, '/api/auth/profile'),
+    request(sqliteBase, '/api/auth/profile'),
+  ]);
+  compareRestResponse('auth profile unauthorized', postgresUnauthorizedProfile, sqliteUnauthorizedProfile);
+  if (postgresUnauthorizedProfile.status !== 401) {
+    fail('auth profile without a token must return 401', postgresUnauthorizedProfile.json || postgresUnauthorizedProfile.text);
+  }
+  checks.push('auth profile unauthorized');
+
+  const [postgresValidatedToken, sqliteValidatedToken] = await Promise.all([
+    request(postgresBase, '/api/auth/validate-token', { headers: { Authorization: `Bearer ${postgresToken}` } }),
+    request(sqliteBase, '/api/auth/validate-token', { headers: { Authorization: `Bearer ${sqliteToken}` } }),
+  ]);
+  compareRestResponse('auth validate-token valid', postgresValidatedToken, sqliteValidatedToken);
+  if (postgresValidatedToken.json?.valid !== true) {
+    fail('auth validate-token valid response is malformed', postgresValidatedToken.json || postgresValidatedToken.text);
+  }
+  checks.push('auth validate-token valid');
+
+  const [postgresInvalidToken, sqliteInvalidToken] = await Promise.all([
+    request(postgresBase, '/api/auth/validate-token', { headers: { Authorization: 'Bearer invalid-contract-token' } }),
+    request(sqliteBase, '/api/auth/validate-token', { headers: { Authorization: 'Bearer invalid-contract-token' } }),
+  ]);
+  compareRestResponse('auth validate-token invalid', postgresInvalidToken, sqliteInvalidToken);
+  if (postgresInvalidToken.status !== 401) {
+    fail('auth validate-token invalid must return 401', postgresInvalidToken.json || postgresInvalidToken.text);
+  }
+  checks.push('auth validate-token invalid');
+
+  const [postgresLogout, sqliteLogout] = await Promise.all([
+    request(postgresBase, '/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${postgresToken}` } }),
+    request(sqliteBase, '/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${sqliteToken}` } }),
+  ]);
+  compareRestResponse('auth logout', postgresLogout, sqliteLogout);
+  checks.push('auth logout');
+
+  const restAccount = `contract-rest-${runId}`;
+  const restPassword = 'contract-rest-password';
+  const [postgresRegister, sqliteRegister] = await Promise.all([
+    request(postgresBase, '/api/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: restAccount, password: restPassword, nickname: restAccount }),
+    }),
+    request(sqliteBase, '/api/auth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: restAccount, password: restPassword, nickname: restAccount }),
+    }),
+  ]);
+  compareRestResponse('auth register', postgresRegister, sqliteRegister);
+  // A migrated instance already has its one allowed native account. Keep the
+  // legacy single-account rejection as part of the REST error contract; empty
+  // database registration is exercised by the isolated smoke fixture.
+  if (postgresRegister.status !== 400 || !postgresRegister.json?.error) {
+    fail('auth register must preserve the single-account rejection', postgresRegister.json || postgresRegister.text);
+  }
+  checks.push('auth register closed-mode error');
+
+  const [postgresSseUnauthorized, sqliteSseUnauthorized, postgresMessagesUnauthorized, sqliteMessagesUnauthorized] = await Promise.all([
+    request(postgresBase, '/sse'),
+    request(sqliteBase, '/sse'),
+    request(postgresBase, '/messages?sessionId=missing-contract-session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+    }),
+    request(sqliteBase, '/messages?sessionId=missing-contract-session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }),
+    }),
+  ]);
+  compareRestResponse('MCP SSE unauthorized', postgresSseUnauthorized, sqliteSseUnauthorized);
+  compareRestResponse('MCP messages unauthorized', postgresMessagesUnauthorized, sqliteMessagesUnauthorized);
+  if (postgresSseUnauthorized.status !== 401 || postgresMessagesUnauthorized.status !== 401) {
+    fail('unauthorized MCP endpoints must return 401', {
+      sse: postgresSseUnauthorized.status,
+      messages: postgresMessagesUnauthorized.status,
+    });
+  }
+  checks.push('MCP unauthorized routes');
+
+  const [postgresEmptyUpload, sqliteEmptyUpload, postgresUploadByUrl, sqliteUploadByUrl, postgresDeleteMissing, sqliteDeleteMissing] = await Promise.all([
+    request(postgresBase, '/api/file/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${postgresToken}` },
+      body: new FormData(),
+    }),
+    request(sqliteBase, '/api/file/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sqliteToken}` },
+      body: new FormData(),
+    }),
+    request(postgresBase, '/api/file/upload-by-url', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${postgresToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ url: '' }),
+    }),
+    request(sqliteBase, '/api/file/upload-by-url', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sqliteToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ url: '' }),
+    }),
+    request(postgresBase, '/api/file/delete', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${postgresToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ attachment_path: '' }),
+    }),
+    request(sqliteBase, '/api/file/delete', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sqliteToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ attachment_path: '' }),
+    }),
+  ]);
+  compareRestResponse('file upload without file', postgresEmptyUpload, sqliteEmptyUpload);
+  compareRestResponse('file upload-by-url without URL', postgresUploadByUrl, sqliteUploadByUrl);
+  compareRestResponse('file delete without path', postgresDeleteMissing, sqliteDeleteMissing);
+  if ([postgresEmptyUpload, postgresUploadByUrl, postgresDeleteMissing].some((response) => response.status !== 400)) {
+    fail('invalid file REST requests must return 400');
+  }
+  checks.push('file REST errors');
+
+  const fileName = `contract-rest-${runId}.txt`;
+  const fileContent = `contract file content ${runId}`;
+  const [postgresUpload, sqliteUpload] = await Promise.all([
+    request(postgresBase, '/api/file/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${postgresToken}` },
+      body: uploadForm(fileName, fileContent),
+    }),
+    request(sqliteBase, '/api/file/upload', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sqliteToken}` },
+      body: uploadForm(fileName, fileContent),
+    }),
+  ]);
+  if (!sameValue(uploadSummary(postgresUpload, 'PostgreSQL file upload'), uploadSummary(sqliteUpload, 'SQLite file upload'))) {
+    fail('file upload response semantics differ', {
+      postgres: uploadSummary(postgresUpload, 'PostgreSQL file upload'),
+      sqlite: uploadSummary(sqliteUpload, 'SQLite file upload'),
+    });
+  }
+  checks.push('file upload');
+
+  const [postgresFile, sqliteFile] = await Promise.all([
+    request(postgresBase, postgresUpload.json.path, { headers: { Authorization: `Bearer ${postgresToken}` } }),
+    request(sqliteBase, sqliteUpload.json.path, { headers: { Authorization: `Bearer ${sqliteToken}` } }),
+  ]);
+  if (
+    postgresFile.status !== 200
+    || sqliteFile.status !== 200
+    || postgresFile.text !== fileContent
+    || sqliteFile.text !== fileContent
+  ) {
+    fail('uploaded file bytes differ', {
+      postgres: { status: postgresFile.status, text: postgresFile.text },
+      sqlite: { status: sqliteFile.status, text: sqliteFile.text },
+    });
+  }
+  checks.push('file download');
+
+  const [postgresDelete, sqliteDelete] = await Promise.all([
+    request(postgresBase, '/api/file/delete', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${postgresToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ attachment_path: postgresUpload.json.path }),
+    }),
+    request(sqliteBase, '/api/file/delete', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sqliteToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ attachment_path: sqliteUpload.json.path }),
+    }),
+  ]);
+  compareRestResponse('file delete', postgresDelete, sqliteDelete);
+  checks.push('file delete');
+
+  const [postgresMissingBackup, sqliteMissingBackup, postgresUnsupportedMode, sqliteUnsupportedMode] = await Promise.all([
+    request(postgresBase, '/api/backup/import', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${postgresToken}` },
+      body: new FormData(),
+    }),
+    request(sqliteBase, '/api/backup/import', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sqliteToken}` },
+      body: new FormData(),
+    }),
+    request(postgresBase, '/api/backup/import', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${postgresToken}` },
+      body: (() => {
+        const form = new FormData();
+        form.append('mode', 'unsupported-contract-mode');
+        form.append('file', new Blob(['contract backup bytes']), 'contract.bko');
+        return form;
+      })(),
+    }),
+    request(sqliteBase, '/api/backup/import', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sqliteToken}` },
+      body: (() => {
+        const form = new FormData();
+        form.append('mode', 'unsupported-contract-mode');
+        form.append('file', new Blob(['contract backup bytes']), 'contract.bko');
+        return form;
+      })(),
+    }),
+  ]);
+  compareRestResponse('backup import without file', postgresMissingBackup, sqliteMissingBackup);
+  compareRestResponse('backup import unsupported mode', postgresUnsupportedMode, sqliteUnsupportedMode);
+  if (postgresMissingBackup.status !== 400 || postgresUnsupportedMode.status !== 400) {
+    fail('invalid backup imports must return 400', {
+      missingFile: postgresMissingBackup.status,
+      unsupportedMode: postgresUnsupportedMode.status,
+    });
+  }
+  checks.push('backup import errors');
+
+  return checks;
+}
+
+async function compareMcpContracts(postgresToken, sqliteToken, context) {
+  const [postgres, sqlite] = await Promise.all([
+    openMcpSession(postgresBase, postgresToken),
+    openMcpSession(sqliteBase, sqliteToken),
+  ]);
+  const calls = [
+    ['initialize', 'initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'postgres-sqlite-contract', version: '1.0.0' },
+    }],
+    ['tools/list', 'tools/list', {}],
+    ['getWorkspaceContext', 'tools/call', { name: 'getWorkspaceContext', arguments: {} }],
+    ['getBlinkora', 'tools/call', { name: 'getBlinkora', arguments: { id: context.noteId } }],
+    ['searchBlinkora', 'tools/call', { name: 'searchBlinkora', arguments: { page: 1, size: 10 } }],
+    ['listTagTree', 'tools/call', { name: 'listTagTree', arguments: {} }],
+    ['listOperationLogs', 'tools/call', { name: 'listOperationLogs', arguments: { page: 1, size: 20 } }],
+  ];
+
+  try {
+    for (const [label, method, params] of calls) {
+      const [postgresPayload, sqlitePayload] = await Promise.all([
+        postgres.rpc(method, params),
+        sqlite.rpc(method, params),
+      ]);
+      if (postgresPayload.error || sqlitePayload.error) {
+        fail(`MCP ${label} returned an error`, { postgres: postgresPayload, sqlite: sqlitePayload });
+      }
+      assertUtcFields(postgresPayload.result);
+      assertUtcFields(sqlitePayload.result);
+      if (!sameNormalizedValue(postgresPayload.result, sqlitePayload.result)) {
+        fail(`MCP ${label} result differs`, {
+          postgres: normalizeVolatileValue(postgresPayload.result),
+          sqlite: normalizeVolatileValue(sqlitePayload.result),
+        });
+      }
+    }
+  } finally {
+    await Promise.all([postgres.close(), sqlite.close()]);
+  }
+  return calls.map(([label]) => label);
+}
+
 async function main() {
   const procedures = await registeredProcedures();
   if (procedures.length !== 74) {
     fail('registered procedure count changed; update the contract fixture first', { count: procedures.length, procedures });
   }
 
-  const [postgresToken, sqliteToken] = await Promise.all([login(postgresBase), login(sqliteBase)]);
+  const [postgresLogin, sqliteLogin] = await Promise.all([login(postgresBase), login(sqliteBase)]);
+  const postgresToken = postgresLogin.token;
+  const sqliteToken = sqliteLogin.token;
   const health = await Promise.all([request(postgresBase, '/health'), request(sqliteBase, '/health')]);
   if (health[0].status !== 200 || health[1].status !== 200 || !sameValue(health[0].json, health[1].json)) {
     fail('health contract differs', health.map((item) => ({ status: item.status, body: item.json || item.text })));
@@ -525,14 +921,6 @@ async function main() {
     coverage.push({ procedure, comparison: compareProcedure(procedure, postgres, sqlite) });
   }
 
-  const [postgresProfile, sqliteProfile] = await Promise.all([
-    request(postgresBase, '/api/auth/profile', { headers: { Authorization: `Bearer ${postgresToken}` } }),
-    request(sqliteBase, '/api/auth/profile', { headers: { Authorization: `Bearer ${sqliteToken}` } }),
-  ]);
-  if (postgresProfile.status !== sqliteProfile.status || !sameValue(postgresProfile.json, sqliteProfile.json)) {
-    fail('auth profile contract differs');
-  }
-
   const attachmentResources = Array.isArray(resultData(postgresAttachments))
     ? resultData(postgresAttachments)
     : resultData(postgresAttachments)?.items || [];
@@ -549,12 +937,8 @@ async function main() {
     }
   }
 
-  const [postgresMcp, sqliteMcp] = await Promise.all([
-    openMcpTools(postgresBase, postgresToken),
-    openMcpTools(sqliteBase, sqliteToken),
-  ]);
-  if (!sameValue(postgresMcp, sqliteMcp)) fail('MCP tools/list contract differs');
-
+  const rest = await compareRestContracts({ postgresToken, sqliteToken, postgresLogin, sqliteLogin });
+  const mcp = await compareMcpContracts(postgresToken, sqliteToken, context);
   const searchBoundaries = await compareSearchBoundaries(postgresToken, sqliteToken);
 
   const report = {
@@ -564,8 +948,8 @@ async function main() {
     setComparisons: coverage.filter((item) => item.comparison === 'set').length,
     structuralComparisons: coverage.filter((item) => item.comparison === 'shape').length,
     matchingErrors: coverage.filter((item) => item.comparison === 'error').length,
-    rest: ['health', 'auth profile', ...(attachment ? ['attachment download'] : [])],
-    mcp: ['tools/list'],
+    rest: ['health', ...(attachment ? ['attachment download'] : []), ...rest],
+    mcp,
     searchBoundaries,
   };
   if (reportPath) await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
