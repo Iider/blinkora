@@ -390,7 +390,7 @@ async function createSearchBoundaryFixture(base, token) {
       base,
       'notes.upsert',
       {
-        content: `Search boundary MiXeDCaSe 中文 🔥 @mention %percent _under ${runId}`,
+        content: `Search boundary MiXeDCaSe-${runId} 中文-${runId} 🔥-${runId} @mention-${runId} percent-%${runId} _under-${runId}`,
         type: 0,
       },
       token,
@@ -434,12 +434,12 @@ async function compareSearchBoundaries(postgresToken, sqliteToken) {
   let sqliteIds;
 
   const probes = [
-    ['ASCII case-insensitive', `mixedcase ${runId}`],
-    ['Chinese substring', `中文 ${runId}`],
-    ['Emoji substring', `🔥 ${runId}`],
-    ['at-sign', `@mention ${runId}`],
-    ['percent wildcard', `%${runId}`],
-    ['underscore wildcard', `_${runId}`],
+    ['ASCII case-insensitive', `mixedcase-${runId}`],
+    ['Chinese substring', `中文-${runId}`],
+    ['Emoji substring', `🔥-${runId}`],
+    ['at-sign', `@mention-${runId}`],
+    ['percent wildcard', `percent-%${runId}`],
+    ['underscore wildcard', `_under-${runId}`],
   ];
 
   try {
@@ -460,9 +460,10 @@ async function compareSearchBoundaries(postgresToken, sqliteToken) {
       comparisons.push({ name, searchText, membership: postgresMembership });
     }
 
-    const ascii = comparisons.find((item) => item.name === 'ASCII case-insensitive');
-    if (!ascii?.membership.matching || ascii.membership.decoy) {
-      fail('ASCII case-insensitive search no longer matches only the intended note', ascii);
+    for (const comparison of comparisons) {
+      if (!comparison.membership.matching || comparison.membership.decoy) {
+        fail(`${comparison.name} search no longer matches only the intended note`, comparison);
+      }
     }
     return comparisons;
   } finally {
