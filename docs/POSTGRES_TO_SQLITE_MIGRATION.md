@@ -61,6 +61,21 @@ bun run test:postgres-sqlite-performance
 
 脚本交替预热并分别采样列表、详情、子串搜索和写入，逐项计算 p95；SQLite 任一 p95 超过 PostgreSQL 的 120% 会以非零状态退出。默认采样 100 次，`BLINKORA_PERF_SAMPLES` 可增加样本量。
 
+导入导出需对 Workspace/full × JSON/Markdown 四种组合分别执行；默认每端 5 次：
+
+```bash
+BLINKORA_POSTGRES_BASE_URL='http://127.0.0.1:16676' \
+BLINKORA_SQLITE_BASE_URL='http://127.0.0.1:16678' \
+BLINKORA_SMOKE_USER='<夹具账号>' \
+BLINKORA_SMOKE_PASSWORD='<夹具密码>' \
+BLINKORA_BACKUP_PERF_FORMAT='markdown' \
+BLINKORA_BACKUP_PERF_SCOPE='workspace' \
+BLINKORA_BACKUP_PERF_REPORT_PATH='/受限目录/backup-performance.json' \
+bun run test:postgres-sqlite-backup-performance
+```
+
+把 `BLINKORA_BACKUP_PERF_FORMAT` 依次设为 `markdown`、`json`，`BLINKORA_BACKUP_PERF_SCOPE` 依次设为 `workspace`、`full`。脚本计量导出到 ZIP 并下载、再导入该 ZIP 的完整耗时；每次导入后删除新建 Workspace，使下一样本继续使用相同夹具。SQLite 任一 p95 超过 PostgreSQL 的 150% 会以非零状态退出；用 `BLINKORA_BACKUP_PERF_SAMPLES` 增加样本量。
+
 ## 回滚演练
 
 1. 停止 SQLite 服务，保留 `blinkora.sqlite3` 供排查。

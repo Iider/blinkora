@@ -25,6 +25,7 @@ run('SQLite concurrency script syntax', 'node', ['--check', 'scripts/sqlite-conc
 run('SQLite bulk script syntax', 'node', ['--check', 'scripts/sqlite-bulk.mjs']);
 run('PostgreSQL/SQLite contract script syntax', 'node', ['--check', 'scripts/postgres-sqlite-contract.mjs']);
 run('PostgreSQL/SQLite performance script syntax', 'node', ['--check', 'scripts/postgres-sqlite-performance.mjs']);
+run('PostgreSQL/SQLite backup performance script syntax', 'node', ['--check', 'scripts/postgres-sqlite-backup-performance.mjs']);
 run('SQLite backup shell syntax', 'bash', ['-n', 'scripts/sqlite-backup.sh']);
 run('SQLite restore shell syntax', 'bash', ['-n', 'scripts/sqlite-restore.sh']);
 run('rust unit tests', 'cargo', ['test', '--manifest-path', 'server/Cargo.toml']);
