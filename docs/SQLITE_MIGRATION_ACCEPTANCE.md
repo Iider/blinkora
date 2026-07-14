@@ -5,7 +5,7 @@
 ## 本次候选
 
 - 基线提交：`f061365fa802e63ccbe1090aa9c0c837b8064057`（迁移前运行时）。
-- 候选提交：`71a388c`（SQLite 运行时替换、验收门禁、浏览器兼容性、两步验证登录、浏览器控制台诊断修复、PostgreSQL 残留防回归与搜索边界差分）。
+- 候选提交：`d62bcb4`（SQLite 运行时替换、验收门禁、浏览器兼容性、两步验证登录、浏览器控制台诊断修复、PostgreSQL 残留防回归与搜索边界差分）。
 - 平台：macOS arm64、本地文件系统、OrbStack Docker、PostgreSQL 14.23、SQLite CLI 3.x、Rust 1.96。
 - 数据规模：真实接口 smoke；2,000 条批量笔记；10 客户端 300 秒并发；物理备份/空目录恢复；PostgreSQL 真实迁移夹具。
 
@@ -18,7 +18,7 @@
 | 2,000 ID 批量路径 | `bun run test:sqlite-bulk` 实测 2,000 条记录的更新、跨 Workspace 移动、导出与删除。 |
 | 接口 smoke | `smoke:rust` 和 `smoke:agent` 均在恢复后的 SQLite 数据目录通过。另以 MinIO 启动真实 S3-compatible 服务完成 `smoke:rust` 的 S3 分支（配置校验、上传、读取、移动、删除、目录删除与切回本地存储）。覆盖登录、Workspace、笔记、历史、标签、评论、附件、导入导出、MCP 和 Agent token。 |
 | 两步验证登录 | 隔离 Docker 实例执行 `bun run test:sqlite-2fa`：REST 和 tRPC 登录在启用后只返回验证挑战，错误验证码返回 401，正确验证码才签发会话；脚本完成后关闭两步验证并恢复普通登录。浏览器也实际验证了“设置启用 → 退出 → 验证码登录 → 关闭后普通登录”。 |
-| 双后端差分 | 同一 PostgreSQL 夹具迁移到隔离 SQLite 后，`test:postgres-sqlite-contract` 覆盖注册表中的 74/74 procedure：19 项确定性结果逐值相等、3 项原本未排序列表按集合相等、36 项随机/写入返回结构相等、16 项业务错误 envelope 相等；`/health`、认证资料、附件下载 SHA-256 与 MCP `tools/list` 也相等。 |
+| 双后端差分 | 同一 PostgreSQL 夹具迁移到隔离 SQLite 后，`test:postgres-sqlite-contract` 覆盖注册表中的 74/74 procedure：19 项确定性结果逐值相等、3 项原本未排序列表按集合相等、36 项随机/写入返回结构相等、16 项业务错误 envelope 相等；`/health`、认证资料、附件下载 SHA-256 与 MCP `tools/list` 也相等。`d62bcb4` 在全新迁移夹具实跑 ASCII 大小写、中文、Emoji、`@`、`%`、`_` 六类搜索；每类均只命中目标笔记，不命中干扰笔记，PostgreSQL 与 SQLite 成员关系一致。 |
 | 真实无损迁移 | PostgreSQL 14.23 实际迁移，14 张表逐表行数与规范化 SHA-256 均相等；最终夹具包含账号、Workspace、笔记、标签关系、附件、历史、引用、评论、配置、字体 BLOB、工作区令牌、操作日志与 cache。迁移保留快照，目标在临时 SQLite 文件验证后原子切换。 |
 | 迁移后凭据与序列 | 使用迁移前 API token、未撤销 Workspace token 和字体 BLOB 直接访问 SQLite 成功；新建笔记、字体和 Agent token ID 分别为 32、4、8，均大于迁移前最大 ID 31、3、7。 |
 | 回滚演练 | 停止 SQLite 后重新启动原 PostgreSQL 服务并用原账号登录成功；原 PostgreSQL 实例和数据未被迁移工具删除或改写。 |
@@ -38,7 +38,6 @@
 ## 待验 / 阻断发布
 
 - 已在真实 S3-compatible MinIO 服务验证附件链路；`bun run smoke:s3` 现在强制要求完整凭据与隔离实例确认。尚未使用第三方云厂商账户执行该命令。
-- `71a388c` 新增 ASCII 大小写、中文、Emoji、`@`、`%`、`_` 搜索成员关系的双后端差分夹具；仍需在 PostgreSQL/SQLite 隔离夹具实际运行后，将结果补入“已通过”。
 - 桌面和移动端核心浏览器 smoke 已完成，且已覆盖登录/两步验证、Workspace 创建/切换/链接移动、三类笔记新建、单条 Blinkora 编辑持久化、置顶/归档/回收/恢复、评论新增、标签树、全局搜索、资源目录嵌套、链接高级筛选/重置、每日回顾标记与操作日志读取；完整数据浏览器清单仍未逐项执行。仍需覆盖三类笔记编辑与历史、分页、引用、评论树、附件与资源目录全部动作、完整高级筛选、设置/S3、字体、导入导出以及 MCP/Agent 的全部 UI 路径。
 - 飞牛实际机器的 systemd 安装、更新、启动、停止和卸载尚未执行；已有单服务部署说明，但不能用 Linux Docker 构建结果代替飞牛实机验收。
 
