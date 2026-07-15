@@ -237,6 +237,11 @@ async function createNote(page, targetType, content, expectedPath, visibleConten
   await page.locator('#global-editor div[class*="w-[60px]"]').click();
   const response = await saved;
   assert(response.ok(), 'Create note request failed.', { status: response.status() });
+  const createdNote = await trpcResponseJson(response, 'notes.upsert');
+  assert(Number.isInteger(createdNote?.id), 'Create note response omitted its stable id.', {
+    targetType,
+    returnedId: createdNote?.id,
+  });
 
   if (expectedPath) {
     await page.waitForFunction(path => window.location.search.includes(path), expectedPath, { timeout: 10_000 });
@@ -253,6 +258,7 @@ async function createNote(page, targetType, content, expectedPath, visibleConten
       diagnostics: page.__blinkoraDiagnostics,
     });
   }
+  return createdNote;
 }
 
 async function verifyDailyReview(page, content) {
@@ -483,7 +489,7 @@ async function verifyWithoutTagFilter(page, content) {
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('withoutTag'), undefined, { timeout: 10_000 });
 }
 
-async function verifyDateRangeFilter(page, content) {
+async function verifyDateRangeFilter(page, content, expectedNoteId) {
   await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
   const apply = await openNoteFilters(page);
   await page.locator('[data-filter-date-trigger="true"]').click();
@@ -491,14 +497,42 @@ async function verifyDateRangeFilter(page, content) {
   await calendar.waitFor({ state: 'visible', timeout: 10_000 });
   const focusedDate = calendar.locator('[tabindex="0"]').first();
   await focusedDate.focus();
-  await focusedDate.press('Enter');
-  await focusedDate.press('ArrowRight');
-  await focusedDate.press('Enter');
+
+  // CalendarDate values are serialized through the existing API contract as UTC
+  // midnights. Select a range around the browser's local date so the fixture is
+  // covered even when the smoke runs near midnight or in an extreme time zone.
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('Enter');
+  for (let offset = 0; offset < 4; offset += 1) {
+    await page.keyboard.press('ArrowRight');
+  }
+  await page.keyboard.press('Enter');
 
   const filteredLoad = waitForTrpcQuery(page, 'notes.list');
   await apply.click();
   const filteredResponse = await filteredLoad;
   assert(filteredResponse.ok(), 'Date-range filter request failed.', { status: filteredResponse.status() });
+  const filteredInput = trpcRequestJsonInput(filteredResponse, 'notes.list');
+  const startDate = filteredInput?.startDate;
+  const endDate = filteredInput?.endDate;
+  assert(
+    typeof startDate === 'string'
+      && typeof endDate === 'string'
+      && Number.isFinite(Date.parse(startDate))
+      && Number.isFinite(Date.parse(endDate))
+      && Date.parse(startDate) < Date.parse(endDate),
+    'Date-range filter sent an invalid range.',
+    { startDate, endDate },
+  );
+  const filteredData = await trpcResponseJson(filteredResponse, 'notes.list');
+  const filteredNotes = Array.isArray(filteredData) ? filteredData : filteredData?.items;
+  assert(
+    Array.isArray(filteredNotes)
+      && filteredNotes.some(note => note?.id === expectedNoteId),
+    'Date-range filter response omitted the in-range fixture.',
+    { expectedNoteId, startDate, endDate, returnedNoteIds: filteredNotes?.map(note => note?.id) },
+  );
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
 
   await openNoteFilters(page);
@@ -1443,7 +1477,7 @@ try {
   await verifyDailyReview(page, blinkora);
   await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
   await waitForApp(page);
-  await createNote(page, '笔记', note, 'path=notes');
+  const createdNote = await createNote(page, '笔记', note, 'path=notes');
   await createNote(page, '待办', todo, 'path=todo');
   const updatedBlinkora = `${blinkora} (edited)`;
   await editNote(page, blinkora, updatedBlinkora, undefined, '');
@@ -1591,7 +1625,7 @@ try {
   );
   await switchWorkspace(page, workspace, '默认工作区');
   const todoFilterVisibleContent = `browser UI Markdown task ${stamp}`;
-  await verifyDateRangeFilter(page, updatedNote);
+  await verifyDateRangeFilter(page, updatedNote, createdNote.id);
   await createNote(page, '闪念', `- [ ] ${todoFilterVisibleContent}`, '', todoFilterVisibleContent);
   await verifyTodoContentFilter(page, todoFilterVisibleContent);
   await invokeCardMenuAction(page, todoFilterVisibleContent, 'TrashItem', 'notes.trashMany');
