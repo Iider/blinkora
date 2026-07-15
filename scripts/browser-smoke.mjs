@@ -314,6 +314,11 @@ async function verifyAttachmentFilter(page, content) {
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
   assert(await page.locator('.blinkora-flip-card').count() === 1,
     'Attachment filter did not reduce the list to the attached Note.');
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('withFile') === 'true', undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Attachment filter changed after a reload.');
 
   const reset = page.getByRole('button', { name: '重置', exact: true });
   await reset.waitFor({ state: 'hidden', timeout: 10_000 });
@@ -333,6 +338,11 @@ async function verifyLinkFilter(page, content) {
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
   assert(await page.locator('.blinkora-flip-card').count() === 1,
     'Link filter did not reduce the list to the linked Note.');
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('withLink') === 'true', undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Link filter changed after a reload.');
 }
 
 async function verifyTagTreeFilter(page, parentTag, childTag, content) {
@@ -353,6 +363,11 @@ async function verifyTagTreeFilter(page, parentTag, childTag, content) {
   const childTagId = await page.evaluate(() => new URLSearchParams(window.location.search).get('tagId'));
   assert(childTagId && childTagId !== parentTagId, 'Selecting the child tag did not replace the parent tagId.');
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction((tagId) => new URLSearchParams(window.location.search).get('tagId') === tagId, childTagId, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Child tag filter changed after a reload.');
 }
 
 async function createPaginationNotes(page, count) {
@@ -919,7 +934,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters and reset, pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
