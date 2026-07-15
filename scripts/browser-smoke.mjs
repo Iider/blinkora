@@ -1122,6 +1122,24 @@ async function renameFolder(page, folderName, renamedFolderName) {
   await page.getByText(renamedFolderName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
 }
 
+async function renameResource(page, resourceName, renamedResourceName) {
+  await openResourceMenu(page, resourceName);
+  const rename = page.locator('[data-key="rename"]').last();
+  await rename.waitFor({ state: 'visible', timeout: 10_000 });
+  await rename.click();
+
+  const dialog = page.getByRole('dialog', { name: '重命名' });
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await dialog.locator('input').fill(resourceDisplayName(renamedResourceName));
+  const renamed = waitForTrpcMutation(page, 'attachments.rename');
+  await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  const response = await renamed;
+  assert(response.ok(), 'Rename resource request failed.', { status: response.status() });
+  await dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  await resourceEntry(page, resourceName).waitFor({ state: 'hidden', timeout: 10_000 });
+  await resourceEntry(page, renamedResourceName).waitFor({ state: 'visible', timeout: 10_000 });
+}
+
 async function deleteResource(page, resourceName) {
   await openResourceMenu(page, resourceName);
   const remove = page.locator('[data-key="delete"]').last();
@@ -1167,6 +1185,7 @@ async function moveResourceToParent(page, resourceName) {
 
 async function verifyResourceFolders(page, {
   attachmentName,
+  renamedAttachmentName,
   rootFolder,
   renamedRootFolder,
   nestedFolder,
@@ -1198,6 +1217,7 @@ async function verifyResourceFolders(page, {
   await page.getByText('根目录', { exact: true }).click();
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('folder'), undefined, { timeout: 10_000 });
   await resourceEntry(page, attachmentName).waitFor({ state: 'visible', timeout: 10_000 });
+  await renameResource(page, attachmentName, renamedAttachmentName);
   await createFolder(page, siblingFolder);
   await createFolder(page, siblingFolderWithPrefix);
   await deleteResource(page, siblingFolder);
@@ -1259,6 +1279,7 @@ try {
   const siblingFolderWithPrefix = `${siblingFolder} preserved`;
   const comment = `browser UI comment ${stamp}`;
   const attachmentName = `browser-ui-attachment-${stamp}.txt`;
+  const renamedAttachmentName = `browser-ui-attachment-renamed-${stamp}.txt`;
 
   await registerAndSignIn(page);
   await createAndSelectWorkspace(page, workspace);
@@ -1292,6 +1313,7 @@ try {
   await verifyGlobalResourceSearch(page, attachmentName);
   await verifyResourceFolders(page, {
     attachmentName,
+    renamedAttachmentName,
     rootFolder,
     renamedRootFolder,
     nestedFolder,
@@ -1299,7 +1321,7 @@ try {
     siblingFolder,
     siblingFolderWithPrefix,
   });
-  await deleteResource(page, attachmentName);
+  await deleteResource(page, renamedAttachmentName);
   await switchWorkspace(page, '默认工作区', workspace);
   const paginationBlinkoras = await createPaginationFixtures(page, {
     targetType: '闪念',
@@ -1436,7 +1458,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, date-range/attachment/link/Todo-content/without-tag filters with reset and reload retention where supported, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, date-range/attachment/link/Todo-content/without-tag filters with reset and reload retention where supported, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource attachment/folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
