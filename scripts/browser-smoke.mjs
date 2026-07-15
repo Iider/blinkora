@@ -515,6 +515,43 @@ async function restoreArchivedCards(page, contents) {
   }
 }
 
+async function trashCards(page, contents) {
+  await page.goto(listUrl().toString(), { waitUntil: 'networkidle' });
+  for (const content of contents) {
+    await invokeCardMenuAction(page, content, 'TrashItem', 'notes.trashMany');
+    await noteCard(page, content).waitFor({ state: 'hidden', timeout: 10_000 });
+  }
+}
+
+async function deleteRecycledCard(page, content) {
+  await page.goto(listUrl('trash', 2).toString(), { waitUntil: 'networkidle' });
+  const card = await openCardMenu(page, content);
+  const deleteItem = page.locator('[data-key="DeleteItem"]').last();
+  await deleteItem.waitFor({ state: 'visible', timeout: 10_000 });
+
+  const impactRequested = waitForTrpcMutation(page, 'notes.deleteImpact');
+  await deleteItem.click();
+  const impactResponse = await impactRequested;
+  assert(impactResponse.ok(), 'Permanent delete impact request failed.', { status: impactResponse.status() });
+
+  const dialog = page.getByRole('dialog').filter({ hasText: '此操作会彻底删除卡片' });
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  const deleted = waitForTrpcMutation(page, 'notes.deleteMany');
+  await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  const deleteResponse = await deleted;
+  assert(deleteResponse.ok(), 'Permanent delete request failed.', { status: deleteResponse.status() });
+  await card.waitFor({ state: 'hidden', timeout: 10_000 });
+}
+
+async function restoreRecycledCards(page, contents) {
+  await page.goto(listUrl('trash').toString(), { waitUntil: 'networkidle' });
+  for (const content of contents) {
+    const card = noteCard(page, content);
+    await invokeCardMenuAction(page, content, 'ArchivedItem');
+    await card.waitFor({ state: 'hidden', timeout: 10_000 });
+  }
+}
+
 function noteCard(page, content) {
   return page.locator('.blinkora-flip-card').filter({ hasText: content });
 }
@@ -1079,11 +1116,28 @@ try {
     page,
     blinkoraPaginationContents.filter(content => content !== archivedPaginationPages.secondPageContents[0]),
   );
+  await trashCards(page, blinkoraPaginationContents);
+  const recycledPaginationPages = await verifyPagination(page, {
+    path: 'trash',
+    fixtureName: 'Recycled Blinkora',
+    paginationContents: blinkoraPaginationContents,
+  });
+  const permanentlyDeletedContent = recycledPaginationPages.secondPageContents[0];
+  const remainingRecycledContent = recycledPaginationPages.secondPageContents[1];
+  await deleteRecycledCard(page, permanentlyDeletedContent);
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
+  await noteCard(page, remainingRecycledContent).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Permanently deleting a second-page Recycled Blinkora did not retain the remaining card on page two.');
+  await restoreRecycledCards(
+    page,
+    blinkoraPaginationContents.filter(content => content !== permanentlyDeletedContent),
+  );
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all/archive pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
