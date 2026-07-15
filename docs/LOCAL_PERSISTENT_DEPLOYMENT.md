@@ -21,7 +21,7 @@ bun run deploy:local install
 bun run deploy:local update
 ```
 
-安装脚本会构建前端和本机 release、生成随机 `BLINKORA_SECRET`、写入受限权限的环境文件，并安装 `com.blinkora.local`。首次启动会在 `DATA_DIR` 创建 SQLite schema；已有库会先做版本和完整性探针，不会覆盖非空未知数据库。
+安装脚本会构建前端和本机 release、生成随机 `BLINKORA_SECRET`、写入受限权限的环境文件，并安装 `com.blinkora.local`。首次启动会在 `DATA_DIR` 创建 SQLite schema；已有库会先做版本和完整性探针，不会覆盖非空未知数据库。`install`、`update` 和 `start` 只有在 `http://127.0.0.1:6676/health` 成功后才返回；30 秒内未就绪会失败并输出最近的错误日志。
 
 ## 日常命令
 

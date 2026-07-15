@@ -194,6 +194,26 @@ launchd_domain() {
   echo "gui/$(id -u)"
 }
 
+wait_for_service_health() {
+  require_cmd curl "macOS should include curl; install it before starting Blinkora."
+
+  local attempt=0
+  local health_url="http://127.0.0.1:$PORT/health"
+  while (( attempt < 30 )); do
+    if curl --fail --silent --connect-timeout 1 --max-time 2 "$health_url" >/dev/null; then
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+
+  echo "error: Blinkora did not become healthy within 30 seconds: $health_url" >&2
+  if [[ -f "$LOG_DIR/blinkora.err.log" ]]; then
+    tail -n 40 "$LOG_DIR/blinkora.err.log" >&2
+  fi
+  return 1
+}
+
 start_service() {
   write_plist
   local domain
@@ -201,6 +221,7 @@ start_service() {
   launchctl bootout "$domain" "$PLIST" >/dev/null 2>&1 || true
   launchctl bootstrap "$domain" "$PLIST"
   launchctl kickstart -k "$domain/$LABEL"
+  wait_for_service_health
   echo "Blinkora local service started: http://localhost:$PORT"
 }
 

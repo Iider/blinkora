@@ -33,7 +33,7 @@
 | PostgreSQL 残留防回归 | `verify:rust` 会执行 `scripts/verify-sqlite-runtime-residuals.mjs`：检查 17 个部署文档、模板与 Compose 文件不含 PostgreSQL URL、`psql`、旧容器名、默认端口或运行时环境变量；检查 30 个正式运行时源文件不含 PostgreSQL 专用 backend 或 SQL 语法，并要求 Compose 只定义 `web` 服务。 |
 | 浏览器核心 smoke | 同一隔离 SQLite Docker 实例中，桌面和 390×844 移动视口均完成真实登录与主界面验证；笔记列表、带附件笔记、底部导航与移动侧栏开合正常。最新候选重新构建后，以全新登录标签页验证桌面待办页和编辑器，以及 390×844 待办页；控制台 error、warn、warning 均为 0。 |
 | 浏览器扩展 smoke | 新建隔离 Docker 实例后，完整 `smoke:rust` 先通过；浏览器随后真实创建闪念、笔记、待办各一条，标签树筛选和全局搜索均能找到新闪念，资源页能列出既有附件并创建/进入嵌套目录，设置页能读取操作日志及新建笔记的日志记录。最新候选通过 UI 将 `type=2` 待办更新为带 `（再次编辑）` 的内容；离线检查确认 `noteHistory.version=1` 保存前一版本，`integrity_check=ok`，`foreign_key_check` 为 0 行，容器重启后 `/health` 恢复正常。基础设置与 2FA 入口均正常渲染。 |
-| macOS 本机持久化 | 在隔离用户目录中实际执行 `install → update → smoke:rust → smoke:agent → stop → start → uninstall`，全程不启动 Docker。重启后原账号能登录、笔记数不变；卸载后 `blinkora.sqlite3` 保留，`integrity_check=ok`、`foreign_key_check` 为 0。发布产物位于用户目录；启动前清理二进制 provenance 并进行 ad-hoc 签名，静态页面可访问，服务不会因 `OS_REASON_CODESIGNING` 退出。 |
+| macOS 本机持久化 | 在隔离用户目录中实际执行 `install → update → smoke:rust → smoke:agent → stop → start → uninstall`，全程不启动 Docker。重启后原账号能登录、笔记数不变；卸载后 `blinkora.sqlite3` 保留，`integrity_check=ok`、`foreign_key_check` 为 0。默认本机目录也实际完成 `install → update → restart`，服务健康后才返回成功，SQLite 完整性与外键检查通过。发布产物位于用户目录；启动前清理二进制 provenance 并进行 ad-hoc 签名，静态页面可访问，服务不会因 `OS_REASON_CODESIGNING` 退出。 |
 | 飞牛 unit 模板 | `bun run verify:fnas-systemd` 校验 `deploy/fnas/blinkora.service` 的 section、关键值、服务账号、环境文件和 `ExecStart` 路径。该项仅验证部署定义。 |
 
 ## 待验 / 阻断发布
