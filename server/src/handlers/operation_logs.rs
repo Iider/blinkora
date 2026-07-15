@@ -256,12 +256,14 @@ fn push_filters<'a>(query: &mut QueryBuilder<'a, Sqlite>, filters: &'a Operation
         query.push(" AND l.id<").push_bind(before_id);
     }
     if let Some(start_date) = filters.start_date {
-        query.push(r#" AND julianday(l."createdAt") >= julianday("#);
+        query
+            .push(r#" AND blinkora_timestamp_micros(l."createdAt") >= blinkora_timestamp_micros("#);
         query.push_bind(start_date.to_string());
         query.push(")");
     }
     if let Some(end_date) = filters.end_date {
-        query.push(r#" AND julianday(l."createdAt") <= julianday("#);
+        query
+            .push(r#" AND blinkora_timestamp_micros(l."createdAt") <= blinkora_timestamp_micros("#);
         query.push_bind(end_date.to_string());
         query.push(")");
     }
@@ -285,7 +287,7 @@ fn push_filters<'a>(query: &mut QueryBuilder<'a, Sqlite>, filters: &'a Operation
     }
     if let Some(changed_field) = filters.changed_field {
         query
-            .push(r#" AND EXISTS (SELECT 1 FROM json_each(COALESCE(l."changedFields", '[]')) WHERE value="#)
+            .push(r#" AND blinkora_json_has_key(COALESCE(l."changedFields", '[]'), "#)
             .push_bind(changed_field)
             .push(")");
     }

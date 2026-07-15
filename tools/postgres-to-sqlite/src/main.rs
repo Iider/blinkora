@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use sqlx::{
@@ -13,13 +14,14 @@ use std::time::Duration;
 use tokio_postgres::{Client, NoTls};
 
 const SQLITE_SCHEMA: &str = include_str!("../../../db/schema.sqlite.sql");
-const SQLITE_SCHEMA_VERSION: i64 = 1;
+const SQLITE_SCHEMA_VERSION: i64 = 2;
 
 struct TableSpec {
     name: &'static str,
     columns: &'static [&'static str],
     json_columns: &'static [&'static str],
     bool_columns: &'static [&'static str],
+    timestamp_columns: &'static [&'static str],
     blob_column: Option<&'static str>,
     size_as_text: bool,
 }
@@ -42,6 +44,7 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &[],
         bool_columns: &[],
+        timestamp_columns: &["createdAt", "updatedAt"],
         blob_column: None,
         size_as_text: false,
     },
@@ -60,6 +63,7 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &[],
         bool_columns: &["isDefault"],
+        timestamp_columns: &["createdAt", "updatedAt"],
         blob_column: None,
         size_as_text: false,
     },
@@ -82,6 +86,7 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &["metadata"],
         bool_columns: &["isArchived", "isRecycle", "isTop", "isReviewed"],
+        timestamp_columns: &["createdAt", "updatedAt"],
         blob_column: None,
         size_as_text: false,
     },
@@ -100,6 +105,7 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &[],
         bool_columns: &[],
+        timestamp_columns: &["createdAt", "updatedAt"],
         blob_column: None,
         size_as_text: false,
     },
@@ -108,6 +114,7 @@ const TABLES: &[TableSpec] = &[
         columns: &["id", "noteId", "tagId"],
         json_columns: &[],
         bool_columns: &[],
+        timestamp_columns: &[],
         blob_column: None,
         size_as_text: false,
     },
@@ -131,6 +138,7 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &["metadata"],
         bool_columns: &[],
+        timestamp_columns: &["createdAt", "updatedAt"],
         blob_column: None,
         size_as_text: true,
     },
@@ -148,6 +156,7 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &["metadata"],
         bool_columns: &[],
+        timestamp_columns: &["createdAt"],
         blob_column: None,
         size_as_text: false,
     },
@@ -156,6 +165,7 @@ const TABLES: &[TableSpec] = &[
         columns: &["id", "fromNoteId", "toNoteId", "createdAt"],
         json_columns: &[],
         bool_columns: &[],
+        timestamp_columns: &["createdAt"],
         blob_column: None,
         size_as_text: false,
     },
@@ -176,6 +186,7 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &["metadata"],
         bool_columns: &[],
+        timestamp_columns: &["createdAt", "updatedAt"],
         blob_column: None,
         size_as_text: false,
     },
@@ -184,6 +195,7 @@ const TABLES: &[TableSpec] = &[
         columns: &["id", "key", "config", "userId", "workspaceId"],
         json_columns: &["config"],
         bool_columns: &[],
+        timestamp_columns: &[],
         blob_column: None,
         size_as_text: false,
     },
@@ -205,6 +217,7 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &["weights"],
         bool_columns: &["isLocal", "isSystem"],
+        timestamp_columns: &["createdAt", "updatedAt"],
         blob_column: Some("fileData"),
         size_as_text: false,
     },
@@ -226,6 +239,13 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &["permissions"],
         bool_columns: &[],
+        timestamp_columns: &[
+            "expiresAt",
+            "revokedAt",
+            "lastUsedAt",
+            "createdAt",
+            "updatedAt",
+        ],
         blob_column: None,
         size_as_text: false,
     },
@@ -250,6 +270,7 @@ const TABLES: &[TableSpec] = &[
         ],
         json_columns: &["changedFields", "details"],
         bool_columns: &[],
+        timestamp_columns: &["createdAt"],
         blob_column: None,
         size_as_text: false,
     },
@@ -258,6 +279,7 @@ const TABLES: &[TableSpec] = &[
         columns: &["id", "key", "value", "createdAt", "updatedAt"],
         json_columns: &["value"],
         bool_columns: &[],
+        timestamp_columns: &["createdAt", "updatedAt"],
         blob_column: None,
         size_as_text: false,
     },
@@ -395,7 +417,7 @@ async fn begin_write_quiescence(client: &Client) -> Result<()> {
         .join(", ");
     client
         .batch_execute(&format!(
-            "BEGIN ISOLATION LEVEL REPEATABLE READ; LOCK TABLE {table_names} IN SHARE ROW EXCLUSIVE MODE;"
+            "BEGIN ISOLATION LEVEL REPEATABLE READ; SET LOCAL TIME ZONE 'UTC'; LOCK TABLE {table_names} IN SHARE ROW EXCLUSIVE MODE;"
         ))
         .await
         .context("could not acquire PostgreSQL write-quiescence locks")?;
@@ -473,6 +495,24 @@ fn normalize_source_row(spec: &TableSpec, value: &mut Value) -> Result<()> {
     let object = value
         .as_object_mut()
         .context("PostgreSQL row_to_json did not return an object")?;
+    for column in spec.timestamp_columns {
+        let Some(value) = object.get_mut(*column) else {
+            continue;
+        };
+        match value {
+            Value::Null => {}
+            Value::String(value) => {
+                *value = normalize_utc_timestamp(value).with_context(|| {
+                    format!("{}.{} is not a finite RFC3339 timestamp", spec.name, column)
+                })?;
+            }
+            _ => bail!(
+                "{}.{} must be text or null in the PostgreSQL source",
+                spec.name,
+                column
+            ),
+        }
+    }
     for column in spec.bool_columns {
         if let Some(Value::Bool(value)) = object.get(*column) {
             object.insert((*column).to_string(), Value::from(i64::from(*value)));
@@ -488,6 +528,13 @@ fn normalize_source_row(spec: &TableSpec, value: &mut Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn normalize_utc_timestamp(value: &str) -> Result<String> {
+    let timestamp = DateTime::parse_from_rfc3339(value)?;
+    Ok(timestamp
+        .with_timezone(&Utc)
+        .to_rfc3339_opts(SecondsFormat::Micros, true))
 }
 
 async fn insert_all(pool: &SqlitePool, tables: &[(&TableSpec, Vec<Value>)]) -> Result<()> {
@@ -645,6 +692,167 @@ async fn verify_sqlite(pool: &SqlitePool) -> Result<()> {
     if foreign_key_violations != 0 {
         bail!("SQLite foreign_key_check found {foreign_key_violations} violation(s)");
     }
+    verify_logical_relationships(pool).await?;
+    verify_id_high_water_marks(pool).await?;
+    Ok(())
+}
+
+async fn verify_logical_relationships(pool: &SqlitePool) -> Result<()> {
+    let checks = [
+        (
+            "notes_workspace_scope",
+            r#"SELECT COUNT(*) FROM notes n
+               WHERE n."workspaceId" IS NOT NULL AND (
+                 n."accountId" IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM workspaces w
+                   WHERE w.id=n."workspaceId" AND w."accountId"=n."accountId"
+                 )
+               )"#,
+        ),
+        (
+            "tag_workspace_scope",
+            r#"SELECT COUNT(*) FROM tag t
+               WHERE t."workspaceId" IS NOT NULL AND (
+                 t."accountId" IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM workspaces w
+                   WHERE w.id=t."workspaceId" AND w."accountId"=t."accountId"
+                 )
+               )"#,
+        ),
+        (
+            "tag_parent_scope",
+            r#"SELECT COUNT(*) FROM tag t LEFT JOIN tag p ON p.id=t.parent
+               WHERE t.parent<>0 AND (
+                 p.id IS NULL OR p."accountId" IS NOT t."accountId"
+                 OR p."workspaceId" IS NOT t."workspaceId"
+               )"#,
+        ),
+        (
+            "tag_link_scope",
+            r#"SELECT COUNT(*) FROM "tagsToNote" link
+               JOIN notes n ON n.id=link."noteId"
+               JOIN tag t ON t.id=link."tagId"
+               WHERE n."accountId" IS NOT t."accountId"
+                  OR n."workspaceId" IS NOT t."workspaceId""#,
+        ),
+        (
+            "note_reference_scope",
+            r#"SELECT COUNT(*) FROM "noteReference" reference
+               JOIN notes source ON source.id=reference."fromNoteId"
+               JOIN notes target ON target.id=reference."toNoteId"
+               WHERE source."accountId" IS NOT target."accountId"
+                  OR source."workspaceId" IS NOT target."workspaceId""#,
+        ),
+        (
+            "history_note_scope",
+            r#"SELECT COUNT(*) FROM "noteHistory" history
+               JOIN notes n ON n.id=history."noteId"
+               WHERE history."accountId" IS NOT n."accountId"
+                  OR history."workspaceId" IS NOT n."workspaceId""#,
+        ),
+        (
+            "comment_note_scope",
+            r#"SELECT COUNT(*) FROM comments comment
+               JOIN notes n ON n.id=comment."noteId"
+               WHERE comment."accountId" IS NOT n."accountId"
+                  OR comment."workspaceId" IS NOT n."workspaceId""#,
+        ),
+        (
+            "comment_parent_scope",
+            r#"SELECT COUNT(*) FROM comments comment
+               JOIN comments parent ON parent.id=comment."parentId"
+               WHERE comment."noteId"<>parent."noteId"
+                  OR comment."workspaceId" IS NOT parent."workspaceId""#,
+        ),
+        (
+            "attachment_workspace_scope",
+            r#"SELECT COUNT(*) FROM attachments attachment
+               WHERE attachment."workspaceId" IS NOT NULL AND (
+                 attachment."accountId" IS NULL OR NOT EXISTS (
+                   SELECT 1 FROM workspaces w
+                   WHERE w.id=attachment."workspaceId"
+                     AND w."accountId"=attachment."accountId"
+                 )
+               )"#,
+        ),
+        (
+            "attachment_note_scope",
+            r#"SELECT COUNT(*) FROM attachments attachment
+               JOIN notes n ON n.id=attachment."noteId"
+               WHERE attachment."accountId" IS NOT n."accountId"
+                  OR attachment."workspaceId" IS NOT n."workspaceId""#,
+        ),
+        (
+            "workspace_token_scope",
+            r#"SELECT COUNT(*) FROM "agentAccessTokens" token
+               JOIN workspaces w ON w.id=token."workspaceId"
+               WHERE token."accountId"<>w."accountId""#,
+        ),
+        (
+            "config_workspace_scope",
+            r#"SELECT COUNT(*) FROM config c JOIN workspaces w ON w.id=c."workspaceId"
+               WHERE c."userId" IS NULL OR c."userId"<>w."accountId""#,
+        ),
+        (
+            "operation_log_workspace_scope",
+            r#"SELECT COUNT(*) FROM "operationLog" log
+               JOIN workspaces w ON w.id=log."workspaceId"
+               WHERE log."accountId" IS NULL OR log."accountId"<>w."accountId""#,
+        ),
+    ];
+    for (name, sql) in checks {
+        let violations: i64 = sqlx::query_scalar(sql).fetch_one(pool).await?;
+        if violations != 0 {
+            bail!("SQLite logical check {name} found {violations} violation(s)");
+        }
+    }
+    Ok(())
+}
+
+async fn verify_id_high_water_marks(pool: &SqlitePool) -> Result<()> {
+    for table in [
+        "accounts",
+        "workspaces",
+        "notes",
+        "tag",
+        "attachments",
+        "noteHistory",
+        "noteReference",
+        "comments",
+        "config",
+        "fonts",
+        "agentAccessTokens",
+        "operationLog",
+        "cache",
+    ] {
+        let maximum: i64 = sqlx::query_scalar(&format!(
+            "SELECT COALESCE(MAX(id), 0) FROM {}",
+            quote_identifier(table)
+        ))
+        .fetch_one(pool)
+        .await?;
+        let sequence: Option<i64> =
+            sqlx::query_scalar("SELECT seq FROM sqlite_sequence WHERE name=$1")
+                .bind(table)
+                .fetch_optional(pool)
+                .await?;
+        if sequence.unwrap_or_default() < maximum {
+            bail!("SQLite id sequence for {table} is below the migrated maximum ({maximum})");
+        }
+    }
+    let tag_link_maximum: i64 =
+        sqlx::query_scalar(r#"SELECT COALESCE(MAX(id), 0) FROM "tagsToNote""#)
+            .fetch_one(pool)
+            .await?;
+    let tag_link_sequence: i64 =
+        sqlx::query_scalar(r#"SELECT value FROM "_blinkoraSequence" WHERE name='tagsToNote.id'"#)
+            .fetch_one(pool)
+            .await?;
+    if tag_link_sequence < tag_link_maximum {
+        bail!(
+            "SQLite id sequence for tagsToNote is below the migrated maximum ({tag_link_maximum})"
+        );
+    }
     Ok(())
 }
 
@@ -785,6 +993,72 @@ mod tests {
     }
 
     #[test]
+    fn migration_plan_declares_every_timestamp_column() {
+        for spec in TABLES {
+            for column in spec.columns {
+                if column.ends_with("At") {
+                    assert!(
+                        spec.timestamp_columns.contains(column),
+                        "{}.{} is missing from timestamp_columns",
+                        spec.name,
+                        column
+                    );
+                }
+            }
+            for column in spec.timestamp_columns {
+                assert!(
+                    spec.columns.contains(column),
+                    "{}.{} is not a source column",
+                    spec.name,
+                    column
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn source_timestamps_are_normalized_to_utc_microseconds() {
+        let spec = TABLES
+            .iter()
+            .find(|spec| spec.name == "agentAccessTokens")
+            .unwrap();
+        let mut row = serde_json::json!({
+            "expiresAt": "2026-07-15T16:34:56.1234+08:00",
+            "revokedAt": null,
+            "lastUsedAt": "2026-07-14T23:59:59.999999-05:30",
+            "createdAt": "2026-07-15T08:34:56Z",
+            "updatedAt": "2026-07-15T08:34:56.123456Z"
+        });
+
+        normalize_source_row(spec, &mut row).unwrap();
+
+        assert_eq!(
+            row,
+            serde_json::json!({
+                "expiresAt": "2026-07-15T08:34:56.123400Z",
+                "revokedAt": null,
+                "lastUsedAt": "2026-07-15T05:29:59.999999Z",
+                "createdAt": "2026-07-15T08:34:56.000000Z",
+                "updatedAt": "2026-07-15T08:34:56.123456Z"
+            })
+        );
+    }
+
+    #[test]
+    fn invalid_or_infinite_source_timestamps_block_migration() {
+        let spec = TABLES.iter().find(|spec| spec.name == "notes").unwrap();
+        for invalid in [
+            serde_json::json!("not-a-timestamp"),
+            serde_json::json!("infinity"),
+            serde_json::json!(42),
+        ] {
+            let mut row = serde_json::json!({ "createdAt": invalid });
+            let error = normalize_source_row(spec, &mut row).unwrap_err();
+            assert!(error.to_string().contains("notes.createdAt"));
+        }
+    }
+
+    #[test]
     fn canonical_hash_ignores_json_object_key_order_but_not_values() {
         let first: Value = serde_json::json!({"b": [2, {"z": true, "a": null}], "a": 1});
         let same: Value = serde_json::json!({"a": 1, "b": [2, {"a": null, "z": true}]});
@@ -836,7 +1110,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(r#"INSERT INTO "tagsToNote" ("noteId", "tagId") VALUES (11, 13)"#)
+        sqlx::query(r#"INSERT INTO "tagsToNote" (id, "noteId", "tagId") VALUES (29, 11, 13)"#)
             .execute(&pool)
             .await
             .unwrap();
@@ -852,7 +1126,20 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(tag_link_id, 1);
+        assert_eq!(tag_link_id, 29);
+        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE id = 29"#)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(r#"INSERT INTO "tagsToNote" ("noteId", "tagId") VALUES (11, 13)"#)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let next_tag_link_id: i64 = sqlx::query_scalar("SELECT id FROM \"tagsToNote\"")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(next_tag_link_id, 30);
         let font_hex: String = sqlx::query_scalar("SELECT lower(hex(\"fileData\")) FROM fonts")
             .fetch_one(&pool)
             .await

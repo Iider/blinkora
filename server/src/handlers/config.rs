@@ -3,7 +3,7 @@ use crate::util::{config_json, unwrap_config_value};
 use anyhow::anyhow;
 use futures::FutureExt;
 use serde_json::{json, Value};
-use sqlx::Row;
+use sqlx::{Row, Sqlite, Transaction};
 use std::collections::HashMap;
 
 pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
@@ -234,6 +234,19 @@ async fn upsert_config(
     user_id: Option<i32>,
     workspace_id: Option<i32>,
 ) -> anyhow::Result<()> {
+    let mut tx = ctx.state.pool().begin().await?;
+    upsert_config_tx(&mut tx, key, value, user_id, workspace_id).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn upsert_config_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    key: &str,
+    value: Value,
+    user_id: Option<i32>,
+    workspace_id: Option<i32>,
+) -> anyhow::Result<()> {
     match (user_id, workspace_id) {
         (Some(user_id), Some(workspace_id)) => {
             let existing: Option<i32> = sqlx::query_scalar(
@@ -242,13 +255,13 @@ async fn upsert_config(
             .bind(key)
             .bind(user_id)
             .bind(workspace_id)
-            .fetch_optional(ctx.state.pool())
+            .fetch_optional(&mut **tx)
             .await?;
             if let Some(id) = existing {
                 sqlx::query("UPDATE config SET config=$1 WHERE id=$2")
                     .bind(value)
                     .bind(id)
-                    .execute(ctx.state.pool())
+                    .execute(&mut **tx)
                     .await?;
             } else {
                 sqlx::query(
@@ -258,7 +271,7 @@ async fn upsert_config(
                 .bind(value)
                 .bind(user_id)
                 .bind(workspace_id)
-                .execute(ctx.state.pool())
+                .execute(&mut **tx)
                 .await?;
             }
         }
@@ -268,20 +281,20 @@ async fn upsert_config(
             )
             .bind(key)
             .bind(user_id)
-            .fetch_optional(ctx.state.pool())
+            .fetch_optional(&mut **tx)
             .await?;
             if let Some(id) = existing {
                 sqlx::query("UPDATE config SET config=$1 WHERE id=$2")
                     .bind(value)
                     .bind(id)
-                    .execute(ctx.state.pool())
+                    .execute(&mut **tx)
                     .await?;
             } else {
                 sqlx::query(r#"INSERT INTO config (key, config, "userId") VALUES ($1,$2,$3)"#)
                     .bind(key)
                     .bind(value)
                     .bind(user_id)
-                    .execute(ctx.state.pool())
+                    .execute(&mut **tx)
                     .await?;
             }
         }
@@ -289,19 +302,19 @@ async fn upsert_config(
             let existing: Option<i32> =
                 sqlx::query_scalar(r#"SELECT id FROM config WHERE key=$1 AND "userId" IS NULL"#)
                     .bind(key)
-                    .fetch_optional(ctx.state.pool())
+                    .fetch_optional(&mut **tx)
                     .await?;
             if let Some(id) = existing {
                 sqlx::query("UPDATE config SET config=$1 WHERE id=$2")
                     .bind(value)
                     .bind(id)
-                    .execute(ctx.state.pool())
+                    .execute(&mut **tx)
                     .await?;
             } else {
                 sqlx::query(r#"INSERT INTO config (key, config) VALUES ($1,$2)"#)
                     .bind(key)
                     .bind(value)
-                    .execute(ctx.state.pool())
+                    .execute(&mut **tx)
                     .await?;
             }
         }
@@ -315,10 +328,21 @@ async fn upsert_global_config(
     key: &str,
     value: Value,
 ) -> anyhow::Result<()> {
-    upsert_config(ctx, key, value, None, None).await?;
+    let mut tx = ctx.state.pool().begin().await?;
+    upsert_global_config_tx(&mut tx, key, value).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn upsert_global_config_tx(
+    tx: &mut Transaction<'_, Sqlite>,
+    key: &str,
+    value: Value,
+) -> anyhow::Result<()> {
+    upsert_config_tx(tx, key, value, None, None).await?;
     sqlx::query(r#"DELETE FROM config WHERE key=$1 AND "userId" IS NOT NULL"#)
         .bind(key)
-        .execute(ctx.state.pool())
+        .execute(&mut **tx)
         .await?;
     Ok(())
 }
@@ -395,16 +419,83 @@ async fn save_s3_values(
         ),
         ("s3CustomPath", json!(normalized_custom_path)),
     ];
+    let mut tx = ctx.state.pool().begin().await?;
     for (key, value) in values {
-        upsert_global_config(ctx, key, config_json(value)).await?;
+        upsert_global_config_tx(&mut tx, key, config_json(value)).await?;
     }
     if let Some(force_path_style) = force_path_style {
-        upsert_global_config(
-            ctx,
+        upsert_global_config_tx(
+            &mut tx,
             "s3ForcePathStyle",
             config_json(json!(force_path_style)),
         )
         .await?;
     }
+    tx.commit().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_s3_values;
+    use crate::handlers::test_support::HandlerTestFixture;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn s3_configuration_is_saved_as_one_transaction() {
+        let fixture = HandlerTestFixture::new("s3-config-transaction").await;
+        let input = json!({
+            "s3Endpoint": "example.invalid",
+            "s3Region": "test-region",
+            "s3Bucket": "test-bucket",
+            "s3AccessKeyId": "test-key",
+            "s3AccessKeySecret": "test-secret"
+        });
+        sqlx::query(
+            r#"CREATE TRIGGER fail_s3_config_insert BEFORE INSERT ON config
+               WHEN NEW.key='s3Bucket'
+               BEGIN SELECT RAISE(ABORT, 'forced S3 config failure'); END"#,
+        )
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+        save_s3_values(&fixture.ctx, &input, "s3", "prefix/", Some(false))
+            .await
+            .expect_err("a failed key must roll back all S3 keys");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                r#"SELECT COUNT(*) FROM config WHERE key IN (
+                     'objectStorage','s3Endpoint','s3Region','s3Bucket','s3AccessKeyId',
+                     's3AccessKeySecret','s3CustomPath','s3ForcePathStyle'
+                   )"#,
+            )
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+            0
+        );
+        sqlx::query("DROP TRIGGER fail_s3_config_insert")
+            .execute(&fixture.pool)
+            .await
+            .unwrap();
+
+        save_s3_values(&fixture.ctx, &input, "s3", "prefix/", Some(false))
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                r#"SELECT COUNT(*) FROM config WHERE key IN (
+                     'objectStorage','s3Endpoint','s3Region','s3Bucket','s3AccessKeyId',
+                     's3AccessKeySecret','s3CustomPath','s3ForcePathStyle'
+                   ) AND "userId" IS NULL"#,
+            )
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+            8
+        );
+        crate::db::probe(&fixture.pool).await.unwrap();
+        fixture.cleanup().await;
+    }
 }

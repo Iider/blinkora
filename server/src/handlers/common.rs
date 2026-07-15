@@ -1,7 +1,7 @@
 use crate::trpc::ProcedureContext;
 use anyhow::anyhow;
 use serde_json::{json, Value};
-use sqlx::Row;
+use sqlx::{Row, SqliteConnection};
 
 pub async fn workspace_id(ctx: &ProcedureContext) -> anyhow::Result<i32> {
     let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
@@ -74,20 +74,23 @@ pub async fn account_brief(ctx: &ProcedureContext, account_id: i32) -> Value {
     }
 }
 
-pub async fn load_note_tags(ctx: &ProcedureContext, note_id: i32) -> anyhow::Result<Vec<Value>> {
+async fn load_note_tags_with_connection(
+    connection: &mut SqliteConnection,
+    note_id: i32,
+) -> anyhow::Result<Vec<Value>> {
     let rows = sqlx::query(
         r#"SELECT t.id, t.name, t.icon, t.parent, t."accountId", t."workspaceId", t."sortOrder", t."createdAt", t."updatedAt"
            FROM "tagsToNote" ttn JOIN tag t ON ttn."tagId"=t.id
            WHERE ttn."noteId"=$1 ORDER BY t.parent ASC, t."sortOrder" ASC, t.id ASC"#,
     )
     .bind(note_id)
-    .fetch_all(ctx.state.pool())
+    .fetch_all(connection)
     .await?;
     Ok(rows.into_iter().map(tag_json).collect())
 }
 
-pub async fn load_note_attachments(
-    ctx: &ProcedureContext,
+async fn load_note_attachments_with_connection(
+    connection: &mut SqliteConnection,
     note_id: i32,
 ) -> anyhow::Result<Vec<Value>> {
     let rows = sqlx::query(
@@ -95,7 +98,7 @@ pub async fn load_note_attachments(
            FROM attachments WHERE "noteId"=$1 ORDER BY "sortOrder" ASC, id ASC"#,
     )
     .bind(note_id)
-    .fetch_all(ctx.state.pool())
+    .fetch_all(connection)
     .await?;
     Ok(rows.into_iter().map(attachment_json).collect())
 }
@@ -104,13 +107,40 @@ pub async fn note_json(
     ctx: &ProcedureContext,
     row: sqlx::sqlite::SqliteRow,
 ) -> anyhow::Result<Value> {
+    let mut connection = ctx.state.pool().acquire().await?;
+    note_json_with_connection(row, &mut connection).await
+}
+
+pub(crate) async fn note_json_with_connection(
+    row: sqlx::sqlite::SqliteRow,
+    connection: &mut SqliteConnection,
+) -> anyhow::Result<Value> {
     let id = row.get::<i32, _>("id");
     let account_id = row.get::<Option<i32>, _>("accountId").unwrap_or_default();
     let workspace_id = row.get::<Option<i32>, _>("workspaceId").unwrap_or_default();
     let is_recycle = row.get::<bool, _>("isRecycle");
-    let (references, referenced_by) =
-        crate::handlers::notes::note_references_json(ctx, id, account_id, workspace_id, is_recycle)
-            .await?;
+    let (references, referenced_by) = crate::handlers::notes::note_references_json_with_connection(
+        connection,
+        id,
+        account_id,
+        workspace_id,
+        is_recycle,
+    )
+    .await?;
+    let tags = load_note_tags_with_connection(connection, id).await?;
+    let attachments = load_note_attachments_with_connection(connection, id).await?;
+    let account = match sqlx::query("SELECT name, nickname, image FROM accounts WHERE id=$1")
+        .bind(account_id)
+        .fetch_optional(&mut *connection)
+        .await?
+    {
+        Some(account) => json!({
+            "name": account.get::<String, _>("name"),
+            "nickname": account.get::<String, _>("nickname"),
+            "image": account.get::<String, _>("image")
+        }),
+        None => Value::Null,
+    };
     Ok(json!({
         "id": id,
         "type": row.get::<i32, _>("type"),
@@ -125,10 +155,10 @@ pub async fn note_json(
         "sortOrder": row.get::<i32, _>("sortOrder"),
         "createdAt": row.get::<chrono::DateTime<chrono::Utc>, _>("createdAt"),
         "updatedAt": row.get::<chrono::DateTime<chrono::Utc>, _>("updatedAt"),
-        "tags": load_note_tags(ctx, id).await?,
-        "attachments": load_note_attachments(ctx, id).await?,
+        "tags": tags,
+        "attachments": attachments,
         "references": references,
         "referencedBy": referenced_by,
-        "account": account_brief(ctx, account_id).await
+        "account": account
     }))
 }

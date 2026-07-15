@@ -63,21 +63,58 @@ CREATE TABLE IF NOT EXISTS tag (
 
 CREATE TABLE IF NOT EXISTS "tagsToNote" (
   -- The previous schema exposed a sequence-backed id even though the composite key is
-  -- authoritative. SQLite cannot auto-increment a non-primary-key column, so
-  -- the trigger below assigns the same monotonic internal id after insertion.
+  -- authoritative. SQLite cannot auto-increment a non-primary-key column, so the
+  -- trigger below advances a durable high-water mark in the same write transaction.
   id INTEGER NOT NULL DEFAULT 0,
   "noteId" INTEGER NOT NULL DEFAULT 0 REFERENCES notes(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   "tagId" INTEGER NOT NULL DEFAULT 0 REFERENCES tag(id) ON UPDATE CASCADE ON DELETE RESTRICT,
   PRIMARY KEY ("noteId", "tagId")
 );
 
+CREATE TABLE IF NOT EXISTS "_blinkoraSequence" (
+  name TEXT PRIMARY KEY NOT NULL,
+  value INTEGER NOT NULL CHECK (value BETWEEN 0 AND 2147483647)
+);
+
+INSERT INTO "_blinkoraSequence" (name, value)
+VALUES ('tagsToNote.id', 0)
+ON CONFLICT (name) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS "_blinkoraHealth" (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  "checkedAt" TEXT NOT NULL
+);
+
+INSERT INTO "_blinkoraHealth" (id, "checkedAt")
+VALUES (1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+ON CONFLICT (id) DO NOTHING;
+
+CREATE TRIGGER IF NOT EXISTS "tagsToNote_advance_id_sequence"
+BEFORE INSERT ON "tagsToNote"
+FOR EACH ROW
+BEGIN
+  -- Explicit ids come from the PostgreSQL migration. Preserve them verbatim and
+  -- raise the high-water mark so the next runtime-generated id is always larger.
+  -- Advancing before constraint handling also mirrors nextval() for successful
+  -- ON CONFLICT DO NOTHING statements.
+  UPDATE "_blinkoraSequence"
+  SET value = CASE
+    WHEN NEW.id = 0 THEN value + 1
+    WHEN NEW.id > value THEN NEW.id
+    ELSE value
+  END
+  WHERE name = 'tagsToNote.id';
+END;
+
 CREATE TRIGGER IF NOT EXISTS "tagsToNote_assign_id"
 AFTER INSERT ON "tagsToNote"
 FOR EACH ROW WHEN NEW.id = 0
 BEGIN
   UPDATE "tagsToNote"
-  SET id = (SELECT COALESCE(MAX(id), 0) + 1 FROM "tagsToNote")
-  WHERE rowid = NEW.rowid;
+  SET id = (
+    SELECT value FROM "_blinkoraSequence" WHERE name = 'tagsToNote.id'
+  )
+  WHERE "noteId" = NEW."noteId" AND "tagId" = NEW."tagId";
 END;
 
 CREATE TABLE IF NOT EXISTS attachments (
@@ -219,3 +256,5 @@ CREATE INDEX IF NOT EXISTS "notes_accountId_workspaceId_idx" ON notes ("accountI
 CREATE INDEX IF NOT EXISTS "notes_workspaceId_idx" ON notes ("workspaceId");
 CREATE INDEX IF NOT EXISTS "tag_accountId_workspaceId_idx" ON tag ("accountId", "workspaceId");
 CREATE INDEX IF NOT EXISTS "tag_workspaceId_idx" ON tag ("workspaceId");
+CREATE INDEX IF NOT EXISTS "workspaces_accountId_idx" ON workspaces ("accountId");
+CREATE INDEX IF NOT EXISTS "workspaces_isDefault_idx" ON workspaces ("isDefault");

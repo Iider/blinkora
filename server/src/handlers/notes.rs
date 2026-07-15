@@ -9,7 +9,7 @@ use anyhow::{anyhow, bail};
 use futures::FutureExt;
 use regex::Regex;
 use serde_json::{json, Map, Value};
-use sqlx::{QueryBuilder, Row, Sqlite};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::collections::{HashMap, HashSet};
 
 pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
@@ -103,7 +103,7 @@ fn push_note_list_filters(query: &mut QueryBuilder<'_, Sqlite>, filters: &NoteLi
         query.push(r#" AND NOT EXISTS (SELECT 1 FROM "tagsToNote" ttn3 WHERE ttn3."noteId"=n.id)"#);
     }
     if let Some(metadata_filter) = filters.metadata_filter.clone() {
-        query.push(" AND blinkora_json_contains(n.metadata, ");
+        query.push(" AND blinkora_json_contains(COALESCE(n.metadata, '{}'), ");
         query.push_bind(metadata_filter);
         query.push(")");
     }
@@ -124,9 +124,12 @@ fn push_note_list_filters(query: &mut QueryBuilder<'_, Sqlite>, filters: &NoteLi
         query.push(" AND (n.content LIKE '%- [ ]%' OR n.content LIKE '%- [x]%' OR n.content LIKE '%* [ ]%' OR n.content LIKE '%* [x]%')");
     }
     if let (Some(start_date), Some(end_date)) = (filters.start_date, filters.end_date) {
-        query.push(r#" AND julianday(n."createdAt") >= julianday("#);
+        query
+            .push(r#" AND blinkora_timestamp_micros(n."createdAt") >= blinkora_timestamp_micros("#);
         query.push_bind(start_date.to_string());
-        query.push(r#") AND julianday(n."createdAt") <= julianday("#);
+        query.push(
+            r#") AND blinkora_timestamp_micros(n."createdAt") <= blinkora_timestamp_micros("#,
+        );
         query.push_bind(end_date.to_string());
         query.push(")");
     }
@@ -1253,6 +1256,24 @@ async fn ensure_notes_in_workspace(
     workspace_id: i32,
     include_recycled: bool,
 ) -> anyhow::Result<()> {
+    let mut connection = ctx.state.pool().acquire().await?;
+    ensure_notes_in_workspace_with_connection(
+        &mut connection,
+        ids,
+        account_id,
+        workspace_id,
+        include_recycled,
+    )
+    .await
+}
+
+async fn ensure_notes_in_workspace_with_connection(
+    connection: &mut SqliteConnection,
+    ids: &[i32],
+    account_id: i32,
+    workspace_id: i32,
+    include_recycled: bool,
+) -> anyhow::Result<()> {
     let ids = unique_ids(ids);
     if ids.is_empty() {
         bail!("note id is required");
@@ -1269,10 +1290,7 @@ async fn ensure_notes_in_workspace(
     if !include_recycled {
         query.push(r#" AND "isRecycle"=false"#);
     }
-    let count: i64 = query
-        .build_query_scalar()
-        .fetch_one(ctx.state.pool())
-        .await?;
+    let count: i64 = query.build_query_scalar().fetch_one(connection).await?;
     if count as usize != ids.len() {
         bail!("one or more notes were not found in this workspace");
     }
@@ -1286,7 +1304,32 @@ async fn reference_list_for_note(
     workspace_id: i32,
     include_recycled_note: bool,
 ) -> anyhow::Result<Value> {
-    ensure_notes_in_workspace(ctx, &[id], account_id, workspace_id, include_recycled_note).await?;
+    let mut connection = ctx.state.pool().acquire().await?;
+    reference_list_for_note_with_connection(
+        &mut connection,
+        id,
+        account_id,
+        workspace_id,
+        include_recycled_note,
+    )
+    .await
+}
+
+async fn reference_list_for_note_with_connection(
+    connection: &mut SqliteConnection,
+    id: i32,
+    account_id: i32,
+    workspace_id: i32,
+    include_recycled_note: bool,
+) -> anyhow::Result<Value> {
+    ensure_notes_in_workspace_with_connection(
+        connection,
+        &[id],
+        account_id,
+        workspace_id,
+        include_recycled_note,
+    )
+    .await?;
     let rows = sqlx::query(
         r#"SELECT nr.id, nr."fromNoteId", nr."toNoteId", nr."createdAt",
                   fn.content AS "fromContent", fn."createdAt" AS "fromCreatedAt", fn."updatedAt" AS "fromUpdatedAt",
@@ -1302,7 +1345,7 @@ async fn reference_list_for_note(
     .bind(id)
     .bind(account_id)
     .bind(workspace_id)
-    .fetch_all(ctx.state.pool())
+    .fetch_all(connection)
     .await?;
     Ok(Value::Array(
         rows.into_iter()
@@ -1330,15 +1373,21 @@ async fn reference_list_for_note(
     ))
 }
 
-pub(crate) async fn note_references_json(
-    ctx: &ProcedureContext,
+pub(crate) async fn note_references_json_with_connection(
+    connection: &mut SqliteConnection,
     id: i32,
     account_id: i32,
     workspace_id: i32,
     include_recycled_note: bool,
 ) -> anyhow::Result<(Value, Value)> {
-    let all =
-        reference_list_for_note(ctx, id, account_id, workspace_id, include_recycled_note).await?;
+    let all = reference_list_for_note_with_connection(
+        connection,
+        id,
+        account_id,
+        workspace_id,
+        include_recycled_note,
+    )
+    .await?;
     let items = all.as_array().cloned().unwrap_or_default();
     let references = items
         .iter()
@@ -1379,6 +1428,9 @@ fn clear_recycle_bin(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
 
 fn update_attachments_order(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        let ws = workspace_id(&ctx).await?;
+        let mut tx = ctx.state.pool().begin().await?;
         if let Some(items) = input
             .get("attachments")
             .or_else(|| input.get("items"))
@@ -1391,14 +1443,18 @@ fn update_attachments_order(ctx: ProcedureContext, input: Value) -> ProcedureFut
                     .and_then(Value::as_i64)
                     .unwrap_or_default() as i32;
                 sqlx::query(
-                    r#"UPDATE attachments SET "sortOrder"=$1, "updatedAt"=blinkora_now() WHERE id=$2"#,
+                    r#"UPDATE attachments SET "sortOrder"=$1, "updatedAt"=blinkora_now()
+                       WHERE id=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
                 )
                 .bind(sort_order)
                 .bind(id)
-                .execute(ctx.state.pool())
+                .bind(user.id)
+                .bind(ws)
+                .execute(&mut *tx)
                 .await?;
             }
         }
+        tx.commit().await?;
         Ok(json!(true))
     }
     .boxed()
@@ -1406,6 +1462,9 @@ fn update_attachments_order(ctx: ProcedureContext, input: Value) -> ProcedureFut
 
 fn update_notes_order(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        let ws = workspace_id(&ctx).await?;
+        let mut tx = ctx.state.pool().begin().await?;
         if let Some(items) = input
             .get("notes")
             .or_else(|| input.get("items"))
@@ -1418,14 +1477,18 @@ fn update_notes_order(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                     .and_then(Value::as_i64)
                     .unwrap_or_default() as i32;
                 sqlx::query(
-                    r#"UPDATE notes SET "sortOrder"=$1, "updatedAt"=blinkora_now() WHERE id=$2"#,
+                    r#"UPDATE notes SET "sortOrder"=$1, "updatedAt"=blinkora_now()
+                       WHERE id=$2 AND "accountId"=$3 AND "workspaceId"=$4"#,
                 )
                 .bind(sort_order)
                 .bind(id)
-                .execute(ctx.state.pool())
+                .bind(user.id)
+                .bind(ws)
+                .execute(&mut *tx)
                 .await?;
             }
         }
+        tx.commit().await?;
         Ok(json!(true))
     }
     .boxed()
@@ -1433,9 +1496,13 @@ fn update_notes_order(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
 fn get_history(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        let ws = workspace_id(&ctx).await?;
         let note_id = input.get("noteId").or_else(|| input.get("id")).and_then(Value::as_i64).unwrap_or_default() as i32;
-        let rows = sqlx::query(r#"SELECT id, "noteId", content, metadata, version, "accountId", "workspaceId", "createdAt" FROM "noteHistory" WHERE "noteId"=$1 ORDER BY version DESC"#)
-            .bind(note_id).fetch_all(ctx.state.pool()).await?;
+        let rows = sqlx::query(r#"SELECT h.id, h."noteId", h.content, h.metadata, h.version, h."accountId", h."workspaceId", h."createdAt"
+            FROM "noteHistory" h JOIN notes n ON n.id=h."noteId"
+            WHERE h."noteId"=$1 AND n."accountId"=$2 AND n."workspaceId"=$3 ORDER BY h.version DESC"#)
+            .bind(note_id).bind(user.id).bind(ws).fetch_all(ctx.state.pool()).await?;
         Ok(Value::Array(rows.into_iter().map(|row| json!({
             "id": row.get::<i32, _>("id"),
             "noteId": row.get::<i32, _>("noteId"),
@@ -1451,10 +1518,14 @@ fn get_history(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
 fn get_version(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
+        let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
+        let ws = workspace_id(&ctx).await?;
         let note_id = input.get("noteId").or_else(|| input.get("id")).and_then(Value::as_i64).unwrap_or_default() as i32;
         let version = input.get("version").and_then(Value::as_i64).unwrap_or_default() as i32;
-        let row = sqlx::query(r#"SELECT id, "noteId", content, metadata, version, "accountId", "workspaceId", "createdAt" FROM "noteHistory" WHERE "noteId"=$1 AND version=$2"#)
-            .bind(note_id).bind(version).fetch_one(ctx.state.pool()).await?;
+        let row = sqlx::query(r#"SELECT h.id, h."noteId", h.content, h.metadata, h.version, h."accountId", h."workspaceId", h."createdAt"
+            FROM "noteHistory" h JOIN notes n ON n.id=h."noteId"
+            WHERE h."noteId"=$1 AND h.version=$2 AND n."accountId"=$3 AND n."workspaceId"=$4"#)
+            .bind(note_id).bind(version).bind(user.id).bind(ws).fetch_one(ctx.state.pool()).await?;
         Ok(json!({
             "id": row.get::<i32, _>("id"),
             "noteId": row.get::<i32, _>("noteId"),
@@ -1794,7 +1865,11 @@ fn extract_attachment_paths(content: &str) -> HashSet<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_hashtags;
+    use super::{
+        extract_hashtags, get_history, get_version, update_attachments_order, update_notes_order,
+    };
+    use crate::handlers::test_support::HandlerTestFixture;
+    use serde_json::{json, Value};
 
     #[test]
     fn extract_hashtags_trims_sentence_punctuation() {
@@ -1816,6 +1891,237 @@ mod tests {
         let content = "保留 #方法。\n```md\n忽略 #代码。\n```\n过滤 #。 并保留 #观点！ #方法。";
 
         assert_eq!(extract_hashtags(content), vec!["#方法", "#观点"]);
+    }
+
+    #[tokio::test]
+    async fn order_updates_are_atomic_and_workspace_scoped() {
+        let fixture = HandlerTestFixture::new("order-isolation").await;
+        let other_workspace = fixture.create_workspace("other").await;
+        let note_one: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('one', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let note_two: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('two', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let other_note: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('other', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(other_workspace)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let attachment_one: i32 = sqlx::query_scalar(
+            r#"INSERT INTO attachments (name, path, "noteId", "accountId", "workspaceId", "updatedAt")
+               VALUES ('one', 'one.txt', $1, $2, $3, blinkora_now()) RETURNING id"#,
+        )
+        .bind(note_one)
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let attachment_two: i32 = sqlx::query_scalar(
+            r#"INSERT INTO attachments (name, path, "noteId", "accountId", "workspaceId", "updatedAt")
+               VALUES ('two', 'two.txt', $1, $2, $3, blinkora_now()) RETURNING id"#,
+        )
+        .bind(note_two)
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let other_attachment: i32 = sqlx::query_scalar(
+            r#"INSERT INTO attachments (name, path, "noteId", "accountId", "workspaceId", "updatedAt")
+               VALUES ('other', 'other.txt', $1, $2, $3, blinkora_now()) RETURNING id"#,
+        )
+        .bind(other_note)
+        .bind(fixture.account_id)
+        .bind(other_workspace)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+
+        sqlx::query(&format!(
+            r#"CREATE TRIGGER fail_second_note_order BEFORE UPDATE OF "sortOrder" ON notes
+               WHEN OLD.id={note_two} BEGIN SELECT RAISE(ABORT, 'forced note order failure'); END"#
+        ))
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+        update_notes_order(
+            fixture.ctx.clone(),
+            json!({ "items": [
+                { "id": note_one, "sortOrder": 10 },
+                { "id": note_two, "sortOrder": 20 }
+            ] }),
+        )
+        .await
+        .expect_err("the second update must roll back the first");
+        assert_eq!(
+            sqlx::query_scalar::<_, i32>("SELECT SUM(\"sortOrder\") FROM notes")
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        sqlx::query("DROP TRIGGER fail_second_note_order")
+            .execute(&fixture.pool)
+            .await
+            .unwrap();
+
+        update_notes_order(
+            fixture.ctx.clone(),
+            json!({ "items": [
+                { "id": note_one, "sortOrder": 10 },
+                { "id": other_note, "sortOrder": 99 }
+            ] }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i32>("SELECT \"sortOrder\" FROM notes WHERE id=$1")
+                .bind(note_one)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            10
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i32>("SELECT \"sortOrder\" FROM notes WHERE id=$1")
+                .bind(other_note)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
+
+        sqlx::query(&format!(
+            r#"CREATE TRIGGER fail_second_attachment_order BEFORE UPDATE OF "sortOrder" ON attachments
+               WHEN OLD.id={attachment_two} BEGIN SELECT RAISE(ABORT, 'forced attachment order failure'); END"#
+        ))
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+        update_attachments_order(
+            fixture.ctx.clone(),
+            json!({ "items": [
+                { "id": attachment_one, "sortOrder": 10 },
+                { "id": attachment_two, "sortOrder": 20 }
+            ] }),
+        )
+        .await
+        .expect_err("the second attachment update must roll back the first");
+        assert_eq!(
+            sqlx::query_scalar::<_, i32>("SELECT SUM(\"sortOrder\") FROM attachments")
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        sqlx::query("DROP TRIGGER fail_second_attachment_order")
+            .execute(&fixture.pool)
+            .await
+            .unwrap();
+
+        update_attachments_order(
+            fixture.ctx.clone(),
+            json!({ "items": [
+                { "id": attachment_one, "sortOrder": 10 },
+                { "id": other_attachment, "sortOrder": 99 }
+            ] }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i32>("SELECT \"sortOrder\" FROM attachments WHERE id=$1")
+                .bind(attachment_one)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            10
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i32>("SELECT \"sortOrder\" FROM attachments WHERE id=$1")
+                .bind(other_attachment)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        crate::db::probe(&fixture.pool).await.unwrap();
+        fixture.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn history_reads_are_workspace_scoped() {
+        let fixture = HandlerTestFixture::new("history-isolation").await;
+        let other_workspace = fixture.create_workspace("other").await;
+        let note_id: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('main', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let other_note_id: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('other', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(other_workspace)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        for (id, workspace, content) in [
+            (note_id, fixture.workspace_id, "main-v1"),
+            (other_note_id, other_workspace, "other-v1"),
+        ] {
+            sqlx::query(
+                r#"INSERT INTO "noteHistory" ("noteId", content, version, "accountId", "workspaceId")
+                   VALUES ($1, $2, 1, $3, $4)"#,
+            )
+            .bind(id)
+            .bind(content)
+            .bind(fixture.account_id)
+            .bind(workspace)
+            .execute(&fixture.pool)
+            .await
+            .unwrap();
+        }
+
+        let own = get_history(fixture.ctx.clone(), json!({ "noteId": note_id }))
+            .await
+            .unwrap();
+        assert_eq!(own.as_array().map(Vec::len), Some(1));
+        assert_eq!(own.pointer("/0/content"), Some(&json!("main-v1")));
+
+        let other = get_history(fixture.ctx.clone(), json!({ "noteId": other_note_id }))
+            .await
+            .unwrap();
+        assert_eq!(other, Value::Array(Vec::new()));
+        get_version(
+            fixture.ctx.clone(),
+            json!({ "noteId": other_note_id, "version": 1 }),
+        )
+        .await
+        .expect_err("history in another workspace must not be readable");
+        fixture.cleanup().await;
     }
 }
 

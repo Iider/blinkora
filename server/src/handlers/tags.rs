@@ -590,16 +590,24 @@ fn delete_only(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
-        sqlx::query(r#"DELETE FROM "tagsToNote" WHERE "tagId"=$1"#)
-            .bind(id)
-            .execute(ctx.state.pool())
-            .await?;
+        let mut tx = ctx.state.pool().begin().await?;
+        sqlx::query(
+            r#"DELETE FROM "tagsToNote" WHERE "tagId" IN (
+                 SELECT id FROM tag WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3
+               )"#,
+        )
+        .bind(id)
+        .bind(user.id)
+        .bind(ws)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query(r#"DELETE FROM tag WHERE id=$1 AND "accountId"=$2 AND "workspaceId"=$3"#)
             .bind(id)
             .bind(user.id)
             .bind(ws)
-            .execute(ctx.state.pool())
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(json!(true))
     }
     .boxed()
@@ -683,7 +691,9 @@ fn delete_with_notes(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
 #[cfg(test)]
 mod tests {
-    use super::{plan_orphan_tag_cleanup, TagNode};
+    use super::{delete_only, plan_orphan_tag_cleanup, TagNode};
+    use crate::handlers::test_support::HandlerTestFixture;
+    use serde_json::json;
     use std::collections::HashSet;
 
     fn tag(id: i32, name: &str, parent: i32) -> TagNode {
@@ -746,5 +756,120 @@ mod tests {
 
         assert_eq!(plan.candidate_ids, vec![1, 2]);
         assert_eq!(plan.remaining_orphan_count, 1);
+    }
+
+    #[tokio::test]
+    async fn delete_only_is_atomic_and_cannot_cross_workspace_boundaries() {
+        let fixture = HandlerTestFixture::new("tag-delete-isolation").await;
+        let other_workspace = fixture.create_workspace("other").await;
+        let note_id: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('main', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let other_note_id: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('other', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(other_workspace)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let main_tag: i32 = sqlx::query_scalar(
+            r#"INSERT INTO tag (name, "updatedAt", "accountId", "workspaceId")
+               VALUES ('main', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let other_tag: i32 = sqlx::query_scalar(
+            r#"INSERT INTO tag (name, "updatedAt", "accountId", "workspaceId")
+               VALUES ('other', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(other_workspace)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        for (note, tag) in [(note_id, main_tag), (other_note_id, other_tag)] {
+            sqlx::query(r#"INSERT INTO "tagsToNote" ("noteId", "tagId") VALUES ($1, $2)"#)
+                .bind(note)
+                .bind(tag)
+                .execute(&fixture.pool)
+                .await
+                .unwrap();
+        }
+
+        delete_only(fixture.ctx.clone(), json!({ "id": other_tag }))
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tag WHERE id=$1")
+                .bind(other_tag)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(r#"SELECT COUNT(*) FROM "tagsToNote" WHERE "tagId"=$1"#,)
+                .bind(other_tag)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            1
+        );
+
+        sqlx::query(&format!(
+            r#"CREATE TRIGGER fail_tag_delete BEFORE DELETE ON tag
+               WHEN OLD.id={main_tag} BEGIN SELECT RAISE(ABORT, 'forced tag delete failure'); END"#
+        ))
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+        delete_only(fixture.ctx.clone(), json!({ "id": main_tag }))
+            .await
+            .expect_err("tag deletion failure must restore its relation");
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(r#"SELECT COUNT(*) FROM "tagsToNote" WHERE "tagId"=$1"#,)
+                .bind(main_tag)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            1
+        );
+        sqlx::query("DROP TRIGGER fail_tag_delete")
+            .execute(&fixture.pool)
+            .await
+            .unwrap();
+
+        delete_only(fixture.ctx.clone(), json!({ "id": main_tag }))
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM tag WHERE id=$1")
+                .bind(main_tag)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(r#"SELECT COUNT(*) FROM "tagsToNote" WHERE "tagId"=$1"#,)
+                .bind(main_tag)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        crate::db::probe(&fixture.pool).await.unwrap();
+        fixture.cleanup().await;
     }
 }

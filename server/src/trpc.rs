@@ -332,6 +332,7 @@ pub fn is_write_procedure(path: &str) -> bool {
             | "tags.deleteOnlyTag"
             | "tags.deleteTagWithAllNote"
             | "tags.updateTagOrder"
+            | "users.login"
             | "users.register"
             | "users.regenToken"
             | "users.upsertUser"
@@ -339,6 +340,7 @@ pub fn is_write_procedure(path: &str) -> bool {
             | "workspaces.update"
             | "workspaces.delete"
             | "workspaces.setDefault"
+            | "workspaces.getDefault"
             | "workspaces.list"
     )
 }
@@ -431,5 +433,15 @@ mod tests {
 
         assert!(!has_auth_token(&missing));
         assert!(!has_auth_token(&empty));
+    }
+
+    #[test]
+    fn serializes_query_named_procedures_that_can_write() {
+        for path in ["users.login", "workspaces.getDefault", "workspaces.list"] {
+            assert!(
+                is_write_procedure(path),
+                "{path} must use the SQLite write gate"
+            );
+        }
     }
 }

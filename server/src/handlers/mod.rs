@@ -22,6 +22,9 @@ pub mod system;
 pub mod tags;
 pub mod workspaces;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .nest("/auth", auth::router())
