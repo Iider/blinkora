@@ -298,7 +298,7 @@ async function verifyGlobalResourceSearch(page, resourceName) {
   await search.waitFor({ state: 'visible', timeout: 10_000 });
   await search.fill(resourceName);
   const dialog = page.getByRole('dialog');
-  const resourceSection = dialog.getByRole('heading', { name: '资源', exact: true }).locator('xpath=../..');
+  const resourceSection = dialog.getByRole('heading', { name: '资源', exact: true }).locator('xpath=../../..');
   await resourceSection.waitFor({ state: 'visible', timeout: 10_000 });
   const displayName = resourceName.replace(/\.[^.]+$/, '');
   await resourceSection.getByText(displayName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
@@ -328,14 +328,14 @@ async function createPaginationNotes(page, count) {
   await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
   const contents = [];
   for (let index = 1; index <= count; index += 1) {
-    const content = `browser UI pagination blinkora ${index} ${stamp}`;
+    const content = `browser UI pagination blinkora ${String(index).padStart(2, '0')} ${stamp}`;
     await createNote(page, '闪念', content, '');
     contents.push(content);
   }
   return contents;
 }
 
-async function verifyPagination(page) {
+async function verifyPagination(page, paginationContents) {
   await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: '偏好', exact: true }).click();
 
@@ -365,6 +365,14 @@ async function verifyPagination(page) {
   await pageTwo.click();
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 2, undefined, { timeout: 10_000 });
+  const secondPageContents = [];
+  for (const content of paginationContents) {
+    if (await noteCard(page, content).count()) {
+      secondPageContents.push(content);
+    }
+  }
+  assert(secondPageContents.length === 2,
+    'Pagination page two did not contain exactly two known Blinkora fixtures.', { secondPageContents });
 
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
@@ -373,6 +381,16 @@ async function verifyPagination(page) {
   await page.goto(new URL('/?page=999', base).toString(), { waitUntil: 'networkidle' });
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('page'), undefined, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 10, undefined, { timeout: 10_000 });
+
+  const currentFirstPageContents = [];
+  for (const content of paginationContents) {
+    if (await noteCard(page, content).count()) {
+      currentFirstPageContents.push(content);
+    }
+  }
+  assert(currentFirstPageContents.length === 10,
+    'Pagination page one did not contain exactly ten known Blinkora fixtures after out-of-range reset.', { currentFirstPageContents });
+  return { firstPageContents: currentFirstPageContents, secondPageContents };
 }
 
 async function verifyPaginationAfterDeletion(page, deletedContent, remainingContent) {
@@ -596,12 +614,18 @@ async function createFolder(page, folderName) {
   await page.getByText(folderName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-function resourceEntry(page, folderName) {
-  return page.locator('.group').filter({ hasText: folderName }).first();
+function resourceDisplayName(resourceName) {
+  return resourceName.replace(/\.[^.]+$/, '');
 }
 
-async function openResourceMenu(page, folderName) {
-  const entry = resourceEntry(page, folderName);
+function resourceEntry(page, resourceName) {
+  return page
+    .getByText(resourceDisplayName(resourceName), { exact: true })
+    .locator("xpath=ancestor::*[.//button[@aria-label='更多信息']][1]");
+}
+
+async function openResourceMenu(page, resourceName) {
+  const entry = resourceEntry(page, resourceName);
   await entry.waitFor({ state: 'visible', timeout: 10_000 });
   const more = entry.getByRole('button', { name: '更多信息', exact: true });
   await more.waitFor({ state: 'visible', timeout: 10_000 });
@@ -625,8 +649,8 @@ async function renameFolder(page, folderName, renamedFolderName) {
   await page.getByText(renamedFolderName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-async function deleteFolder(page, folderName) {
-  await openResourceMenu(page, folderName);
+async function deleteResource(page, resourceName) {
+  await openResourceMenu(page, resourceName);
   const remove = page.locator('[data-key="delete"]').last();
   await remove.waitFor({ state: 'visible', timeout: 10_000 });
   await remove.click();
@@ -636,9 +660,9 @@ async function deleteFolder(page, folderName) {
   const deleted = waitForTrpcMutation(page, 'attachments.delete');
   await dialog.getByRole('button', { name: '确认', exact: true }).click();
   const response = await deleted;
-  assert(response.ok(), 'Delete resource folder request failed.', { status: response.status() });
+  assert(response.ok(), 'Delete resource request failed.', { status: response.status() });
   await dialog.waitFor({ state: 'hidden', timeout: 10_000 });
-  await page.getByText(folderName, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
+  await resourceEntry(page, resourceName).waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
 async function cutResource(page, resourceName) {
@@ -684,7 +708,7 @@ async function verifyResourceFolders(page, {
 
   await cutResource(page, attachmentName);
   await pasteResourceIntoFolder(page, renamedRootFolder);
-  await page.getByText(attachmentName, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
+  await resourceEntry(page, attachmentName).waitFor({ state: 'hidden', timeout: 10_000 });
 
   await page.getByText(renamedRootFolder, { exact: true }).click();
   await page.waitForFunction(
@@ -693,20 +717,20 @@ async function verifyResourceFolders(page, {
     { timeout: 10_000 },
   );
   await page.getByText('根目录', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
-  await page.getByText(attachmentName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await resourceEntry(page, attachmentName).waitFor({ state: 'visible', timeout: 10_000 });
   await moveResourceToParent(page, attachmentName);
-  await page.getByText(attachmentName, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
+  await resourceEntry(page, attachmentName).waitFor({ state: 'hidden', timeout: 10_000 });
   await createFolder(page, nestedFolder);
 
   await page.getByText('根目录', { exact: true }).click();
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('folder'), undefined, { timeout: 10_000 });
-  await page.getByText(attachmentName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await resourceEntry(page, attachmentName).waitFor({ state: 'visible', timeout: 10_000 });
   await createFolder(page, siblingFolder);
   await createFolder(page, siblingFolderWithPrefix);
-  await deleteFolder(page, siblingFolder);
+  await deleteResource(page, siblingFolder);
   await page.getByText(siblingFolderWithPrefix, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   await createFolder(page, disposableFolder);
-  await deleteFolder(page, disposableFolder);
+  await deleteResource(page, disposableFolder);
 }
 
 async function verifyMobile(browser, diagnostics) {
@@ -770,10 +794,13 @@ try {
   await createNote(page, '笔记', note, 'path=notes');
   await createNote(page, '待办', todo, 'path=todo');
   const paginationBlinkoras = await createPaginationNotes(page, 11);
-  await verifyPagination(page);
+  const paginationPages = await verifyPagination(page, [blinkora, ...paginationBlinkoras]);
   await verifyGlobalSearch(page, blinkora);
-  const updatedBlinkora = `${paginationBlinkoras[0]} (edited)`;
-  await editNote(page, paginationBlinkoras[0], updatedBlinkora, undefined, '');
+  const [editableBlinkora, stateActionBlinkora] = paginationPages.firstPageContents;
+  assert(stateActionBlinkora,
+    'Pagination fixture did not provide separate Blinkoras for edit-history and card-state coverage.');
+  const updatedBlinkora = `${editableBlinkora} (edited)`;
+  await editNote(page, editableBlinkora, updatedBlinkora, undefined, '');
   await editNote(page, note, updatedNote, async () => {
     await attachFileToEditedNote(page, attachmentName);
     await addReferenceToEditedNote(page, blinkora);
@@ -781,7 +808,7 @@ try {
   const updatedTodo = `${todo} (edited)`;
   await editNote(page, todo, updatedTodo, undefined, 'todo');
   await verifyTodoCompletion(page, updatedTodo);
-  await verifyCardStateActions(page, updatedNote, updatedBlinkora);
+  await verifyCardStateActions(page, updatedNote, stateActionBlinkora);
   await verifyComment(page, updatedNote, comment);
   await verifyAttachmentFilter(page, updatedNote);
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
@@ -789,6 +816,7 @@ try {
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyMovedCardData(page, updatedNote, comment);
   await deleteComment(page, updatedNote, comment);
+  await verifyGlobalResourceSearch(page, attachmentName);
   await verifyResourceFolders(page, {
     attachmentName,
     rootFolder,
@@ -798,9 +826,13 @@ try {
     siblingFolder,
     siblingFolderWithPrefix,
   });
-  await verifyGlobalResourceSearch(page, attachmentName);
+  await deleteResource(page, attachmentName);
   await switchWorkspace(page, '默认工作区', workspace);
-  await verifyPaginationAfterDeletion(page, blinkora, paginationBlinkoras[1]);
+  await verifyPaginationAfterDeletion(
+    page,
+    paginationPages.secondPageContents[0],
+    paginationPages.secondPageContents[1],
+  );
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyMobile(browser, diagnostics);
 

@@ -90,12 +90,16 @@ EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE type = 1 AND co
   echo "error: browser smoke could not find the edited Note" >&2
   exit 1
 }
-EDITED_BLINKORA_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE 'browser UI pagination blinkora % (edited)' LIMIT 1;")"
-[[ -n "$EDITED_BLINKORA_ID" && "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"noteHistory\" WHERE \"noteId\"=$EDITED_BLINKORA_ID;")" -ge 1 ]] || {
-  echo "error: browser smoke could not find a history version for the edited Blinkora" >&2
+EDITED_BLINKORA_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE 'browser UI pagination blinkora %' AND content LIKE '%edited%' LIMIT 1;")"
+EDITED_BLINKORA_HISTORY_COUNT="0"
+if [[ -n "$EDITED_BLINKORA_ID" ]]; then
+  EDITED_BLINKORA_HISTORY_COUNT="$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"noteHistory\" WHERE \"noteId\"=$EDITED_BLINKORA_ID;")"
+fi
+[[ -n "$EDITED_BLINKORA_ID" && "$EDITED_BLINKORA_HISTORY_COUNT" -ge 1 ]] || {
+  echo "error: browser smoke could not find a history version for the edited Blinkora (noteId=${EDITED_BLINKORA_ID:-missing}, historyCount=$EDITED_BLINKORA_HISTORY_COUNT)" >&2
   exit 1
 }
-EDITED_TODO_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE 'browser UI todo % (edited)' LIMIT 1;")"
+EDITED_TODO_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE 'browser UI todo %' AND content LIKE '%edited%' LIMIT 1;")"
 [[ -n "$EDITED_TODO_ID" && "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"noteHistory\" WHERE \"noteId\"=$EDITED_TODO_ID;")" -ge 1 ]] || {
   echo "error: browser smoke could not find a history version for the edited Todo" >&2
   exit 1
@@ -111,12 +115,12 @@ SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name 
   echo "error: browser smoke did not move Note history with the edited Note" >&2
   exit 1
 }
-[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM comments WHERE \"noteId\"=$EDITED_NOTE_ID AND \"workspaceId\"=$MOVED_WORKSPACE_ID;")" == "1" ]] || {
-  echo "error: browser smoke did not move the Note comment with the edited Note" >&2
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM comments WHERE \"noteId\"=$EDITED_NOTE_ID;")" == "0" ]] || {
+  echo "error: browser smoke did not delete the edited Note comment" >&2
   exit 1
 }
-[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM attachments WHERE \"noteId\"=$EDITED_NOTE_ID AND \"workspaceId\"=$MOVED_WORKSPACE_ID AND name LIKE 'browser-ui-attachment-%';")" == "1" ]] || {
-  echo "error: browser smoke did not move the Note attachment with the edited Note" >&2
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM attachments WHERE name LIKE 'browser-ui-attachment-%';")" == "0" ]] || {
+  echo "error: browser smoke did not delete its moved Note attachment" >&2
   exit 1
 }
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"tagsToNote\" t JOIN tag g ON g.id=t.\"tagId\" WHERE t.\"noteId\"=$EDITED_NOTE_ID AND g.\"workspaceId\"=$MOVED_WORKSPACE_ID;")" -ge 1 ]] || {

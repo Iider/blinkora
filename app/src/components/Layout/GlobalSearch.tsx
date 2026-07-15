@@ -18,6 +18,7 @@ import { useLocation, useSearchParams, useNavigate } from 'react-router-dom';
 import { getBlinkoraEndpoint } from '@/lib/blinkoraEndpoint';
 import { downloadFromLink } from '@/lib/browserRuntime';
 import { clearSearchState, getSearchWithClearedFilters } from '@/lib/searchFilters';
+import { api } from '@/lib/trpc';
 
 interface GlobalSearchProps {
   isOpen: boolean;
@@ -146,7 +147,7 @@ export const GlobalSearch = observer(({ isOpen, onOpenChange }: GlobalSearchProp
       try {
         blinkoraStore.searchText = query;
         const notes = await blinkoraStore.noteList.resetAndCall({ page: 1, size: 20, type: -1, isArchived: null });
-        const resources = await blinkoraStore.resourceList.resetAndCall({
+        const resources = await api.attachments.list.query({
           page: 1,
           size: 20,
           searchText: query.replace(/^#/, ''),
