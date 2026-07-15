@@ -71,23 +71,54 @@ async function waitForApp(page) {
 
 function waitForNoteUpsert(page) {
   return page.waitForResponse(
-    response => response.request().method() === 'POST' && response.url().includes('/api/trpc/notes.upsert'),
+    response => response.request().method() === 'POST' && trpcProcedureIndex(response, 'notes.upsert') >= 0,
     { timeout: 15_000 },
   );
 }
 
 function waitForTrpcMutation(page, procedure) {
   return page.waitForResponse(
-    response => response.request().method() === 'POST' && response.url().includes(`/api/trpc/${procedure}`),
+    response => response.request().method() === 'POST' && trpcProcedureIndex(response, procedure) >= 0,
     { timeout: 15_000 },
   );
 }
 
 function waitForTrpcQuery(page, procedure) {
   return page.waitForResponse(
-    response => response.url().includes(`/api/trpc/${procedure}`),
+    response => trpcProcedureIndex(response, procedure) >= 0,
     { timeout: 15_000 },
   );
+}
+
+function trpcProcedureIndex(response, procedure) {
+  const pathname = new URL(response.url()).pathname;
+  const prefix = '/api/trpc/';
+  if (!pathname.startsWith(prefix)) return -1;
+  return pathname.slice(prefix.length).split(',').indexOf(procedure);
+}
+
+function trpcRequestJsonInput(response, procedure) {
+  const body = JSON.parse(response.request().postData() || '{}');
+  if (body?.json !== undefined) return body.json;
+
+  const values = Array.isArray(body) ? body : Object.values(body || {});
+  const procedureIndex = procedure ? trpcProcedureIndex(response, procedure) : -1;
+  if (procedureIndex >= 0 && values[procedureIndex]?.json !== undefined) {
+    return values[procedureIndex].json;
+  }
+  for (const value of values) {
+    if (value && typeof value === 'object' && value.json !== undefined) {
+      return value.json;
+    }
+  }
+  return undefined;
+}
+
+async function trpcResponseJson(response, procedure) {
+  const payload = await response.json();
+  const procedureIndex = trpcProcedureIndex(response, procedure);
+  const result = Array.isArray(payload) ? payload[procedureIndex] : payload;
+  return result?.result?.data?.json;
 }
 
 async function runTrpcFixtureMutation(page, procedure, input) {
@@ -133,7 +164,10 @@ async function createAndSelectWorkspace(page, name) {
   const currentWorkspace = page.locator('button').filter({ hasText: '默认工作区' }).first();
   await currentWorkspace.waitFor({ state: 'visible', timeout: 10_000 });
   await currentWorkspace.click();
-  await page.locator('[role="menuitemradio"]').filter({ hasText: '管理工作区' }).click();
+  const manageWorkspace = page.locator('[role="menuitemradio"]').filter({ hasText: '管理工作区' });
+  await manageWorkspace.waitFor({ state: 'visible', timeout: 10_000 });
+  await manageWorkspace.focus();
+  await page.keyboard.press('Enter');
 
   const manageDialog = page.getByRole('dialog', { name: '管理工作区' });
   await manageDialog.waitFor({ state: 'visible', timeout: 10_000 });
@@ -333,11 +367,46 @@ async function verifyGlobalResourceSearch(page, resourceName) {
   await page.keyboard.press('Escape');
 }
 
+async function openNoteFilters(page) {
+  const trigger = page.locator('[data-filter-trigger="true"]');
+  const apply = page.getByRole('button', { name: '应用筛选', exact: true });
+  await trigger.waitFor({ state: 'visible', timeout: 10_000 });
+  await trigger.click();
+  try {
+    await apply.waitFor({ state: 'visible', timeout: 5_000 });
+  } catch {
+    await trigger.click();
+    await apply.waitFor({ state: 'visible', timeout: 10_000 });
+  }
+  return apply;
+}
+
+async function selectSelectOption(page, triggerSelector, optionName) {
+  const trigger = page.locator(triggerSelector);
+  await trigger.waitFor({ state: 'visible', timeout: 10_000 });
+  await trigger.click();
+
+  const option = page.getByRole('option', { name: optionName, exact: true });
+  await option.waitFor({ state: 'visible', timeout: 10_000 });
+  await option.focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(({ selector, optionName }) => (
+    document.querySelector(selector)?.textContent?.includes(optionName)
+  ), { selector: triggerSelector, optionName }, { timeout: 10_000 });
+}
+
+async function selectFontOption(page, fontName) {
+  const option = page.locator(`[data-font-switcher-option="${fontName}"]`);
+  await option.waitFor({ state: 'visible', timeout: 10_000 });
+  await option.focus();
+  await page.keyboard.press('Enter');
+}
+
 async function verifyAttachmentFilter(page, content) {
   await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
-  await page.locator('[data-filter-trigger="true"]').click();
+  const apply = await openNoteFilters(page);
   await page.getByRole('radio', { name: '包含文件', exact: true }).click();
-  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  await apply.click();
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('withFile') === 'true', undefined, { timeout: 10_000 });
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
   assert(await page.locator('.blinkora-flip-card').count() === 1,
@@ -350,7 +419,7 @@ async function verifyAttachmentFilter(page, content) {
 
   const reset = page.getByRole('button', { name: '重置', exact: true });
   await reset.waitFor({ state: 'hidden', timeout: 10_000 });
-  await page.locator('[data-filter-trigger="true"]').click();
+  await openNoteFilters(page);
   await reset.waitFor({ state: 'visible', timeout: 10_000 });
   await page.waitForTimeout(200);
   await reset.click();
@@ -359,9 +428,9 @@ async function verifyAttachmentFilter(page, content) {
 
 async function verifyLinkFilter(page, content) {
   await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
-  await page.locator('[data-filter-trigger="true"]').click();
+  const apply = await openNoteFilters(page);
   await page.getByRole('radio', { name: '包含链接', exact: true }).click();
-  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  await apply.click();
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('withLink') === 'true', undefined, { timeout: 10_000 });
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
   assert(await page.locator('.blinkora-flip-card').count() === 1,
@@ -375,9 +444,9 @@ async function verifyLinkFilter(page, content) {
 
 async function verifyTodoContentFilter(page, content) {
   await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
-  await page.locator('[data-filter-trigger="true"]').click();
-  await page.getByRole('radio', { name: '包含待办', exact: true }).click();
-  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  const apply = await openNoteFilters(page);
+  await page.getByRole('radio', { name: '有待完成', exact: true }).click();
+  await apply.click();
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('hasTodo') === 'true', undefined, { timeout: 10_000 });
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
   assert(await page.locator('.blinkora-flip-card').count() === 1,
@@ -388,17 +457,17 @@ async function verifyTodoContentFilter(page, content) {
   assert(await page.locator('.blinkora-flip-card').count() === 1,
     'Todo-content filter changed after a reload.');
 
-  await page.locator('[data-filter-trigger="true"]').click();
+  await openNoteFilters(page);
   await page.getByRole('button', { name: '重置', exact: true }).click();
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('hasTodo'), undefined, { timeout: 10_000 });
 }
 
 async function verifyWithoutTagFilter(page, content) {
   await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
-  await page.locator('[data-filter-trigger="true"]').click();
-  await page.getByLabel('标签状态', { exact: true }).click();
+  const apply = await openNoteFilters(page);
+  await page.locator('[data-filter-tag-status-trigger="true"]').click();
   await page.getByRole('option', { name: '不包含标签', exact: true }).click();
-  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  await apply.click();
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('withoutTag') === 'true', undefined, { timeout: 10_000 });
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
   assert(await page.locator('.blinkora-flip-card').count() === 1,
@@ -409,14 +478,14 @@ async function verifyWithoutTagFilter(page, content) {
   assert(await page.locator('.blinkora-flip-card').count() === 1,
     'Without-tag filter changed after a reload.');
 
-  await page.locator('[data-filter-trigger="true"]').click();
+  await openNoteFilters(page);
   await page.getByRole('button', { name: '重置', exact: true }).click();
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('withoutTag'), undefined, { timeout: 10_000 });
 }
 
 async function verifyDateRangeFilter(page, content) {
   await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
-  await page.locator('[data-filter-trigger="true"]').click();
+  const apply = await openNoteFilters(page);
   await page.locator('[data-filter-date-trigger="true"]').click();
   const calendar = page.getByRole('grid').last();
   await calendar.waitFor({ state: 'visible', timeout: 10_000 });
@@ -427,12 +496,12 @@ async function verifyDateRangeFilter(page, content) {
   await focusedDate.press('Enter');
 
   const filteredLoad = waitForTrpcQuery(page, 'notes.list');
-  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  await apply.click();
   const filteredResponse = await filteredLoad;
   assert(filteredResponse.ok(), 'Date-range filter request failed.', { status: filteredResponse.status() });
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
 
-  await page.locator('[data-filter-trigger="true"]').click();
+  await openNoteFilters(page);
   await page.getByRole('button', { name: '重置', exact: true }).click();
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
 }
@@ -458,24 +527,28 @@ async function createFontFixture(page) {
 
 async function verifyFontSelection(page, font) {
   await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: '偏好设置', exact: true }).click();
-  const fontButton = page.getByRole('button', { name: '系统默认字体', exact: true });
+  await page.getByRole('button', { name: '偏好', exact: true }).click();
+  const fontButton = page.locator('[data-font-switcher-ready="true"]');
   await fontButton.waitFor({ state: 'visible', timeout: 10_000 });
 
   const updateFont = waitForTrpcMutation(page, 'config.update');
   await fontButton.click();
-  await page.getByRole('menuitem', { name: font.displayName, exact: true }).click();
+  await selectFontOption(page, font.name);
   const selected = await updateFont;
   assert(selected.ok(), 'Selecting local font did not update config.', { status: selected.status() });
   await page.waitForFunction(name => document.body.style.fontFamily.includes(name), font.name, { timeout: 10_000 });
 
   await page.reload({ waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: font.displayName, exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByRole('button', { name: '偏好', exact: true }).click();
+  await fontButton.waitFor({ state: 'visible', timeout: 10_000 });
+  await page.waitForFunction(({ selector, displayName }) => (
+    document.querySelector(selector)?.textContent?.includes(displayName)
+  ), { selector: '[data-font-switcher-ready="true"]', displayName: font.displayName }, { timeout: 10_000 });
   await page.waitForFunction(name => document.body.style.fontFamily.includes(name), font.name, { timeout: 10_000 });
 
   const resetFont = waitForTrpcMutation(page, 'config.update');
-  await page.getByRole('button', { name: font.displayName, exact: true }).click();
-  await page.getByRole('menuitem', { name: '系统默认字体', exact: true }).click();
+  await fontButton.click();
+  await selectFontOption(page, 'default');
   const reset = await resetFont;
   assert(reset.ok(), 'Resetting local font did not update config.', { status: reset.status() });
   await page.waitForFunction(() => document.body.style.fontFamily === '', undefined, { timeout: 10_000 });
@@ -710,7 +783,10 @@ async function verifyStorageSettings(page) {
   const localStorage = page.getByRole('button', { name: '本地文件系统', exact: true });
   await localStorage.waitFor({ state: 'visible', timeout: 10_000 });
   await localStorage.click();
-  await page.locator('[data-key="s3"]').last().click();
+  const s3Option = page.locator('[data-key="s3"]').last();
+  await s3Option.waitFor({ state: 'visible', timeout: 10_000 });
+  await s3Option.focus();
+  await page.keyboard.press('Enter');
 
   await page.locator('input[name="s3AccessKeyId"]').waitFor({ state: 'visible', timeout: 10_000 });
   await page.locator('input[name="s3AccessKeySecret"]').waitFor({ state: 'visible', timeout: 10_000 });
@@ -738,17 +814,15 @@ async function verifyBackupExport(page) {
 async function verifyFullJsonBackupExport(page) {
   await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: '备份与恢复', exact: true }).click();
-  await page.getByLabel('导出层级', { exact: true }).click();
-  await page.getByRole('option', { name: '全量备份导出', exact: true }).click();
-  await page.getByLabel('备份包内容格式', { exact: true }).click();
-  await page.getByRole('option', { name: 'JSON 备份包（.zip）', exact: true }).click();
+  await selectSelectOption(page, '[data-backup-export-scope-trigger="true"]', '全量备份导出');
+  await selectSelectOption(page, '[data-backup-export-format-trigger="true"]', 'JSON 备份包（.zip）');
 
   const exported = waitForTrpcMutation(page, 'task.exportMarkdown');
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出', exact: true }).click();
   const response = await exported;
   assert(response.ok(), 'Full JSON backup export request failed.', { status: response.status() });
-  const requestInput = JSON.parse(response.request().postData() || '{}')?.json;
+  const requestInput = trpcRequestJsonInput(response, 'task.exportMarkdown');
   assert(requestInput?.scope === 'full' && requestInput.format === 'json',
     'Full JSON export request did not preserve the selected scope and format.', requestInput);
   const archive = await download;
@@ -756,19 +830,35 @@ async function verifyFullJsonBackupExport(page) {
   return archive;
 }
 
+function backupArchiveUpload(archive, archivePath) {
+  const name = archive.suggestedFilename();
+  assert(name.toLowerCase().endsWith('.zip'), 'Backup archive did not retain its ZIP filename.');
+  return {
+    name,
+    mimeType: 'application/zip',
+    buffer: readFileSync(archivePath),
+  };
+}
+
 async function verifyFullJsonBackupImport(page, archive) {
   const archivePath = await archive.path();
   assert(archivePath, 'Full JSON export archive was not available for import.');
-  await page.getByLabel('导入模式', { exact: true }).click();
-  await page.getByRole('option', { name: '全量恢复', exact: true }).click();
-  const importInput = page.locator('input[type="file"][accept*=".zip"]');
+  const archiveUpload = backupArchiveUpload(archive, archivePath);
+  await selectSelectOption(page, '[data-backup-import-mode-trigger="true"]', '全量恢复');
+  const importInput = page.locator('[data-backup-import-input="true"]');
   await importInput.waitFor({ state: 'attached', timeout: 10_000 });
+  const importRequested = page.waitForRequest(
+    request => request.method() === 'POST' && request.url().includes('/api/backup/import'),
+    { timeout: 10_000 },
+  );
   const imported = page.waitForResponse(
     response => response.request().method() === 'POST' && response.url().includes('/api/backup/import'),
-    { timeout: 15_000 },
+    { timeout: 60_000 },
   );
-  await importInput.setInputFiles(archivePath);
-  const response = await imported;
+  const fileChooser = page.waitForEvent('filechooser');
+  await page.locator('[data-backup-import-trigger="true"]').click();
+  await (await fileChooser).setFiles(archiveUpload);
+  const [, response] = await Promise.all([importRequested, imported]);
   assert(response.ok(), 'Full JSON backup import request failed.', { status: response.status() });
   const result = await response.json();
   assert(result?.success === true && result.mode === 'full' && result.workspaceCount > 1,
@@ -789,7 +879,7 @@ async function verifyFullJsonBackupImport(page, archive) {
   }
 }
 
-async function verifyOperationLogSettings(page, content) {
+async function openOperationLogSettings(page, content) {
   await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
   const initialLoad = waitForTrpcQuery(page, 'operationLogs.list');
   await page.getByRole('button', { name: '操作日志', exact: true }).click();
@@ -797,55 +887,65 @@ async function verifyOperationLogSettings(page, content) {
   assert(initialResponse.ok(), 'Operation log initial list request failed.', { status: initialResponse.status() });
   const contentPrefix = content.slice(0, 48);
   await page.getByText(contentPrefix, { exact: false }).first().waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function verifyOperationLogFilter(page, content, {
+  triggerSelector,
+  optionName,
+  errorMessage,
+  matches,
+}) {
+  await openOperationLogSettings(page, content);
 
   const filteredLoad = waitForTrpcQuery(page, 'operationLogs.list');
-  await page.getByLabel('变更字段', { exact: true }).click();
-  await page.getByRole('option', { name: '正文', exact: true }).click();
+  await selectSelectOption(page, triggerSelector, optionName);
   const filteredResponse = await filteredLoad;
-  assert(filteredResponse.ok(), 'Operation log content-field filter request failed.', { status: filteredResponse.status() });
-  const result = (await filteredResponse.json())?.result?.data?.json;
-  assert(result?.items?.length > 0 && result.items.every(item => item.changedFields?.includes('content')),
-    'Operation log content-field filter returned an unrelated record.', result);
-  await page.getByText(contentPrefix, { exact: false }).first().waitFor({ state: 'visible', timeout: 10_000 });
+  assert(filteredResponse.ok(), errorMessage, { status: filteredResponse.status() });
+  const result = await trpcResponseJson(filteredResponse, 'operationLogs.list');
+  assert(result?.items?.length > 0 && result.items.every(matches), errorMessage, result);
+}
 
-  const actorLoad = waitForTrpcQuery(page, 'operationLogs.list');
-  await page.getByLabel('操作者', { exact: true }).click();
-  await page.getByRole('option', { name: '用户', exact: true }).click();
-  const actorResponse = await actorLoad;
-  assert(actorResponse.ok(), 'Operation log user filter request failed.', { status: actorResponse.status() });
-  const actorResult = (await actorResponse.json())?.result?.data?.json;
-  assert(actorResult?.items?.length > 0 && actorResult.items.every(item => item.actor?.type === 'user'),
-    'Operation log user filter returned a non-user record.', actorResult);
-
-  const typeLoad = waitForTrpcQuery(page, 'operationLogs.list');
-  await page.getByLabel('笔记类型', { exact: true }).click();
-  await page.getByRole('option', { name: '笔记', exact: true }).click();
-  const typeResponse = await typeLoad;
-  assert(typeResponse.ok(), 'Operation log note-type filter request failed.', { status: typeResponse.status() });
-  const typeResult = (await typeResponse.json())?.result?.data?.json;
-  assert(typeResult?.items?.length > 0 && typeResult.items.every(item => item.target?.noteType === 1),
-    'Operation log note-type filter returned a non-note record.', typeResult);
-
-  const actionLoad = waitForTrpcQuery(page, 'operationLogs.list');
-  await page.getByLabel('操作', { exact: true }).click();
-  await page.getByRole('option', { name: '更新', exact: true }).click();
-  const actionResponse = await actionLoad;
-  assert(actionResponse.ok(), 'Operation log action filter request failed.', { status: actionResponse.status() });
-  const actionResult = (await actionResponse.json())?.result?.data?.json;
-  assert(actionResult?.items?.length > 0 && actionResult.items.every(item => item.action === 'update'),
-    'Operation log action filter returned a non-update record.', actionResult);
+async function verifyOperationLogSettings(page, content) {
+  await verifyOperationLogFilter(page, content, {
+    triggerSelector: '[data-operation-log-field-trigger="true"]',
+    optionName: '正文',
+    errorMessage: 'Operation log content-field filter returned an unrelated record.',
+    matches: item => item.changedFields?.includes('content'),
+  });
+  await verifyOperationLogFilter(page, content, {
+    triggerSelector: '[data-operation-log-actor-trigger="true"]',
+    optionName: '用户',
+    errorMessage: 'Operation log user filter returned a non-user record.',
+    matches: item => item.actor?.type === 'user',
+  });
+  await verifyOperationLogFilter(page, content, {
+    triggerSelector: '[data-operation-log-note-type-trigger="true"]',
+    optionName: '笔记',
+    errorMessage: 'Operation log note-type filter returned a non-note record.',
+    matches: item => item.target?.noteType === 1,
+  });
+  await verifyOperationLogFilter(page, content, {
+    triggerSelector: '[data-operation-log-action-trigger="true"]',
+    optionName: '更新',
+    errorMessage: 'Operation log action filter returned a non-update record.',
+    matches: item => item.action === 'update',
+  });
 }
 
 async function verifyBackupImport(page, archive) {
   const archivePath = await archive.path();
   assert(archivePath, 'Workspace export archive was not available for import.');
-  const importInput = page.locator('input[type="file"][accept*=".zip"]');
+  const archiveUpload = backupArchiveUpload(archive, archivePath);
+  await selectSelectOption(page, '[data-backup-import-mode-trigger="true"]', '导入工作区');
+  const importInput = page.locator('[data-backup-import-input="true"]');
   await importInput.waitFor({ state: 'attached', timeout: 10_000 });
   const imported = page.waitForResponse(
     response => response.request().method() === 'POST' && response.url().includes('/api/backup/import'),
     { timeout: 15_000 },
   );
-  await importInput.setInputFiles(archivePath);
+  const fileChooser = page.waitForEvent('filechooser');
+  await page.locator('[data-backup-import-trigger="true"]').click();
+  await (await fileChooser).setFiles(archiveUpload);
   const response = await imported;
   assert(response.ok(), 'Workspace backup import request failed.', { status: response.status() });
   const result = await response.json();
@@ -1183,6 +1283,29 @@ async function deleteResource(page, resourceName) {
   await resourceEntry(page, resourceName).waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
+async function deleteSelectedResources(page, resourceNames) {
+  for (const resourceName of resourceNames) {
+    const checkbox = resourceEntry(page, resourceName).getByRole('checkbox');
+    await checkbox.waitFor({ state: 'visible', timeout: 10_000 });
+    await checkbox.click();
+  }
+
+  const deleted = waitForTrpcMutation(page, 'attachments.deleteMany');
+  await page.getByRole('button', { name: '删除', exact: true }).last().click();
+  const dialog = page.getByRole('dialog', { name: '确认删除' });
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  const response = await deleted;
+  assert(response.ok(), 'Delete selected resources request failed.', { status: response.status() });
+  const requestInput = trpcRequestJsonInput(response, 'attachments.deleteMany');
+  assert(Array.isArray(requestInput?.ids) && requestInput.ids.length === resourceNames.length,
+    'Resource multi-select delete did not submit every selected resource ID.', requestInput);
+  await dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  for (const resourceName of resourceNames) {
+    await resourceEntry(page, resourceName).waitFor({ state: 'hidden', timeout: 10_000 });
+  }
+}
+
 async function cutResource(page, resourceName) {
   await openResourceMenu(page, resourceName);
   const cut = page.locator('[data-key="cut"]').last();
@@ -1213,6 +1336,7 @@ async function moveResourceToParent(page, resourceName) {
 async function verifyResourceFolders(page, {
   attachmentName,
   renamedAttachmentName,
+  disposableAttachmentNames,
   rootFolder,
   renamedRootFolder,
   nestedFolder,
@@ -1251,6 +1375,7 @@ async function verifyResourceFolders(page, {
   await page.getByText(siblingFolderWithPrefix, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   await createFolder(page, disposableFolder);
   await deleteResource(page, disposableFolder);
+  await deleteSelectedResources(page, disposableAttachmentNames);
 }
 
 async function verifyMobile(browser, diagnostics) {
@@ -1307,6 +1432,10 @@ try {
   const comment = `browser UI comment ${stamp}`;
   const attachmentName = `browser-ui-attachment-${stamp}.txt`;
   const renamedAttachmentName = `browser-ui-attachment-renamed-${stamp}.txt`;
+  const disposableAttachmentNames = [
+    `browser-ui-attachment-batch-a-${stamp}.txt`,
+    `browser-ui-attachment-batch-b-${stamp}.txt`,
+  ];
 
   await registerAndSignIn(page);
   await createAndSelectWorkspace(page, workspace);
@@ -1320,6 +1449,9 @@ try {
   await editNote(page, blinkora, updatedBlinkora, undefined, '');
   await editNote(page, note, updatedNote, async () => {
     await attachFileToEditedNote(page, attachmentName);
+    for (const disposableAttachmentName of disposableAttachmentNames) {
+      await attachFileToEditedNote(page, disposableAttachmentName);
+    }
     await addReferenceToEditedNote(page, updatedBlinkora);
   });
   const updatedTodo = `${todo} (edited)`;
@@ -1341,6 +1473,7 @@ try {
   await verifyResourceFolders(page, {
     attachmentName,
     renamedAttachmentName,
+    disposableAttachmentNames,
     rootFolder,
     renamedRootFolder,
     nestedFolder,
@@ -1463,11 +1596,16 @@ try {
   await verifyTodoContentFilter(page, todoFilterVisibleContent);
   await invokeCardMenuAction(page, todoFilterVisibleContent, 'TrashItem', 'notes.trashMany');
   await deleteRecycledCard(page, todoFilterVisibleContent);
+  await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
+  await waitForApp(page);
   const untaggedFilterContent = `browser UI untagged ${stamp}`;
   await createNote(page, '闪念', untaggedFilterContent, '');
   await verifyWithoutTagFilter(page, untaggedFilterContent);
   await invokeCardMenuAction(page, untaggedFilterContent, 'TrashItem', 'notes.trashMany');
   await deleteRecycledCard(page, untaggedFilterContent);
+  // Operation logs remain scoped to the workspace where the action occurred,
+  // even after the note itself is moved elsewhere.
+  await switchWorkspace(page, '默认工作区', workspace);
   await verifyOperationLogSettings(page, updatedNote);
   const fontFixture = await createFontFixture(page);
   await verifyFontSelection(page, fontFixture);
@@ -1476,6 +1614,9 @@ try {
   await verifyWorkspaceTokenGuide(page);
   await verifyStorageSettings(page);
   const backupWorkspace = `browser UI backup workspace ${stamp}`;
+  await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
+  await waitForApp(page);
+  await switchWorkspace(page, workspace, '默认工作区');
   await createAndSelectWorkspace(page, backupWorkspace);
   const backupArchive = await verifyBackupExport(page);
   const fullJsonArchive = await verifyFullJsonBackupExport(page);
@@ -1485,7 +1626,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, date-range/attachment/link/Todo-content/without-tag filters with reset and reload retention where supported, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource attachment/folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, date-range/attachment/link/Todo-content/without-tag filters with reset and reload retention where supported, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource attachment/folder rename/nesting/move/sibling-delete protection and multi-select delete; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();

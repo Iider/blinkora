@@ -16,6 +16,24 @@ interface FontSwitcherProps {
   onChange?: (fontname: string) => void;
 }
 
+const DEFAULT_SYSTEM_FONT: FontMetadata = {
+  id: 0,
+  name: 'default',
+  displayName: 'System Default',
+  url: null,
+  isLocal: false,
+  weights: [400],
+  category: 'sans-serif',
+  isSystem: true,
+  sortOrder: 0,
+};
+
+const ensureDefaultSystemFont = (fonts: FontMetadata[]) => (
+  fonts.some((font) => font.name === DEFAULT_SYSTEM_FONT.name)
+    ? fonts
+    : [DEFAULT_SYSTEM_FONT, ...fonts]
+);
+
 const FontSwitcher = ({ fontname = 'default', onChange }: FontSwitcherProps) => {
   const { t } = useTranslation();
   const [fonts, setFonts] = useState<FontMetadata[]>([]);
@@ -29,13 +47,12 @@ const FontSwitcher = ({ fontname = 'default', onChange }: FontSwitcherProps) => 
           throw new Error('Font API not available');
         }
         const fontList = await api.fonts.list.query();
-        setFonts(fontList);
-        FontManager.initializeRegistry(fontList);
+        const availableFonts = ensureDefaultSystemFont(fontList);
+        setFonts(availableFonts);
+        FontManager.initializeRegistry(availableFonts);
       } catch (error) {
         console.error('Failed to fetch fonts:', error);
-        setFonts([
-          { id: 0, name: 'default', displayName: t('default-system-font'), url: null, isLocal: false, weights: [400], category: 'sans-serif', isSystem: true, sortOrder: 0 }
-        ]);
+        setFonts([DEFAULT_SYSTEM_FONT]);
       } finally {
         setLoading(false);
       }
@@ -74,7 +91,7 @@ const FontSwitcher = ({ fontname = 'default', onChange }: FontSwitcherProps) => 
 
   if (loading) {
     return (
-      <Button variant="flat" isLoading>
+      <Button data-font-switcher-trigger="true" variant="flat" isLoading>
         {t('loading')}
       </Button>
     );
@@ -83,7 +100,7 @@ const FontSwitcher = ({ fontname = 'default', onChange }: FontSwitcherProps) => 
   return (
     <Dropdown>
       <DropdownTrigger>
-        <Button variant="flat">
+        <Button data-font-switcher-trigger="true" data-font-switcher-ready="true" variant="flat">
           {currentFont ? getFontDisplayName(currentFont) : fontname || t('select-font')}
         </Button>
       </DropdownTrigger>
@@ -95,6 +112,7 @@ const FontSwitcher = ({ fontname = 'default', onChange }: FontSwitcherProps) => 
         {fonts.map((font) => (
           <DropdownItem
             key={font.name}
+            data-font-switcher-option={font.name}
             className="flex items-center justify-between cursor-pointer"
             onClick={() => handleFontSelect(font.name)}
             endContent={

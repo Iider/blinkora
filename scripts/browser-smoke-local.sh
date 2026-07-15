@@ -186,11 +186,12 @@ SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name 
     + (SELECT count(*) FROM comments c LEFT JOIN notes n ON n.id = c."noteId" WHERE n.id IS NULL)
     + (SELECT count(*) FROM attachments a LEFT JOIN notes n ON n.id = a."noteId" WHERE a."noteId" IS NOT NULL AND n.id IS NULL)
     + (SELECT count(*) FROM "tagsToNote" t LEFT JOIN notes n ON n.id = t."noteId" WHERE n.id IS NULL)
-    + (SELECT count(*) FROM "tagsToNote" t LEFT JOIN tag g ON g.id = t."tagId" WHERE g.id IS NULL)
-    + (SELECT count(*) FROM "operationLog" o LEFT JOIN notes n ON n.id = o."noteId" WHERE o."noteId" IS NOT NULL AND n.id IS NULL);
+    + (SELECT count(*) FROM "tagsToNote" t LEFT JOIN tag g ON g.id = t."tagId" WHERE g.id IS NULL);
 ')" == "0" ]] || {
   echo "error: orphan check failed after browser smoke" >&2
   exit 1
 }
+# operationLog.noteId is an audit snapshot, intentionally not a foreign key:
+# deletion logs retain the original note id after the note itself is removed.
 
 echo "browser smoke local harness passed; temporary native service and SQLite data will now be removed"

@@ -128,25 +128,25 @@ export const OperationLogSetting = observer(() => {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Select size="sm" label={t("operator")} selectedKeys={[actorType]} onSelectionChange={(keys) => resetPage(setActorType)(selectionValue(keys))}>
+          <Select data-operation-log-actor-trigger="true" size="sm" label={t("operator")} selectedKeys={[actorType]} onSelectionChange={(keys) => resetPage(setActorType)(selectionValue(keys))}>
             <SelectItem key="all">{t("all")}</SelectItem>
             <SelectItem key="user">{t("operation-log-actor-user")}</SelectItem>
             <SelectItem key="agent">{t("operation-log-actor-agent")}</SelectItem>
             <SelectItem key="system">{t("operation-log-actor-system")}</SelectItem>
           </Select>
-          <Select size="sm" label={t("note-type")} selectedKeys={[noteType]} onSelectionChange={(keys) => resetPage(setNoteType)(selectionValue(keys))}>
+          <Select data-operation-log-note-type-trigger="true" size="sm" label={t("note-type")} selectedKeys={[noteType]} onSelectionChange={(keys) => resetPage(setNoteType)(selectionValue(keys))}>
             <SelectItem key="all">{t("all")}</SelectItem>
             {NOTE_TYPE_OPTIONS.map((item) => (
               <SelectItem key={String(item.value)}>{t(item.labelKey)}</SelectItem>
             ))}
           </Select>
-          <Select size="sm" label={t("operation-log-action")} selectedKeys={[action]} onSelectionChange={(keys) => resetPage(setAction)(selectionValue(keys))}>
+          <Select data-operation-log-action-trigger="true" size="sm" label={t("operation-log-action")} selectedKeys={[action]} onSelectionChange={(keys) => resetPage(setAction)(selectionValue(keys))}>
             <SelectItem key="all">{t("all")}</SelectItem>
             {ACTION_OPTIONS.map((item) => (
               <SelectItem key={item}>{t(`operation-log-action-${item}`)}</SelectItem>
             ))}
           </Select>
-          <Select size="sm" label={t("operation-log-field")} selectedKeys={[changedField]} onSelectionChange={(keys) => resetPage(setChangedField)(selectionValue(keys))}>
+          <Select data-operation-log-field-trigger="true" size="sm" label={t("operation-log-field")} selectedKeys={[changedField]} onSelectionChange={(keys) => resetPage(setChangedField)(selectionValue(keys))}>
             <SelectItem key="all">{t("all")}</SelectItem>
             {FIELD_OPTIONS.map((item) => (
               <SelectItem key={item}>{t(`operation-log-field-${item}`)}</SelectItem>

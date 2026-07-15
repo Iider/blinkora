@@ -122,6 +122,7 @@ export const ExportSetting = observer(() => {
           leftContent={<>{t('export-level')}</>}
           rightContent={
             <Select
+              data-backup-export-scope-trigger="true"
               aria-label={t('export-level')}
               selectedKeys={[exportScope]}
               onChange={e => setExportScope(e.target.value as 'workspace' | 'full')}
@@ -138,6 +139,7 @@ export const ExportSetting = observer(() => {
           leftContent={<>{t('backup-archive-format')}</>}
           rightContent={
             <Select
+              data-backup-export-format-trigger="true"
               aria-label={t('backup-archive-format')}
               selectedKeys={[exportFormat]}
               onChange={e => setExportFormat(e.target.value as 'markdown' | 'json')}
@@ -198,6 +200,7 @@ export const ExportSetting = observer(() => {
           leftContent={<>{t('import-mode')}</>}
           rightContent={
             <Select
+              data-backup-import-mode-trigger="true"
               aria-label={t('import-mode')}
               selectedKeys={[importMode]}
               onChange={e => setImportMode(e.target.value as 'workspace' | 'full')}
@@ -213,12 +216,14 @@ export const ExportSetting = observer(() => {
         <div className="flex justify-end">
           <input
             ref={importFileRef}
+            data-backup-import-input="true"
             type="file"
             accept=".zip,application/zip,application/x-zip-compressed"
             className="hidden"
             onChange={(event) => handleImport(event.target.files?.[0])}
           />
           <Button
+            data-backup-import-trigger="true"
             className="mt-4"
             color="primary"
             variant="flat"
