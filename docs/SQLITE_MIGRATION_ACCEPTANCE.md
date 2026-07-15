@@ -35,11 +35,13 @@
 | 浏览器核心 smoke | 同一隔离 SQLite Docker 实例中，桌面和 390×844 移动视口均完成真实登录与主界面验证；笔记列表、带附件笔记、底部导航与移动侧栏开合正常。最新候选重新构建后，以全新登录标签页验证桌面待办页和编辑器，以及 390×844 待办页；控制台 error、warn、warning 均为 0。当前 macOS 原生本地服务也已验证未登录的桌面与 390×844 登录、注册页正常渲染，控制台 error、warn、warning 均为 0。 |
 | 浏览器扩展 smoke | 新建隔离 Docker 实例后，完整 `smoke:rust` 先通过；浏览器随后真实创建闪念、笔记、待办各一条，标签树筛选和全局搜索均能找到新闪念，资源页能列出既有附件并创建/进入嵌套目录，设置页能读取操作日志及新建笔记的日志记录。最新候选通过 UI 将 `type=2` 待办更新为带 `（再次编辑）` 的内容；离线检查确认 `noteHistory.version=1` 保存前一版本，`integrity_check=ok`，`foreign_key_check` 为 0 行，容器重启后 `/health` 恢复正常。基础设置与 2FA 入口均正常渲染。 |
 | macOS 本机持久化 | 在隔离用户目录中实际执行 `install → update → smoke:rust → smoke:agent → stop → start → uninstall`，全程不启动 Docker。重启后原账号能登录、笔记数不变；卸载后 `blinkora.sqlite3` 保留，`integrity_check=ok`、`foreign_key_check` 为 0。默认本机目录也实际完成 `install → update → restart`，服务健康后才返回成功，SQLite 完整性与外键检查通过。发布产物位于用户目录；启动前清理二进制 provenance 并进行 ad-hoc 签名，静态页面可访问，服务不会因 `OS_REASON_CODESIGNING` 退出。 |
+| macOS 原生隔离数据浏览器 smoke（本轮） | 不使用 Docker；在临时原生 `launchd` 服务、独立 `DATA_DIR` 和临时 SQLite 文件中，用浏览器真实注册/登录测试账号后创建闪念、笔记、待办各一条。已验证待办完成、笔记编辑及两次历史写入、评论新增、`#sqlite-smoke-tag` 标签写入、全局子串搜索（等待搜索防抖后命中）、新建工作区、跨工作区移动笔记及切换隔离、资源目录新建和重命名。390×844 下资源列表、笔记列表和详情均正常渲染。结束前数据库 `integrity_check=ok`、`foreign_key_check` 为 0 行；历史、评论、标签关系、附件关联的 orphan 检查均为 0。随后已经停止临时 `launchd` 服务，并删除临时 SQLite、资源目录、测试账号和构建目录；正式本地服务仍在 6676 健康运行。 |
 | 飞牛 unit 模板 | `bun run verify:fnas-systemd` 校验 `deploy/fnas/blinkora.service` 的 section、关键值、服务账号、环境文件和 `ExecStart` 路径。该项仅验证部署定义。 |
 
 ## 待验 / 阻断发布
 
 - 桌面和移动端核心浏览器 smoke 已完成，且已覆盖登录/两步验证、Workspace 创建/切换/链接移动、三类笔记新建、单条 Blinkora 编辑持久化、置顶/归档/回收/恢复、评论新增、标签树、全局搜索、资源目录嵌套、链接高级筛选/重置、每日回顾标记与操作日志读取；完整数据浏览器清单仍未逐项执行。仍需覆盖三类笔记编辑与历史、分页、引用、评论树、附件与资源目录全部动作、完整高级筛选、设置/S3、字体、导入导出以及 MCP/Agent 的全部 UI 路径。
+- 本轮原生数据浏览器 smoke 的控制台记录到一条 `NotFoundError: releasePointerCapture`，栈来自第三方 UI 基础库的 pointer handler。它发生在自动化坐标点击路径中，尚未以普通实体鼠标完成复现或排除。验收标准要求控制台 error 为 0，因此此项不能视为通过；后续必须用真实指针交互复测，若可复现则修复后再验。
 - 飞牛实际机器的 systemd 安装、更新、启动、停止和卸载未执行；该部署不属于当前本地分支范围。后续若发布飞牛版本，仍须单独完成该项实机验收，不能用 Linux Docker 构建结果代替。
 
 在浏览器清单补齐并记录结果前，本次本地部署不能标记为“全部验收通过”。飞牛版本另按上述平台门禁验收。
