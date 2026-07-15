@@ -1,5 +1,5 @@
 use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, bail};
 use futures::FutureExt;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -117,30 +117,46 @@ fn delete(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         .bind(id)
         .fetch_all(ctx.state.pool())
         .await?;
-        for path in &attachment_paths {
-            crate::attachment_files::delete_physical_attachment(&ctx, path)
-                .await
-                .with_context(|| format!("delete workspace attachment {path}"))?;
+        let staged_deletions =
+            crate::attachment_files::stage_attachment_deletions(&ctx, &attachment_paths).await?;
+        let database_result: anyhow::Result<()> = async {
+            let mut tx = ctx.state.pool().begin().await?;
+            for sql in [
+                r#"DELETE FROM comments WHERE "workspaceId"=$1"#,
+                r#"DELETE FROM "noteHistory" WHERE "workspaceId"=$1"#,
+                r#"DELETE FROM "noteReference" WHERE "fromNoteId" IN (SELECT id FROM notes WHERE "workspaceId"=$1) OR "toNoteId" IN (SELECT id FROM notes WHERE "workspaceId"=$1)"#,
+                r#"DELETE FROM "tagsToNote" WHERE "noteId" IN (SELECT id FROM notes WHERE "workspaceId"=$1) OR "tagId" IN (SELECT id FROM tag WHERE "workspaceId"=$1)"#,
+                r#"DELETE FROM attachments WHERE "workspaceId"=$1"#,
+                r#"DELETE FROM tag WHERE "workspaceId"=$1"#,
+                r#"DELETE FROM notes WHERE "workspaceId"=$1"#,
+                r#"DELETE FROM config WHERE "workspaceId"=$1"#,
+            ] {
+                sqlx::query(sql).bind(id).execute(&mut *tx).await?;
+            }
+            sqlx::query(r#"DELETE FROM workspaces WHERE id=$1 AND "accountId"=$2"#)
+                .bind(id)
+                .bind(user.id)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
         }
-        let mut tx = ctx.state.pool().begin().await?;
-        for sql in [
-            r#"DELETE FROM comments WHERE "workspaceId"=$1"#,
-            r#"DELETE FROM "noteHistory" WHERE "workspaceId"=$1"#,
-            r#"DELETE FROM "noteReference" WHERE "fromNoteId" IN (SELECT id FROM notes WHERE "workspaceId"=$1) OR "toNoteId" IN (SELECT id FROM notes WHERE "workspaceId"=$1)"#,
-            r#"DELETE FROM "tagsToNote" WHERE "noteId" IN (SELECT id FROM notes WHERE "workspaceId"=$1) OR "tagId" IN (SELECT id FROM tag WHERE "workspaceId"=$1)"#,
-            r#"DELETE FROM attachments WHERE "workspaceId"=$1"#,
-            r#"DELETE FROM tag WHERE "workspaceId"=$1"#,
-            r#"DELETE FROM notes WHERE "workspaceId"=$1"#,
-            r#"DELETE FROM config WHERE "workspaceId"=$1"#,
-        ] {
-            sqlx::query(sql).bind(id).execute(&mut *tx).await?;
+        .await;
+        if let Err(database_error) = database_result {
+            if let Err(rollback_error) =
+                crate::attachment_files::rollback_attachment_deletions(staged_deletions).await
+            {
+                return Err(database_error.context(format!(
+                    "workspace delete database transaction failed and attachment rollback also failed: {rollback_error}"
+                )));
+            }
+            return Err(database_error);
         }
-        sqlx::query(r#"DELETE FROM workspaces WHERE id=$1 AND "accountId"=$2"#)
-            .bind(id)
-            .bind(user.id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
+        if let Err(error) =
+            crate::attachment_files::finalize_attachment_deletions(staged_deletions).await
+        {
+            tracing::error!(%error, "workspace was deleted but private attachment staging cleanup failed");
+        }
         Ok(json!({ "success": true, "deletedAttachmentFiles": attachment_paths.len() }))
     }
     .boxed()

@@ -209,6 +209,23 @@ pub async fn get_object(config: &S3Config, key: &str) -> anyhow::Result<Vec<u8>>
     Ok(response.bytes().await?.to_vec())
 }
 
+pub async fn object_exists(config: &S3Config, key: &str) -> anyhow::Result<bool> {
+    validate_required(config)?;
+    let body_hash = "UNSIGNED-PAYLOAD".to_string();
+    let mut headers = vec![("x-amz-content-sha256".to_string(), body_hash.clone())];
+    let url = signed_url_and_headers(config, Method::HEAD, key, "", &body_hash, &mut headers)?;
+    let response = Client::new()
+        .head(url)
+        .headers(header_map(headers)?)
+        .send()
+        .await?;
+    match response.status() {
+        status if status.is_success() => Ok(true),
+        StatusCode::NOT_FOUND => Ok(false),
+        status => bail!("head object failed with HTTP {status}"),
+    }
+}
+
 pub async fn delete_object(config: &S3Config, key: &str) -> anyhow::Result<()> {
     validate_required(config)?;
     let body_hash = hex::encode(Sha256::digest([]));

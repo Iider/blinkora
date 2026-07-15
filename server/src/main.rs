@@ -27,6 +27,14 @@ async fn main() -> anyhow::Result<()> {
     let pool = db::connect(&cfg.data_dir).await?;
     db::init_schema(&pool, &cfg.schema_path).await?;
     let state = app::AppState::new(cfg.clone(), pool);
+    let recovered_file_operations =
+        attachment_files::recover_pending_attachment_operations(&state).await?;
+    if recovered_file_operations > 0 {
+        tracing::warn!(
+            count = recovered_file_operations,
+            "recovered interrupted attachment file operations"
+        );
+    }
 
     let cors = CorsLayer::new()
         .allow_origin(Any)

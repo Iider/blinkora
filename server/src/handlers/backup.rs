@@ -1190,10 +1190,9 @@ fn sanitize_file_name(name: impl AsRef<str>) -> String {
         .chars()
         .map(|ch| {
             if ch.is_ascii_control()
+                || ch.is_whitespace()
                 || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
             {
-                '_'
-            } else if ch.is_whitespace() {
                 '_'
             } else {
                 ch

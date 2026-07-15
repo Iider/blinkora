@@ -175,7 +175,7 @@ async fn register_json_functions(
     let status = unsafe {
         ffi::sqlite3_create_function_v2(
             handle.as_raw_handle().as_ptr(),
-            b"blinkora_json_contains\0".as_ptr().cast(),
+            c"blinkora_json_contains".as_ptr(),
             2,
             ffi::SQLITE_UTF8 | ffi::SQLITE_DETERMINISTIC,
             std::ptr::null_mut(),
@@ -189,7 +189,7 @@ async fn register_json_functions(
         let merge_status = unsafe {
             ffi::sqlite3_create_function_v2(
                 handle.as_raw_handle().as_ptr(),
-                b"blinkora_json_merge\0".as_ptr().cast(),
+                c"blinkora_json_merge".as_ptr(),
                 2,
                 ffi::SQLITE_UTF8 | ffi::SQLITE_DETERMINISTIC,
                 std::ptr::null_mut(),
@@ -207,7 +207,7 @@ async fn register_json_functions(
         let now_status = unsafe {
             ffi::sqlite3_create_function_v2(
                 handle.as_raw_handle().as_ptr(),
-                b"blinkora_now\0".as_ptr().cast(),
+                c"blinkora_now".as_ptr(),
                 0,
                 ffi::SQLITE_UTF8,
                 std::ptr::null_mut(),
@@ -225,7 +225,7 @@ async fn register_json_functions(
         let timestamp_status = unsafe {
             ffi::sqlite3_create_function_v2(
                 handle.as_raw_handle().as_ptr(),
-                b"blinkora_timestamp_micros\0".as_ptr().cast(),
+                c"blinkora_timestamp_micros".as_ptr(),
                 1,
                 ffi::SQLITE_UTF8 | ffi::SQLITE_DETERMINISTIC,
                 std::ptr::null_mut(),
@@ -243,7 +243,7 @@ async fn register_json_functions(
         let json_has_key_status = unsafe {
             ffi::sqlite3_create_function_v2(
                 handle.as_raw_handle().as_ptr(),
-                b"blinkora_json_has_key\0".as_ptr().cast(),
+                c"blinkora_json_has_key".as_ptr(),
                 2,
                 ffi::SQLITE_UTF8 | ffi::SQLITE_DETERMINISTIC,
                 std::ptr::null_mut(),

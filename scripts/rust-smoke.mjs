@@ -1367,9 +1367,10 @@ async function runS3Smoke(token, workspaceId) {
     body: s3FormData,
   });
   const s3UploadJson = await s3Upload.json().catch(() => null);
+  const expectedS3Root = `/api/s3file/${s3Config.normalizedCustomPath || ''}`;
   assert(
     s3Upload.ok
-      && s3UploadJson?.path?.startsWith('/api/s3file/')
+      && s3UploadJson?.path?.startsWith(expectedS3Root)
       && s3UploadJson?.filePath === s3UploadJson.path
       && s3UploadJson?.fileName
       && s3UploadJson?.Message === 'Success',
@@ -1399,7 +1400,7 @@ async function runS3Smoke(token, workspaceId) {
 
   const s3MovedList = await trpc('attachments.list', { folder: s3FolderName }, token, 'GET');
   const s3Moved = s3MovedList.find((item) => item.id === s3Attachment.id);
-  assert(s3Moved?.path?.startsWith(`/api/s3file/${s3FolderName}/`), 's3 moved path', s3Moved);
+  assert(s3Moved?.path?.startsWith(`${expectedS3Root}${s3FolderName}/`), 's3 moved path', s3Moved);
 
   const s3MovedGet = await request(s3Moved.path, { headers: { Authorization: `Bearer ${token}` } });
   assert(s3MovedGet.response.status === 200 && s3MovedGet.text === s3Content, 's3 moved file get', {

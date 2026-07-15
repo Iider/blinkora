@@ -1,13 +1,15 @@
 use super::common::workspace_id;
-use crate::s3;
+use crate::attachment_files::{
+    finalize_attachment_deletions, finalize_attachment_moves, rollback_attachment_deletions,
+    rollback_attachment_moves, stage_attachment_deletions, stage_attachment_move,
+    StagedAttachmentDeletion, StagedAttachmentMove,
+};
 use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
 use anyhow::{anyhow, bail};
 use futures::FutureExt;
 use serde_json::{json, Value};
 use sqlx::Row;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use tokio::fs;
+use std::collections::{HashMap, HashSet};
 
 pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
     registry.insert("attachments.createFolder", create_folder);
@@ -188,7 +190,7 @@ fn rename(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             let old_folder_path = slash_to_comma(old_folder_path);
             let new_folder_path = slash_to_comma(new_name);
             let rows = sqlx::query(
-                r#"SELECT id, path, COALESCE("perfixPath", '') AS "perfixPath"
+                r#"SELECT id, name, type, path, COALESCE("perfixPath", '') AS "perfixPath"
                    FROM attachments
                    WHERE (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$1 AND "workspaceId"=$2))
                       OR ("accountId"=$1 AND "workspaceId"=$2))
@@ -200,20 +202,53 @@ fn rename(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .bind(&old_folder_path)
             .fetch_all(ctx.state.pool())
             .await?;
+            let mut updates = Vec::with_capacity(rows.len());
+            let mut physical_moves = Vec::with_capacity(rows.len());
             for row in rows {
                 let id = row.get::<i32, _>("id");
+                let name = row.get::<String, _>("name");
+                let attachment_type = row.get::<String, _>("type");
                 let old_prefix = row.get::<String, _>("perfixPath");
                 let old_path = row.get::<String, _>("path");
                 let next_prefix = replace_prefix(&old_prefix, &old_folder_path, &new_folder_path);
-                let next_path = replace_api_folder_prefix(&old_path, &old_folder_path, &new_folder_path);
-                move_local_file(&ctx, &old_path, &next_path).await;
+                let stored_name = old_path
+                    .rsplit_once('/')
+                    .map(|(_, name)| name)
+                    .ok_or_else(|| anyhow!("Invalid attachment path"))?;
+                let next_path = rebuild_api_path(
+                    &old_path,
+                    &old_prefix,
+                    &next_prefix,
+                    stored_name,
+                )?;
+                physical_moves.push(PhysicalMovePlan {
+                    attachment_id: id,
+                    old_path: old_path.clone(),
+                    new_path: next_path.clone(),
+                    allow_missing: name == ".folder" || attachment_type == "folder",
+                });
+                updates.push((id, next_prefix, next_path));
+            }
+            let staged_moves = stage_resource_moves(&ctx, &physical_moves).await?;
+            let database_result: anyhow::Result<()> = async {
+                let mut tx = ctx.state.pool().begin().await?;
+                for (id, next_prefix, next_path) in updates {
                 sqlx::query(r#"UPDATE attachments SET "perfixPath"=$1, path=$2, depth=$3, "updatedAt"=blinkora_now() WHERE id=$4"#)
                     .bind(&next_prefix)
                     .bind(&next_path)
                     .bind(prefix_depth(&next_prefix))
                     .bind(id)
-                    .execute(ctx.state.pool())
+                    .execute(&mut *tx)
                     .await?;
+                }
+                tx.commit().await?;
+                Ok(())
+            }
+            .await;
+            if let Err(error) = database_result {
+                rollback_moves_after_database_error(staged_moves, error).await?;
+            } else if let Err(error) = finalize_attachment_moves(staged_moves).await {
+                tracing::error!(%error, "folder rename committed but attachment move journal cleanup failed");
             }
             return Ok(json!({ "success": true }));
         }
@@ -223,7 +258,7 @@ fn rename(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         }
         let id = input.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
         let row = sqlx::query(
-            r#"SELECT id, name, path FROM attachments
+            r#"SELECT id, name, type, path, COALESCE("perfixPath", '') AS "perfixPath" FROM attachments
                WHERE id=$1 AND (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$2 AND "workspaceId"=$3))
                   OR ("accountId"=$2 AND "workspaceId"=$3)) AND "workspaceId"=$3"#,
         )
@@ -234,15 +269,37 @@ fn rename(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         .await?
         .ok_or_else(|| anyhow!("Attachment not found"))?;
         let old_name = row.get::<String, _>("name");
+        let attachment_type = row.get::<String, _>("type");
         let old_path = row.get::<String, _>("path");
-        let next_path = old_path.rsplit_once('/').map(|(dir, _)| format!("{dir}/{new_name}")).unwrap_or_else(|| old_path.replace(&old_name, new_name));
-        move_local_file(&ctx, &old_path, &next_path).await;
-        sqlx::query(r#"UPDATE attachments SET name=$1, path=$2, "updatedAt"=blinkora_now() WHERE id=$3"#)
-            .bind(new_name)
-            .bind(next_path)
-            .bind(id)
-            .execute(ctx.state.pool())
-            .await?;
+        let current_prefix = row.get::<String, _>("perfixPath");
+        let next_path = rebuild_api_path(&old_path, &current_prefix, &current_prefix, new_name)?;
+        let staged_moves = stage_resource_moves(
+            &ctx,
+            &[PhysicalMovePlan {
+                attachment_id: id,
+                old_path,
+                new_path: next_path.clone(),
+                allow_missing: old_name == ".folder" || attachment_type == "folder",
+            }],
+        )
+        .await?;
+        let database_result: anyhow::Result<()> = async {
+            let mut tx = ctx.state.pool().begin().await?;
+            sqlx::query(r#"UPDATE attachments SET name=$1, path=$2, "updatedAt"=blinkora_now() WHERE id=$3"#)
+                .bind(new_name)
+                .bind(next_path)
+                .bind(id)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = database_result {
+            rollback_moves_after_database_error(staged_moves, error).await?;
+        } else if let Err(error) = finalize_attachment_moves(staged_moves).await {
+            tracing::error!(%error, "file rename committed but attachment move journal cleanup failed");
+        }
         Ok(json!({ "success": true }))
     }
     .boxed()
@@ -267,8 +324,9 @@ fn move_item(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         if source_ids.is_empty() {
             bail!("Attachments not found");
         }
+        let requested_ids = source_ids.iter().copied().collect::<HashSet<_>>();
         let rows = sqlx::query(
-            r#"SELECT id, name, path FROM attachments
+            r#"SELECT id, name, type, path, COALESCE("perfixPath", '') AS "perfixPath" FROM attachments
                WHERE id IN (SELECT value FROM json_each($1)) AND (("noteId" IN (SELECT id FROM notes WHERE "accountId"=$2 AND "workspaceId"=$3))
                   OR ("accountId"=$2 AND "workspaceId"=$3)) AND "workspaceId"=$3"#,
         )
@@ -277,27 +335,46 @@ fn move_item(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         .bind(ws)
         .fetch_all(ctx.state.pool())
         .await?;
-        if rows.is_empty() {
+        if rows.len() != requested_ids.len() {
             bail!("Attachments not found");
         }
+        let mut updates = Vec::with_capacity(rows.len());
+        let mut physical_moves = Vec::with_capacity(rows.len());
         for row in rows {
             let id = row.get::<i32, _>("id");
             let name = row.get::<String, _>("name");
+            let attachment_type = row.get::<String, _>("type");
             let old_path = row.get::<String, _>("path");
-            let base = if old_path.starts_with("/api/s3file/") { "/api/s3file/" } else { "/api/file/" };
-            let next_path = if target_folder.is_empty() {
-                format!("{base}{name}")
-            } else {
-                format!("{}{}/{}", base, target_folder.split(',').collect::<Vec<_>>().join("/"), name)
-            };
-            move_local_file(&ctx, &old_path, &next_path).await;
-            sqlx::query(r#"UPDATE attachments SET "perfixPath"=$1, depth=$2, path=$3, "updatedAt"=blinkora_now() WHERE id=$4"#)
-                .bind(&target_folder)
-                .bind(prefix_depth(&target_folder))
-                .bind(next_path)
-                .bind(id)
-                .execute(ctx.state.pool())
-                .await?;
+            let current_prefix = row.get::<String, _>("perfixPath");
+            let next_path = rebuild_api_path(&old_path, &current_prefix, &target_folder, &name)?;
+            physical_moves.push(PhysicalMovePlan {
+                attachment_id: id,
+                old_path,
+                new_path: next_path.clone(),
+                allow_missing: name == ".folder" || attachment_type == "folder",
+            });
+            updates.push((id, next_path));
+        }
+        let staged_moves = stage_resource_moves(&ctx, &physical_moves).await?;
+        let database_result: anyhow::Result<()> = async {
+            let mut tx = ctx.state.pool().begin().await?;
+            for (id, next_path) in updates {
+                sqlx::query(r#"UPDATE attachments SET "perfixPath"=$1, depth=$2, path=$3, "updatedAt"=blinkora_now() WHERE id=$4"#)
+                    .bind(&target_folder)
+                    .bind(prefix_depth(&target_folder))
+                    .bind(next_path)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = database_result {
+            rollback_moves_after_database_error(staged_moves, error).await?;
+        } else if let Err(error) = finalize_attachment_moves(staged_moves).await {
+            tracing::error!(%error, "file move committed but attachment move journal cleanup failed");
         }
         Ok(json!({ "success": true, "message": "Files moved successfully" }))
     }
@@ -360,14 +437,27 @@ async fn delete_folder(ctx: ProcedureContext, folder_path: &str) -> anyhow::Resu
         .iter()
         .map(|row| row.get::<i32, _>("id"))
         .collect::<Vec<_>>();
-    for row in rows {
-        delete_local_file(&ctx, &row.get::<String, _>("path")).await;
+    let paths = rows
+        .iter()
+        .map(|row| row.get::<String, _>("path"))
+        .collect::<Vec<_>>();
+    let staged_deletions = stage_attachment_deletions(&ctx, &paths).await?;
+    let database_result: anyhow::Result<()> = async {
+        let mut tx = ctx.state.pool().begin().await?;
+        if !ids.is_empty() {
+            sqlx::query(r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#)
+                .bind(crate::db::json_array(&ids))
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
-    if !ids.is_empty() {
-        sqlx::query(r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#)
-            .bind(crate::db::json_array(&ids))
-            .execute(ctx.state.pool())
-            .await?;
+    .await;
+    if let Err(error) = database_result {
+        rollback_deletions_after_database_error(staged_deletions, error).await?;
+    } else if let Err(error) = finalize_attachment_deletions(staged_deletions).await {
+        tracing::error!(%error, "attachment rows were deleted but private file staging cleanup failed");
     }
     Ok(json!({ "success": true, "message": "Folder and its contents deleted successfully" }))
 }
@@ -392,14 +482,27 @@ async fn delete_ids(ctx: ProcedureContext, ids: Vec<i32>) -> anyhow::Result<Valu
         .iter()
         .map(|row| row.get::<i32, _>("id"))
         .collect::<Vec<_>>();
-    for row in rows {
-        delete_local_file(&ctx, &row.get::<String, _>("path")).await;
+    let paths = rows
+        .iter()
+        .map(|row| row.get::<String, _>("path"))
+        .collect::<Vec<_>>();
+    let staged_deletions = stage_attachment_deletions(&ctx, &paths).await?;
+    let database_result: anyhow::Result<()> = async {
+        let mut tx = ctx.state.pool().begin().await?;
+        if !owned_ids.is_empty() {
+            sqlx::query(r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#)
+                .bind(crate::db::json_array(&owned_ids))
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(())
     }
-    if !owned_ids.is_empty() {
-        sqlx::query(r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#)
-            .bind(crate::db::json_array(&owned_ids))
-            .execute(ctx.state.pool())
-            .await?;
+    .await;
+    if let Err(error) = database_result {
+        rollback_deletions_after_database_error(staged_deletions, error).await?;
+    } else if let Err(error) = finalize_attachment_deletions(staged_deletions).await {
+        tracing::error!(%error, "attachment rows were deleted but private file staging cleanup failed");
     }
     Ok(json!({ "success": true, "message": "Files deleted successfully" }))
 }
@@ -447,92 +550,257 @@ fn replace_prefix(value: &str, old_prefix: &str, new_prefix: &str) -> String {
     }
 }
 
-fn replace_api_folder_prefix(path: &str, old_prefix: &str, new_prefix: &str) -> String {
-    let old_slash = old_prefix.split(',').collect::<Vec<_>>().join("/");
-    let new_slash = new_prefix.split(',').collect::<Vec<_>>().join("/");
-    path.replace(
-        &format!("/api/file/{old_slash}"),
-        &format!("/api/file/{new_slash}"),
-    )
-    .replace(
-        &format!("/api/s3file/{old_slash}"),
-        &format!("/api/s3file/{new_slash}"),
-    )
+fn rebuild_api_path(
+    old_path: &str,
+    current_prefix: &str,
+    target_prefix: &str,
+    stored_name: &str,
+) -> anyhow::Result<String> {
+    if stored_name.is_empty() || stored_name.contains('/') || stored_name.contains('\\') {
+        bail!("Invalid attachment name");
+    }
+    let (base, relative_path) = if let Some(relative) = old_path.strip_prefix("/api/s3file/") {
+        ("/api/s3file/", relative)
+    } else if let Some(relative) = old_path.strip_prefix("/api/file/") {
+        ("/api/file/", relative)
+    } else {
+        bail!("Invalid attachment path");
+    };
+    let current_directory = relative_path
+        .rsplit_once('/')
+        .map(|(directory, _)| directory)
+        .unwrap_or("");
+    let current_folder = current_prefix.split(',').collect::<Vec<_>>().join("/");
+    let storage_root = if current_folder.is_empty() {
+        current_directory
+    } else {
+        current_directory
+            .strip_suffix(&current_folder)
+            .filter(|root| root.is_empty() || root.ends_with('/'))
+            .ok_or_else(|| anyhow!("Attachment path does not match its resource folder"))?
+            .trim_end_matches('/')
+    };
+    let target_folder = target_prefix.split(',').collect::<Vec<_>>().join("/");
+    let next_relative = [storage_root, target_folder.as_str(), stored_name]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+    Ok(format!("{base}{next_relative}"))
 }
 
-async fn move_local_file(ctx: &ProcedureContext, old_api_path: &str, new_api_path: &str) {
-    if old_api_path.starts_with("/api/s3file/") || new_api_path.starts_with("/api/s3file/") {
-        let (Some(old_key), Some(new_key)) = (
-            s3_key_from_api_path(old_api_path),
-            s3_key_from_api_path(new_api_path),
-        ) else {
-            return;
-        };
-        if let Ok(Some(config)) = s3::load_s3_config(&ctx.state).await {
-            if s3::copy_object(&config, &old_key, &new_key).await.is_ok() {
-                let _ = s3::delete_object(&config, &old_key).await;
+struct PhysicalMovePlan {
+    attachment_id: i32,
+    old_path: String,
+    new_path: String,
+    allow_missing: bool,
+}
+
+async fn stage_resource_moves(
+    ctx: &ProcedureContext,
+    plans: &[PhysicalMovePlan],
+) -> anyhow::Result<Vec<StagedAttachmentMove>> {
+    let mut staged = Vec::with_capacity(plans.len());
+    for plan in plans {
+        match stage_attachment_move(
+            ctx,
+            plan.attachment_id,
+            &plan.old_path,
+            &plan.new_path,
+            plan.allow_missing,
+        )
+        .await
+        {
+            Ok(item) => staged.push(item),
+            Err(stage_error) => {
+                if let Err(rollback_error) = rollback_attachment_moves(staged).await {
+                    return Err(stage_error.context(format!(
+                        "physical attachment move failed and rollback also failed: {rollback_error}"
+                    )));
+                }
+                return Err(stage_error);
             }
         }
-        return;
     }
-    let (Some(old_path), Some(new_path)) = (
-        api_file_relative_path(old_api_path),
-        api_file_relative_path(new_api_path),
-    ) else {
-        return;
-    };
-    let root = Path::new(&ctx.state.config.data_dir).join("files");
-    let source = root.join(old_path);
-    let target = root.join(new_path);
-    if fs::try_exists(&source).await.unwrap_or(false) {
-        if let Some(parent) = target.parent() {
-            let _ = fs::create_dir_all(parent).await;
+    Ok(staged)
+}
+
+async fn rollback_moves_after_database_error(
+    staged: Vec<StagedAttachmentMove>,
+    database_error: anyhow::Error,
+) -> anyhow::Result<()> {
+    match rollback_attachment_moves(staged).await {
+        Ok(()) => Err(database_error),
+        Err(rollback_error) => Err(database_error.context(format!(
+            "attachment database transaction failed and physical rollback also failed: {rollback_error}"
+        ))),
+    }
+}
+
+async fn rollback_deletions_after_database_error(
+    staged: Vec<StagedAttachmentDeletion>,
+    database_error: anyhow::Error,
+) -> anyhow::Result<()> {
+    match rollback_attachment_deletions(staged).await {
+        Ok(()) => Err(database_error),
+        Err(rollback_error) => Err(database_error.context(format!(
+            "attachment database transaction failed and physical rollback also failed: {rollback_error}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handlers::test_support::HandlerTestFixture;
+    use crate::trpc::ProcedureContext;
+
+    fn cloned_context(fixture: &HandlerTestFixture) -> ProcedureContext {
+        ProcedureContext {
+            state: fixture.ctx.state.clone(),
+            user: fixture.ctx.user.clone(),
         }
-        let _ = fs::rename(source, target).await;
     }
-}
 
-async fn delete_local_file(ctx: &ProcedureContext, api_path: &str) {
-    if api_path.starts_with("/api/s3file/") {
-        if let (Ok(Some(config)), Some(key)) = (
-            s3::load_s3_config(&ctx.state).await,
-            s3_key_from_api_path(api_path),
-        ) {
-            let _ = s3::delete_object(&config, &key).await;
-        }
-        return;
+    #[test]
+    fn resource_paths_keep_their_physical_storage_root() {
+        assert_eq!(
+            rebuild_api_path(
+                "/api/s3file/blinkora_local/existing/file-123.txt",
+                "",
+                "folder,nested",
+                "renamed.txt",
+            )
+            .unwrap(),
+            "/api/s3file/blinkora_local/existing/folder/nested/renamed.txt"
+        );
+        assert_eq!(
+            rebuild_api_path(
+                "/api/s3file/blinkora_local/existing/folder/old.txt",
+                "folder",
+                "renamed",
+                "old.txt",
+            )
+            .unwrap(),
+            "/api/s3file/blinkora_local/existing/renamed/old.txt"
+        );
+        assert_eq!(
+            rebuild_api_path(
+                "/api/file/folder/generated.txt",
+                "folder",
+                "",
+                "original.txt",
+            )
+            .unwrap(),
+            "/api/file/original.txt"
+        );
+        assert!(rebuild_api_path(
+            "/api/s3file/blinkora_local/other/file.txt",
+            "folder",
+            "target",
+            "file.txt",
+        )
+        .is_err());
     }
-    let Some(relative_path) = api_file_relative_path(api_path) else {
-        return;
-    };
-    let path = Path::new(&ctx.state.config.data_dir)
-        .join("files")
-        .join(relative_path);
-    let _ = fs::remove_file(path).await;
-}
 
-fn api_file_relative_path(path: &str) -> Option<PathBuf> {
-    let relative = path
-        .strip_prefix("/api/file/")
-        .or_else(|| path.strip_prefix("/api/s3file/"))?;
-    if relative.contains('\0')
-        || relative.contains('\\')
-        || relative.starts_with('/')
-        || relative.split('/').any(|part| part == "..")
-    {
-        return None;
+    async fn seed_local_attachment(
+        fixture: &HandlerTestFixture,
+        name: &str,
+    ) -> (i32, std::path::PathBuf) {
+        let api_path = format!("/api/file/{name}");
+        let physical_path = fixture.data_dir.join("files").join(name);
+        tokio::fs::create_dir_all(physical_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&physical_path, format!("bytes for {name}"))
+            .await
+            .unwrap();
+        let id = sqlx::query_scalar(
+            r#"INSERT INTO attachments
+               (name, path, size, type, "accountId", "workspaceId", "perfixPath", depth, "sortOrder", "updatedAt")
+               VALUES ($1, $2, 12, 'text/plain', $3, $4, '', 0, 0, blinkora_now())
+               RETURNING id"#,
+        )
+        .bind(name)
+        .bind(api_path)
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        (id, physical_path)
     }
-    Some(PathBuf::from(relative))
-}
 
-fn s3_key_from_api_path(path: &str) -> Option<String> {
-    let key = path.strip_prefix("/api/s3file/")?;
-    if key.contains('\0')
-        || key.contains('\\')
-        || key.starts_with('/')
-        || key.split('/').any(|part| part == "..")
-    {
-        return None;
+    #[tokio::test]
+    async fn multi_file_move_rolls_back_database_and_files_together() {
+        let fixture = HandlerTestFixture::new("attachment-move-rollback").await;
+        let (first_id, first_path) = seed_local_attachment(&fixture, "first.txt").await;
+        let (second_id, second_path) = seed_local_attachment(&fixture, "second.txt").await;
+        sqlx::query(&format!(
+            r#"CREATE TRIGGER fail_second_attachment_move
+               BEFORE UPDATE OF path ON attachments
+               WHEN OLD.id={second_id}
+               BEGIN SELECT RAISE(ABORT, 'forced attachment move failure'); END"#
+        ))
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+        let result = move_item(
+            cloned_context(&fixture),
+            json!({
+                "sourceIds": [first_id, second_id],
+                "targetFolder": "target"
+            }),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(tokio::fs::try_exists(&first_path).await.unwrap());
+        assert!(tokio::fs::try_exists(&second_path).await.unwrap());
+        assert!(
+            !tokio::fs::try_exists(fixture.data_dir.join("files/target/first.txt"))
+                .await
+                .unwrap()
+        );
+        assert!(
+            !tokio::fs::try_exists(fixture.data_dir.join("files/target/second.txt"))
+                .await
+                .unwrap()
+        );
+        let paths: Vec<String> =
+            sqlx::query_scalar(r#"SELECT path FROM attachments WHERE id IN ($1, $2) ORDER BY id"#)
+                .bind(first_id)
+                .bind(second_id)
+                .fetch_all(&fixture.pool)
+                .await
+                .unwrap();
+        assert_eq!(paths, vec!["/api/file/first.txt", "/api/file/second.txt"]);
+        fixture.cleanup().await;
     }
-    Some(key.to_string())
+
+    #[tokio::test]
+    async fn failed_delete_restores_the_physical_file_and_database_row() {
+        let fixture = HandlerTestFixture::new("attachment-delete-rollback").await;
+        let (attachment_id, physical_path) = seed_local_attachment(&fixture, "delete-me.txt").await;
+        sqlx::query(&format!(
+            r#"CREATE TRIGGER fail_attachment_delete
+               BEFORE DELETE ON attachments
+               WHEN OLD.id={attachment_id}
+               BEGIN SELECT RAISE(ABORT, 'forced attachment delete failure'); END"#
+        ))
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+        let result = delete_ids(cloned_context(&fixture), vec![attachment_id]).await;
+        assert!(result.is_err());
+        assert!(tokio::fs::try_exists(&physical_path).await.unwrap());
+        let row_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE id=$1")
+            .bind(attachment_id)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+        assert_eq!(row_count, 1);
+        fixture.cleanup().await;
+    }
 }

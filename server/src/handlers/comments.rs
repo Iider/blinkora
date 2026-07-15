@@ -89,7 +89,7 @@ fn create(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         .bind(parent_id)
         .fetch_one(ctx.state.pool())
         .await?;
-        Ok(comment_json(&ctx, row, false).await?)
+        comment_json(&ctx, row, false).await
     }
     .boxed()
 }
@@ -128,7 +128,7 @@ fn update(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .fetch_one(&mut *tx)
             .await?;
         tx.commit().await?;
-        Ok(comment_json(&ctx, row, false).await?)
+        comment_json(&ctx, row, false).await
     }
     .boxed()
 }
@@ -236,7 +236,7 @@ async fn converted_todo_json_tx(
         .bind(todo_id)
         .fetch_one(&mut **tx)
         .await?;
-    super::common::note_json_with_connection(note_row, &mut **tx).await
+    super::common::note_json_with_connection(note_row, tx).await
 }
 
 fn comment_select_sql(extra: &str) -> String {

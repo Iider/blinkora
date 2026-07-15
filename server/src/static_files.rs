@@ -52,9 +52,8 @@ fn sanitize_path(path: &str) -> PathBuf {
 }
 
 fn set_cache_headers(headers: &mut axum::http::HeaderMap, path: &str, fallback: bool) {
-    let value = if fallback || path == "/" || path == "/index.html" {
-        "no-store"
-    } else if path.starts_with("/locales/") {
+    let value = if fallback || path == "/" || path == "/index.html" || path.starts_with("/locales/")
+    {
         "no-store"
     } else if path.starts_with("/assets/") {
         "public, max-age=31536000, immutable"

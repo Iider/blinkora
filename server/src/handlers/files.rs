@@ -231,6 +231,7 @@ async fn delete_file(
         user: Some(user.clone()),
     };
     let workspace_id = workspace_id(&ctx).await.map_err(internal_error)?;
+    let _write_guard = state.write_guard().await;
     let row = sqlx::query(
         r#"SELECT a.id, a.path, a."accountId", a."workspaceId", n."accountId" AS "noteAccountId", n."workspaceId" AS "noteWorkspaceId"
            FROM attachments a
@@ -263,21 +264,35 @@ async fn delete_file(
         ));
     }
 
-    if req.attachment_path.starts_with("/api/s3file/") {
-        if let Ok(Some(config)) = s3::load_s3_config(&state).await {
-            if let Some(key) = s3_key_from_api_path(&req.attachment_path) {
-                let _ = s3::delete_object(&config, &key).await;
-            }
-        }
-    } else if let Some(relative_path) = api_file_relative_path(&req.attachment_path) {
-        let _ = tokio::fs::remove_file(files_root(&state).join(relative_path)).await;
+    let staged_deletions = crate::attachment_files::stage_attachment_deletions(
+        &ctx,
+        std::slice::from_ref(&req.attachment_path),
+    )
+    .await
+    .map_err(internal_error)?;
+    let database_result: anyhow::Result<()> = async {
+        let mut tx = state.pool().begin().await?;
+        sqlx::query(r#"DELETE FROM attachments WHERE id=$1"#)
+            .bind(row.get::<i32, _>("id"))
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
     }
-    let _write_guard = state.write_guard().await;
-    sqlx::query(r#"DELETE FROM attachments WHERE id=$1"#)
-        .bind(row.get::<i32, _>("id"))
-        .execute(state.pool())
-        .await
-        .map_err(internal_error)?;
+    .await;
+    if let Err(database_error) = database_result {
+        if let Err(rollback_error) =
+            crate::attachment_files::rollback_attachment_deletions(staged_deletions).await
+        {
+            tracing::error!(%rollback_error, "file delete database transaction and physical rollback both failed");
+        }
+        return Err(internal_error(database_error));
+    }
+    if let Err(error) =
+        crate::attachment_files::finalize_attachment_deletions(staged_deletions).await
+    {
+        tracing::error!(%error, "file row was deleted but private file staging cleanup failed");
+    }
     Ok(Json(json!({ "Message": "Success", "status": 200 })))
 }
 
@@ -506,12 +521,6 @@ fn files_root(state: &AppState) -> PathBuf {
     FsPath::new(&state.config.data_dir).join("files")
 }
 
-fn api_file_relative_path(path: &str) -> Option<PathBuf> {
-    path.strip_prefix("/api/file/")
-        .or_else(|| path.strip_prefix("/api/s3file/"))
-        .and_then(|value| safe_relative_path(value, true).ok())
-}
-
 fn s3_key_from_api_path(path: &str) -> Option<String> {
     let key = path.strip_prefix("/api/s3file/")?;
     if key.contains('\0')
@@ -550,10 +559,9 @@ fn sanitize_file_name(name: impl AsRef<str>) -> String {
         .chars()
         .map(|ch| {
             if ch.is_ascii_control()
+                || ch.is_whitespace()
                 || matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
             {
-                '_'
-            } else if ch.is_whitespace() {
                 '_'
             } else {
                 ch

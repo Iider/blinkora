@@ -291,7 +291,7 @@ fn detail(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .bind(id)
             .fetch_one(ctx.state.pool())
             .await?;
-        Ok(note_json(&ctx, row).await?)
+        note_json(&ctx, row).await
     }
     .boxed()
 }
@@ -590,7 +590,7 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             .bind(note_id)
             .fetch_one(ctx.state.pool())
             .await?;
-        Ok(note_json(&ctx, row).await?)
+        note_json(&ctx, row).await
     }
     .boxed()
 }
@@ -2128,7 +2128,7 @@ mod tests {
 fn normalize_attachment_path(path: &str) -> String {
     let without_query = path.split(['?', '#']).next().unwrap_or(path);
     without_query
-        .trim_end_matches(|ch: char| matches!(ch, ')' | ']' | ',' | '.' | ';' | ':' | '!' | '?'))
+        .trim_end_matches([')', ']', ',', '.', ';', ':', '!', '?'])
         .to_string()
 }
 
@@ -2180,7 +2180,7 @@ async fn notes_for_delete(
     ids: &[i32],
 ) -> anyhow::Result<(Vec<NoteForDelete>, i32, i32)> {
     let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
-    let ws = workspace_id(&ctx).await?;
+    let ws = workspace_id(ctx).await?;
     let note_ids = unique_ids(ids);
     if note_ids.is_empty() {
         return Ok((Vec::new(), user.id, ws));
@@ -2344,87 +2344,110 @@ async fn delete_note_ids(
         Vec::new()
     };
 
-    let mut unique_paths = HashSet::new();
-    for attachment in &attachments_to_delete {
-        if unique_paths.insert(attachment.path.clone()) {
-            crate::attachment_files::delete_physical_attachment(&ctx, &attachment.path).await?;
-        }
-    }
-
     let attachment_ids_to_delete = attachments_to_delete
         .iter()
         .map(|attachment| attachment.id)
         .collect::<Vec<_>>();
-    let mut tx = ctx.state.pool().begin().await?;
-    let tag_ids_to_cleanup: Vec<i32> =
-        sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#)
-            .bind(crate::db::json_array(&ids))
-            .fetch_all(&mut *tx)
+    let attachment_paths = attachments_to_delete
+        .iter()
+        .map(|attachment| attachment.path.clone())
+        .collect::<Vec<_>>();
+    let staged_deletions =
+        crate::attachment_files::stage_attachment_deletions(&ctx, &attachment_paths).await?;
+    let database_result: anyhow::Result<()> = async {
+        let mut tx = ctx.state.pool().begin().await?;
+        let tag_ids_to_cleanup: Vec<i32> =
+            sqlx::query_scalar(r#"SELECT DISTINCT "tagId" FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#)
+                .bind(crate::db::json_array(&ids))
+                .fetch_all(&mut *tx)
+                .await?;
+        for note in &notes {
+            let title = note_title(&note.content, note.id);
+            insert_note_log_if_enabled_tx(
+                &ctx,
+                &mut tx,
+                user,
+                OperationLogDraft {
+                    action: "delete".to_string(),
+                    note_id: note.id,
+                    note_type: note.note_type,
+                    previous_note_type: Some(note.note_type),
+                    note_title: title.clone(),
+                    changed_fields: vec!["note".to_string()],
+                    summary: format!("Deleted note: {title}"),
+                    details: json!({
+                        "content": {
+                            "beforeHash": content_hash(&note.content),
+                            "beforeLength": note.content.chars().count()
+                        },
+                        "deleteOrphanAttachments": delete_orphan_attachments
+                    }),
+                },
+            )
             .await?;
-    for note in &notes {
-        let title = note_title(&note.content, note.id);
-        insert_note_log_if_enabled_tx(
-            &ctx,
+        }
+        for sql in [
+            r#"DELETE FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
+            r#"DELETE FROM "noteReference" WHERE "fromNoteId" IN (SELECT value FROM json_each($1)) OR "toNoteId" IN (SELECT value FROM json_each($1))"#,
+            r#"DELETE FROM comments WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
+            r#"DELETE FROM "noteHistory" WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
+        ] {
+            sqlx::query(sql)
+                .bind(crate::db::json_array(&ids))
+                .execute(&mut *tx)
+                .await?;
+        }
+        super::tags::cleanup_unused_tags(
             &mut tx,
-            user,
-            OperationLogDraft {
-                action: "delete".to_string(),
-                note_id: note.id,
-                note_type: note.note_type,
-                previous_note_type: Some(note.note_type),
-                note_title: title.clone(),
-                changed_fields: vec!["note".to_string()],
-                summary: format!("Deleted note: {title}"),
-                details: json!({
-                    "content": {
-                        "beforeHash": content_hash(&note.content),
-                        "beforeLength": note.content.chars().count()
-                    },
-                    "deleteOrphanAttachments": delete_orphan_attachments
-                }),
-            },
+            &tag_ids_to_cleanup,
+            account_id,
+            workspace_id,
         )
         .await?;
-    }
-    for sql in [
-        r#"DELETE FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
-        r#"DELETE FROM "noteReference" WHERE "fromNoteId" IN (SELECT value FROM json_each($1)) OR "toNoteId" IN (SELECT value FROM json_each($1))"#,
-        r#"DELETE FROM comments WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
-        r#"DELETE FROM "noteHistory" WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
-    ] {
-        sqlx::query(sql)
+
+        if attachment_ids_to_delete.is_empty() {
+            sqlx::query(
+                r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=blinkora_now() WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
+            )
             .bind(crate::db::json_array(&ids))
             .execute(&mut *tx)
             .await?;
-    }
-    super::tags::cleanup_unused_tags(&mut tx, &tag_ids_to_cleanup, account_id, workspace_id)
-        .await?;
+        } else {
+            sqlx::query(r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=blinkora_now() WHERE "noteId" IN (SELECT value FROM json_each($1)) AND NOT (id IN (SELECT value FROM json_each($2)))"#)
+                .bind(crate::db::json_array(&ids))
+                .bind(crate::db::json_array(&attachment_ids_to_delete))
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query(r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#)
+                .bind(crate::db::json_array(&attachment_ids_to_delete))
+                .execute(&mut *tx)
+                .await?;
+        }
 
-    if attachment_ids_to_delete.is_empty() {
-        sqlx::query(
-            r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=blinkora_now() WHERE "noteId" IN (SELECT value FROM json_each($1))"#,
-        )
-        .bind(crate::db::json_array(&ids))
-        .execute(&mut *tx)
-        .await?;
-    } else {
-        sqlx::query(r#"UPDATE attachments SET "noteId"=NULL, "updatedAt"=blinkora_now() WHERE "noteId" IN (SELECT value FROM json_each($1)) AND NOT (id IN (SELECT value FROM json_each($2)))"#)
+        sqlx::query(r#"DELETE FROM notes WHERE id IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3"#)
             .bind(crate::db::json_array(&ids))
-            .bind(crate::db::json_array(&attachment_ids_to_delete))
+            .bind(account_id)
+            .bind(workspace_id)
             .execute(&mut *tx)
             .await?;
-        sqlx::query(r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#)
-            .bind(crate::db::json_array(&attachment_ids_to_delete))
-            .execute(&mut *tx)
-            .await?;
+        tx.commit().await?;
+        Ok(())
     }
-
-    sqlx::query(r#"DELETE FROM notes WHERE id IN (SELECT value FROM json_each($1)) AND "accountId"=$2 AND "workspaceId"=$3"#)
-        .bind(crate::db::json_array(&ids))
-        .bind(account_id)
-        .bind(workspace_id)
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
+    .await;
+    if let Err(database_error) = database_result {
+        if let Err(rollback_error) =
+            crate::attachment_files::rollback_attachment_deletions(staged_deletions).await
+        {
+            return Err(database_error.context(format!(
+                "note delete database transaction failed and attachment rollback also failed: {rollback_error}"
+            )));
+        }
+        return Err(database_error);
+    }
+    if let Err(error) =
+        crate::attachment_files::finalize_attachment_deletions(staged_deletions).await
+    {
+        tracing::error!(%error, "note rows were deleted but private attachment staging cleanup failed");
+    }
     Ok(json!(true))
 }
