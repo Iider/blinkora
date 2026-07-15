@@ -93,7 +93,7 @@ CREATE TRIGGER IF NOT EXISTS "tagsToNote_advance_id_sequence"
 BEFORE INSERT ON "tagsToNote"
 FOR EACH ROW
 BEGIN
-  -- Explicit ids come from the PostgreSQL migration. Preserve them verbatim and
+  -- Explicit ids come from the source-database migration. Preserve them verbatim and
   -- raise the high-water mark so the next runtime-generated id is always larger.
   -- Advancing before constraint handling also mirrors nextval() for successful
   -- ON CONFLICT DO NOTHING statements.

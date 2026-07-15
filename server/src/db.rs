@@ -1175,7 +1175,7 @@ mod tests {
             sqlx::query(r#"INSERT INTO "tagsToNote" (id, "noteId", "tagId") VALUES (99, 3, 3)"#)
                 .execute(&pool)
                 .await
-                .expect_err("the PostgreSQL composite primary key must remain authoritative");
+                .expect_err("the source composite primary key must remain authoritative");
         assert!(duplicate_error
             .to_string()
             .contains("UNIQUE constraint failed"));
