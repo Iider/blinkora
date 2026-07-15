@@ -258,7 +258,7 @@ const Home = observer(() => {
           )}
 
           {isPaginationMode && currentListState.totalPages > 1 && (
-            <div className="flex justify-center w-full my-5">
+            <div className="flex justify-center w-full my-5" data-note-pagination="true">
               <Pagination
                 showControls
                 size="sm"

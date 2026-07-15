@@ -198,7 +198,7 @@ const App = observer(() => {
                 <Button onPress={async e => {
                   if (!store.currentNote) return
                   PromiseCall(api.notes.reviewNote.mutate({ id: store.currentNote!.id! }))
-                }} isIconOnly color='primary' startContent={<Icon icon="ci:check-all" width="24" height="24" />} />
+                }} isIconOnly color='primary' aria-label={t('reviewed')} startContent={<Icon icon="ci:check-all" width="24" height="24" />} />
               </Tooltip>
             }
             <Tooltip content={store.isBlinkora ? t('convert-to-note') : t('convert-to-blinkora')}>
@@ -209,6 +209,7 @@ const App = observer(() => {
                 await blinkora.dailyReviewNoteList.call()
               }}
                 color='default'
+                aria-label={store.isBlinkora ? t('convert-to-note') : t('convert-to-blinkora')}
                 startContent={store.isBlinkora ? <NotesIcon /> : <LightningIcon />}>
               </Button>
             </Tooltip>
@@ -223,14 +224,14 @@ const App = observer(() => {
                 if (!store.currentNote) return
                 await blinkora.upsertNote.call({ id: store.currentNote.id, isArchived: true })
                 await blinkora.dailyReviewNoteList.call()
-              }} isIconOnly color='default' startContent={<Icon icon="eva:archive-outline" width="20" height="20" />}></Button>
+              }} isIconOnly color='default' aria-label={t('archive')} startContent={<Icon icon="eva:archive-outline" width="20" height="20" />}></Button>
             </Tooltip>
 
             <Button
               onPress={async e => {
                 if (!store.currentNote) return
                 confirmDeleteNotes({ ids: [store.currentNote.id!], onDeleted: () => blinkora.dailyReviewNoteList.call() })
-              }} isIconOnly color='danger' startContent={<Icon icon="mingcute:delete-2-line" width="20" height="20" />}></Button>
+              }} isIconOnly color='danger' aria-label={t('delete')} startContent={<Icon icon="mingcute:delete-2-line" width="20" height="20" />}></Button>
           </div>
         </>
       }

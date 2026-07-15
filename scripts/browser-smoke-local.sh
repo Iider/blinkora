@@ -81,8 +81,8 @@ bun run smoke:browser
   echo "error: SQLite foreign_key_check reported rows after browser smoke" >&2
   exit 1
 }
-[[ "$(sqlite3 "$DB_PATH" 'SELECT type || "=" || count(*) FROM notes GROUP BY type ORDER BY type;')" == $'0=1\n1=1\n2=1' ]] || {
-  echo "error: browser smoke did not persist exactly one Blinkora, Note, and Todo" >&2
+[[ "$(sqlite3 "$DB_PATH" 'SELECT type || "=" || count(*) FROM notes GROUP BY type ORDER BY type;')" == $'0=11\n1=1\n2=1' ]] || {
+  echo "error: browser smoke did not persist its Blinkora pagination fixture, Note, and Todo" >&2
   exit 1
 }
 EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE '%(edited)%' LIMIT 1;")"
@@ -155,6 +155,10 @@ SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name 
 }
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM comments WHERE content LIKE 'browser UI comment %';")" == "1" ]] || {
   echo "error: browser smoke did not persist its annotation" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM notes WHERE content LIKE 'browser UI blinkora %' AND \"isReviewed\"=1;")" == "1" ]] || {
+  echo "error: browser smoke did not persist its daily review action" >&2
   exit 1
 }
 [[ "$(sqlite3 "$DB_PATH" '

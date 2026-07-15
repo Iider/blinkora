@@ -125,7 +125,7 @@ export default function FilterPop() {
   return (
     <Popover placement="bottom-start" backdrop="blur" isOpen={isOpen} onOpenChange={setIsOpen}>
       <PopoverTrigger>
-        <Button isIconOnly size="sm" variant="light">
+        <Button isIconOnly size="sm" variant="light" data-filter-trigger="true">
           <Icon className="cursor-pointer text-default-600" icon="tabler:filter-bolt" width="24" height="24" />
         </Button>
       </PopoverTrigger>

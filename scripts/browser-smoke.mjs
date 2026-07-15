@@ -10,6 +10,7 @@ const browserExecutable = process.env.BLINKORA_BROWSER_EXECUTABLE
 const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`;
 const user = `browser_smoke_${stamp}`;
 const password = 'BrowserSmoke!local';
+const NOTE_TYPE_LABELS = ['闪念', '笔记', '待办'];
 
 function fail(message, details) {
   console.error(`\nFAIL: ${message}`);
@@ -137,17 +138,37 @@ async function createAndSelectWorkspace(page, name) {
   await page.locator('button').filter({ hasText: name }).first().waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-async function createNote(page, currentType, targetType, content, expectedPath) {
+async function createNote(page, targetType, content, expectedPath) {
+  await page.waitForFunction((labels) => labels.some(label => {
+    const button = document.querySelector(`#global-editor button[aria-label="${label}"]`);
+    return button instanceof HTMLElement && button.offsetParent !== null;
+  }), NOTE_TYPE_LABELS, { timeout: 10_000 });
+
+  const typeButtons = NOTE_TYPE_LABELS
+    .map(label => `#global-editor button[aria-label="${label}"]`)
+    .join(', ');
+  const currentType = await page.locator(typeButtons).evaluateAll(buttons => {
+    const visibleButton = buttons.find(button => button instanceof HTMLElement && button.offsetParent !== null);
+    return visibleButton?.getAttribute('aria-label') ?? null;
+  });
+  assert(NOTE_TYPE_LABELS.includes(currentType), 'Global editor did not expose a selected note type.', {
+    currentType,
+    url: page.url(),
+  });
+
   if (currentType !== targetType) {
     const typeButton = page.locator(`#global-editor button[aria-label="${currentType}"]`);
-    await typeButton.waitFor({ state: 'visible', timeout: 10_000 });
     await typeButton.click();
     await page.locator('[data-note-type-picker-content] button').filter({ hasText: targetType }).click();
     await page.locator(`#global-editor button[aria-label="${targetType}"]`).waitFor({ state: 'visible', timeout: 10_000 });
     await page.waitForTimeout(600);
   }
 
-  const editor = page.locator('#vditor-create .vditor-ir [contenteditable="true"]');
+  const editorShell = page.locator('#global-editor');
+  await editorShell.scrollIntoViewIfNeeded();
+  await editorShell.click({ position: { x: 8, y: 8 } });
+  const editor = page.locator('#vditor-create .vditor-ir [contenteditable="true"]:visible');
+  await editor.waitFor({ state: 'visible', timeout: 10_000 });
   await editor.click();
   await page.keyboard.insertText(content);
   const saved = waitForNoteUpsert(page);
@@ -170,6 +191,17 @@ async function createNote(page, currentType, targetType, content, expectedPath) 
       diagnostics: page.__blinkoraDiagnostics,
     });
   }
+}
+
+async function verifyDailyReview(page, content) {
+  await page.goto(new URL('/review', base).toString(), { waitUntil: 'networkidle' });
+  await page.getByText(content, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+
+  const reviewed = waitForTrpcMutation(page, 'notes.reviewNote');
+  await page.getByRole('button', { name: '已回顾', exact: true }).click();
+  const response = await reviewed;
+  assert(response.ok(), 'Daily review request failed.', { status: response.status() });
+  await page.getByText(content, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
 async function editNote(page, originalContent, updatedContent, beforeSave) {
@@ -245,6 +277,72 @@ async function verifyGlobalSearch(page, content) {
   await search.fill(content);
   await page.getByRole('dialog').getByText(content, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   await page.keyboard.press('Escape');
+}
+
+async function verifyAttachmentFilter(page, content) {
+  await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
+  await page.locator('[data-filter-trigger="true"]').click();
+  await page.getByRole('radio', { name: '包含文件', exact: true }).click();
+  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('withFile') === 'true', undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Attachment filter did not reduce the list to the attached Note.');
+
+  const reset = page.getByRole('button', { name: '重置', exact: true });
+  await reset.waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.locator('[data-filter-trigger="true"]').click();
+  await reset.waitFor({ state: 'visible', timeout: 10_000 });
+  await page.waitForTimeout(200);
+  await reset.click();
+  await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('withFile'), undefined, { timeout: 10_000 });
+}
+
+async function createPaginationNotes(page, count) {
+  await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
+  const contents = [];
+  for (let index = 1; index <= count; index += 1) {
+    const content = `browser UI pagination blinkora ${index} ${stamp}`;
+    await createNote(page, '闪念', content, '');
+    contents.push(content);
+  }
+  return contents;
+}
+
+async function verifyPagination(page) {
+  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: '偏好', exact: true }).click();
+
+  const loadModeItem = page.getByText('卡片加载方式', { exact: true }).locator('xpath=../../..');
+  await loadModeItem.getByRole('button').click();
+  const paginationOption = page.getByRole('menuitem').filter({ hasText: '页码分页' });
+  await paginationOption.waitFor({ state: 'visible', timeout: 10_000 });
+  await paginationOption.click({ force: true });
+  await page.waitForFunction(() => localStorage.getItem('noteLoadMode') === '"pagination"', undefined, { timeout: 10_000 });
+
+  const pageSizeItem = page.getByText('每页加载数', { exact: true }).locator('xpath=..');
+  const pageSize = pageSizeItem.locator('input[type="number"][min="10"][max="100"]');
+  await pageSize.fill('10');
+  await page.waitForFunction(() => localStorage.getItem('pageSize') === '10', undefined, { timeout: 10_000 });
+
+  await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
+  const pagination = page.locator('[data-note-pagination="true"]');
+  await pagination.waitFor({ state: 'visible', timeout: 10_000 });
+  await page.locator('.blinkora-flip-card').first().waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 10,
+    'The first pagination page did not render exactly ten Blinkora cards.');
+
+  const pageTwo = pagination.locator('[data-slot="item"]').filter({ hasText: '2' });
+  assert(await pageTwo.count() === 1, 'Pagination did not render exactly one page-two button.', {
+    controls: await pagination.locator('[data-slot="item"]').allTextContents(),
+  });
+  await pageTwo.click();
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 1, undefined, { timeout: 10_000 });
+
+  await page.goto(new URL('/?page=999', base).toString(), { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('page'), undefined, { timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 10, undefined, { timeout: 10_000 });
 }
 
 function noteCard(page, content) {
@@ -547,17 +645,24 @@ try {
 
   await registerAndSignIn(page);
   await createAndSelectWorkspace(page, workspace);
-  await createNote(page, '闪念', '闪念', blinkora, '');
-  await createNote(page, '闪念', '笔记', note, 'path=notes');
-  await createNote(page, '笔记', '待办', todo, 'path=todo');
+  await createNote(page, '闪念', blinkora, '');
+  await verifyDailyReview(page, blinkora);
+  await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
+  await waitForApp(page);
+  await createNote(page, '笔记', note, 'path=notes');
+  await createNote(page, '待办', todo, 'path=todo');
+  const paginationBlinkoras = await createPaginationNotes(page, 10);
+  await verifyPagination(page);
   await verifyGlobalSearch(page, blinkora);
   await editNote(page, note, updatedNote, async () => {
     await attachFileToEditedNote(page, attachmentName);
     await addReferenceToEditedNote(page, blinkora);
   });
   await verifyTodoCompletion(page, todo);
-  await verifyCardStateActions(page, updatedNote, blinkora);
+  await verifyCardStateActions(page, updatedNote, paginationBlinkoras[0]);
   await verifyComment(page, updatedNote, comment);
+  await verifyAttachmentFilter(page, updatedNote);
+  await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
   await moveCardToDefaultWorkspace(page, updatedNote);
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyMovedCardData(page, updatedNote, comment);
@@ -565,7 +670,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation, global search, resource folder rename/nesting/delete; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation, attachment filter/reset, pagination/out-of-range reset, global search, resource folder rename/nesting/delete; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
