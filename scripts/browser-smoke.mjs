@@ -292,6 +292,19 @@ async function verifyGlobalSearch(page, content) {
   await page.keyboard.press('Escape');
 }
 
+async function verifyGlobalResourceSearch(page, resourceName) {
+  await page.getByRole('button', { name: /搜索/ }).click();
+  const search = page.locator('[aria-label="global-search"]');
+  await search.waitFor({ state: 'visible', timeout: 10_000 });
+  await search.fill(resourceName);
+  const dialog = page.getByRole('dialog');
+  const resourceSection = dialog.getByRole('heading', { name: '资源', exact: true }).locator('xpath=../..');
+  await resourceSection.waitFor({ state: 'visible', timeout: 10_000 });
+  const displayName = resourceName.replace(/\.[^.]+$/, '');
+  await resourceSection.getByText(displayName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await page.keyboard.press('Escape');
+}
+
 async function verifyAttachmentFilter(page, content) {
   await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
   await page.locator('[data-filter-trigger="true"]').click();
@@ -785,6 +798,7 @@ try {
     siblingFolder,
     siblingFolderWithPrefix,
   });
+  await verifyGlobalResourceSearch(page, attachmentName);
   await switchWorkspace(page, '默认工作区', workspace);
   await verifyPaginationAfterDeletion(page, blinkora, paginationBlinkoras[1]);
   await switchWorkspace(page, workspace, '默认工作区');
