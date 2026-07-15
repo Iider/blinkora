@@ -255,7 +255,6 @@ export class UserStore implements Store {
 
   handleToken(tokenData: TokenData | null, successCallback?: () => void) {
     const location = window.location;
-    console.log('handleToken', tokenData);
 
     if (tokenData && (tokenData.user || tokenData.token)) {
       if (tokenData.token && (!tokenData.user || !tokenData.user.id)) {
@@ -281,7 +280,6 @@ export class UserStore implements Store {
         successCallback();
       }
     } else {
-      console.log('clearing user token');
       this.clear();
 
       const pathname = location.pathname;

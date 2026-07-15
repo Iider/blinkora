@@ -1,4 +1,4 @@
-import { ReactNode, Component, ErrorInfo } from 'react';
+import { ReactNode, Component } from 'react';
 import React from 'react'
 import { ShaderGradientCanvas, ShaderGradient } from '@shadergradient/react';
 import * as reactSpring from '@react-spring/three'
@@ -11,10 +11,6 @@ class GradientErrorBoundary extends Component<{ children: ReactNode }> {
   
   static getDerivedStateFromError() {
     return { hasError: true };
-  }
-  
-  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.log('ShaderGradient error caught:', error, errorInfo);
   }
   
   render() {
@@ -86,4 +82,4 @@ export const GradientBackground = ({ children, className }: GradientBackgroundPr
       </div>
     </div>
   );
-}; 
+};

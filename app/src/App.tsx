@@ -130,10 +130,8 @@ const ProtectedRoute = ({ children }) => {
       const isPublicRoute = publicRoutes.some(route => location.pathname === route);
       if (!userStore.isLogin && !isPublicRoute) {
         const tokenData = await getTokenData();
-        console.log('tokenData', tokenData);
 
         if (!tokenData?.user?.id) {
-          console.log('No valid token, redirecting to login page');
           navigate('/signin', { replace: true });
         }
       }

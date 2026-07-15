@@ -148,8 +148,6 @@ export const MyCamera = ({ onComplete }: MyCameraProps) => {
                 setShowBlackScreen(false);
                 videoTrack.applyConstraints(videoConstraints);
               }, 300);
-
-              // console.log("image src:", imageSrc);
             }
           });
         }

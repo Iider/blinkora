@@ -33,7 +33,6 @@ export const Sidebar = observer(({ onItemClick }: SidebarProps) => {
   };
 
   useEffect(() => {
-    console.log('router.query');
     if (!isPc) {
       base.collapseSidebar();
     }

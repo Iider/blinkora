@@ -88,7 +88,6 @@ const useAudioRecorder: (
     hasStoppedRef.current = false;
 
     try {
-      console.log("Requesting microphone permission...");
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: audioTrackConstraints ? audioTrackConstraints : {
           echoCancellation: true,
@@ -97,23 +96,14 @@ const useAudioRecorder: (
         }
       });
       
-      // Save stream reference for later cleanup
       mediaStreamRef.current = stream;
 
-      // Cache microphone permission
       localStorage.setItem('microphone_permission_granted', 'true');
 
-      console.log("Microphone access granted, tracks:", stream.getAudioTracks().length);
-      const audioTrack = stream.getAudioTracks()[0];
-      if (audioTrack) {
-        console.log("Track settings:", audioTrack.getSettings());
-      }
-      
       setIsRecording(true);
       
       let options: MediaRecorderOptions = mediaRecorderOptions || {};
       if (!options.mimeType) {
-        // Try different MIME types
         const mimeTypes = [
           'audio/webm;codecs=opus',
           'audio/webm',
@@ -125,32 +115,26 @@ const useAudioRecorder: (
         for (const type of mimeTypes) {
           if (!type || MediaRecorder.isTypeSupported(type)) {
             options.mimeType = type;
-            console.log("Using MIME type:", type || "default");
             break;
           }
         }
       }
 
-      // Set appropriate bitrate for better quality
       if (!options.audioBitsPerSecond) {
         options.audioBitsPerSecond = 128000; // 128kbps
       }
 
-      console.log("Creating MediaRecorder...");
       const recorder = new MediaRecorder(stream, options);
       const dataChunks: Blob[] = [];
       
       recorder.ondataavailable = (event) => {
-        console.log("Data chunk received:", event.data.size, "bytes");
         if (event.data && event.data.size > 0) {
           dataChunks.push(event.data);
         }
       };
       
       recorder.onstop = () => {
-        console.log("Recording stopped, data chunks:", dataChunks.length);
         const blob = new Blob(dataChunks, { type: options.mimeType || 'audio/webm' });
-        console.log("Final blob created:", blob.size, "bytes, type:", blob.type);
         setRecordingBlob(blob);
         
         // Only auto-cleanup resources if not manually stopped to avoid duplicated cleanup
@@ -167,7 +151,6 @@ const useAudioRecorder: (
       
       // Set more frequent data collection for better visualization
       recorder.start(100); // Collect data every 100ms
-      console.log("MediaRecorder started, state:", recorder.state);
       
       setMediaRecorder(recorder);
       _startTimer();
@@ -207,13 +190,11 @@ const useAudioRecorder: (
    * Calling this method results in a recording in progress being stopped and the resulting audio being present in `recordingBlob`. Sets `isRecording` to false
    */
   const stopRecording: () => void = useCallback(() => {
-    console.log("Attempting to stop recording, MediaRecorder state:", mediaRecorder?.state);
     hasStoppedRef.current = true;
     
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       try {
         mediaRecorder.stop();
-        console.log("MediaRecorder.stop() called");
       } catch (err) {
         console.error("Failed to stop recording:", err);
       }
@@ -226,7 +207,6 @@ const useAudioRecorder: (
     setIsRecording(false);
     setIsPaused(false);
     
-    // Manual cleanup of resources
     cleanupResources();
   }, [
     mediaRecorder,
@@ -247,7 +227,6 @@ const useAudioRecorder: (
     }
     
     if (isPaused) {
-      console.log("Resuming recording");
       setIsPaused(false);
       try {
         mediaRecorder.resume();
@@ -256,7 +235,6 @@ const useAudioRecorder: (
         console.error("Failed to resume recording:", err);
       }
     } else {
-      console.log("Pausing recording");
       setIsPaused(true);
       _stopTimer();
       try {

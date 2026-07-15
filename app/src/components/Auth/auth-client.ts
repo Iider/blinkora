@@ -83,7 +83,6 @@ export async function signIn(
 ): Promise<SignInResponse | undefined> {
   try {
     if (provider === 'credentials') {
-      console.log('signIn Endpoint', getBlinkoraEndpoint('/api/auth/login'));
       const response = await fetch(getBlinkoraEndpoint('/api/auth/login'), {
         method: 'POST',
         headers: { 

@@ -200,7 +200,6 @@ export class BlinkoraStore implements Store {
   upsertNote = new PromiseState({
     eventKey: 'upsertNote',
     function: async (params: UpsertNoteParams) => {
-      console.log("upsertNote", params)
       const {
         content = null,
         isArchived,
@@ -445,7 +444,6 @@ export class BlinkoraStore implements Store {
     function: async () => {
       const falttenTags = await api.tags.list.query(undefined, { context: { skipBatch: true } });
       const listTags = helper.buildHashTagTreeFromDb(falttenTags)
-      console.log(falttenTags, 'listTags')
       let pathTags: string[] = [];
       listTags.forEach(node => {
         pathTags = pathTags.concat(helper.generateTagPaths(node));
@@ -590,14 +588,12 @@ export class BlinkoraStore implements Store {
   use() {
     useEffect(() => {
       if (RootStore.Get(UserStore).id) {
-        console.log('firstLoad', RootStore.Get(UserStore).id)
         this.firstLoad()
       }
     }, [RootStore.Get(UserStore).id])
 
     useEffect(() => {
       if (this.updateTicker == 0) return
-      console.log('updateTicker', this.updateTicker)
       this.refreshData()
     }, [this.updateTicker])
   }

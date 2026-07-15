@@ -99,9 +99,7 @@ export const MyAudioRecorder = ({ onComplete }: MyAudioRecorderProps) => {
         animationFrameRef.current = requestAnimationFrame(updateAudioLevel);
       };
 
-      // Start animation immediately
       animationFrameRef.current = requestAnimationFrame(updateAudioLevel);
-      console.log("Audio visualization started");
     } catch (error) {
       console.error("Failed to setup audio analyzer:", error);
     }

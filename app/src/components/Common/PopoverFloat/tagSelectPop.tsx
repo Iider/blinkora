@@ -74,7 +74,6 @@ const TagSelect = observer(() => {
           const selectedTag = store.tagList[store.selectedIndex]
           if (selectedTag) {
             store.hidden()
-            console.log('selectedTag', selectedTag)
             eventBus.emit('editor:replace', selectedTag, true)
           }
           break

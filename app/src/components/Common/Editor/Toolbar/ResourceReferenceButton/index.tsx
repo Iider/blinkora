@@ -44,8 +44,6 @@ export const ResourceReferenceButton = observer(({ store }: Props) => {
     const extension = helper.getFileExtension(attachment.name) as string;
     const previewType = helper.getFileType(attachment.type as string, attachment.name);
 
-    // Create a FileType object from the attachment
-    console.log('attachment', attachment);
     const file: any = {
       name: attachment.name,
       size: Number(attachment.size),

@@ -71,9 +71,7 @@ export const checkMicrophonePermission = async (): Promise<boolean> => {
           localStorage.removeItem('microphone_permission_granted');
           return false;
         }
-      } catch (error) {
-        console.log('Permission API does not support microphone query:', error);
-      }
+      } catch {}
     }
 
     return false;

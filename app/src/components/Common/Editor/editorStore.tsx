@@ -372,10 +372,8 @@ export class EditorStore {
 
   addReference = (id: number) => {
     if (!this.references.includes(id)) {
-      // console.log('addReference', id)
       this.references.push(id)
       this.noteListByIds.call({ ids: this.references })
-      // console.log('addReference', this.references)
     }
   }
 
