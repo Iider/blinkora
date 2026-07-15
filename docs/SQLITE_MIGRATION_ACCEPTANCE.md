@@ -17,6 +17,7 @@
 | 事务与并发 | 单进程写门控覆盖 tRPC、MCP 转发、备份导入和文件写入；10 客户端实际持续 300 秒，完成 2,970 次写入和 990 次读取，种子笔记历史版本连续 990 条；无 `database is locked`、非预期 5xx 或 orphan。完整脚本见 `scripts/sqlite-concurrency.mjs`。 |
 | 2,000 ID 批量路径 | `bun run test:sqlite-bulk` 实测 2,000 条记录的更新、跨 Workspace 移动、导出与删除。 |
 | 接口 smoke | `smoke:rust` 和 `smoke:agent` 均在恢复后的 SQLite 数据目录通过。另以 MinIO 启动真实 S3-compatible 服务完成 `smoke:rust` 的 S3 分支（配置校验、上传、读取、移动、删除、目录删除与切回本地存储）。覆盖登录、Workspace、笔记、历史、标签、评论、附件、导入导出、MCP 和 Agent token。 |
+| 真实云 S3 | 已在阿里云 OSS 北京区域的隔离前缀执行 `bun run smoke:s3`，全程不使用 Docker。临时原生 SQLite 实例完成 S3 配置校验、上传、读取、移动、删除及回退本地存储；临时数据库和测试对象均已清理，凭据未写入日志或仓库。 |
 | 两步验证登录 | 隔离 Docker 实例执行 `bun run test:sqlite-2fa`：REST 和 tRPC 登录在启用后只返回验证挑战，错误验证码返回 401，正确验证码才签发会话；脚本完成后关闭两步验证并恢复普通登录。浏览器也实际验证了“设置启用 → 退出 → 验证码登录 → 关闭后普通登录”。 |
 | 双后端差分 | PostgreSQL 14.23 的全新夹具迁移到隔离 SQLite 后，`test:postgres-sqlite-contract` 覆盖注册表中的 74/74 procedure：19 项确定性结果逐值相等、3 项原本未排序列表按集合相等、36 项随机/写入返回结构相等、16 项业务错误 envelope 相等。实际对照 `/health`、已有附件逐字下载、认证成功/失败与未认证分支、文件上传/读取/删除、备份导入错误分支，以及 MCP 未认证路由、`initialize`、`tools/list`、上下文、详情、搜索、标签树和操作日志。MCP 的即时 UTC 字段和 JSON 文本镜像按明确规则归一化，其他字段逐值相等；最终 SQLite `integrity_check=ok`、`foreign_key_check=0`。同一实跑覆盖 ASCII 大小写、中文、Emoji、`@`、`%`、`_` 六类搜索；每类均只命中目标笔记，不命中干扰笔记，PostgreSQL 与 SQLite 成员关系一致。 |
 | 真实无损迁移 | PostgreSQL 14.23 实际迁移，14 张表逐表行数与规范化 SHA-256 均相等；最终夹具包含账号、Workspace、笔记、标签关系、附件、历史、引用、评论、配置、字体 BLOB、工作区令牌、操作日志与 cache。迁移保留快照，目标在临时 SQLite 文件验证后原子切换。 |
@@ -37,7 +38,6 @@
 
 ## 待验 / 阻断发布
 
-- 已在真实 S3-compatible MinIO 服务验证附件链路；`bun run smoke:s3` 现在强制要求完整凭据与隔离实例确认。尚未使用第三方云厂商账户执行该命令。
 - 桌面和移动端核心浏览器 smoke 已完成，且已覆盖登录/两步验证、Workspace 创建/切换/链接移动、三类笔记新建、单条 Blinkora 编辑持久化、置顶/归档/回收/恢复、评论新增、标签树、全局搜索、资源目录嵌套、链接高级筛选/重置、每日回顾标记与操作日志读取；完整数据浏览器清单仍未逐项执行。仍需覆盖三类笔记编辑与历史、分页、引用、评论树、附件与资源目录全部动作、完整高级筛选、设置/S3、字体、导入导出以及 MCP/Agent 的全部 UI 路径。
 - 飞牛实际机器的 systemd 安装、更新、启动、停止和卸载尚未执行；已有单服务部署说明，但不能用 Linux Docker 构建结果代替飞牛实机验收。
 
