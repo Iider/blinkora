@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 
 const postgresBase = process.env.BLINKORA_POSTGRES_BASE_URL || '';
@@ -30,10 +31,13 @@ async function request(base, route, options = {}) {
   try {
     json = body ? JSON.parse(body) : null;
   } catch {
-    // All benchmarked endpoints are JSON; preserve raw text for an actionable error.
+    // All benchmarked endpoints are JSON; report only a digest if one is not.
   }
   if (!response.ok || json?.error) {
-    throw new Error(`${options.method || 'GET'} ${route} failed (${response.status}): ${body.slice(0, 500)}`);
+    const bodyHash = createHash('sha256').update(body).digest('hex');
+    throw new Error(
+      `${options.method || 'GET'} ${route} failed (${response.status}); response-bytes=${Buffer.byteLength(body)}; sha256=${bodyHash}`,
+    );
   }
   return { elapsedMs, json };
 }
@@ -110,49 +114,76 @@ async function runEndpoint(label, postgresCall, sqliteCall) {
 async function main() {
   const [postgresToken, sqliteToken] = await Promise.all([login(postgresBase), login(sqliteBase)]);
   const [postgresList, sqliteList] = await Promise.all([
-    trpc(postgresBase, 'notes.list', { page: 1, size: 50 }, postgresToken, 'GET'),
-    trpc(sqliteBase, 'notes.list', { page: 1, size: 50 }, sqliteToken, 'GET'),
+    trpc(postgresBase, 'notes.list', { page: 1, size: 200 }, postgresToken, 'GET'),
+    trpc(sqliteBase, 'notes.list', { page: 1, size: 200 }, sqliteToken, 'GET'),
   ]);
-  const postgresNote = postgresList.value?.[0];
-  const sqliteNote = sqliteList.value?.find((item) => item.id === postgresNote?.id);
+  const sqliteNotes = new Map((sqliteList.value || []).map((note) => [note.id, note]));
+  const postgresNote = postgresList.value?.find((note) => {
+    const sqliteNote = sqliteNotes.get(note.id);
+    return (
+      Number.isInteger(note.id)
+      && typeof note.content === 'string'
+      && note.content.trim().length > 0
+      && sqliteNote?.content === note.content
+      && sqliteNote?.type === note.type
+    );
+  });
+  const sqliteNote = sqliteNotes.get(postgresNote?.id);
   if (!postgresNote?.id || !sqliteNote?.id) {
-    throw new Error('fixture must contain the same visible note in both backends');
+    throw new Error('fixture must contain the same nonempty visible note in both backends');
   }
   const searchText = String(postgresNote.content || '').trim().slice(0, 24);
-  if (!searchText) throw new Error('fixture note needs nonempty content for the search benchmark');
 
-  const benchmarks = [
-    await runEndpoint(
-      'list',
-      () => trpc(postgresBase, 'notes.list', { page: 1, size: 50, includePageInfo: true }, postgresToken, 'GET').then((item) => item.elapsedMs),
-      () => trpc(sqliteBase, 'notes.list', { page: 1, size: 50, includePageInfo: true }, sqliteToken, 'GET').then((item) => item.elapsedMs),
-    ),
-    await runEndpoint(
-      'detail',
-      () => trpc(postgresBase, 'notes.detail', { id: postgresNote.id }, postgresToken, 'GET').then((item) => item.elapsedMs),
-      () => trpc(sqliteBase, 'notes.detail', { id: postgresNote.id }, sqliteToken, 'GET').then((item) => item.elapsedMs),
-    ),
-    await runEndpoint(
-      'substring-search',
-      () => trpc(postgresBase, 'notes.list', { page: 1, size: 50, searchText }, postgresToken, 'GET').then((item) => item.elapsedMs),
-      () => trpc(sqliteBase, 'notes.list', { page: 1, size: 50, searchText }, sqliteToken, 'GET').then((item) => item.elapsedMs),
-    ),
-    await runEndpoint(
-      'write',
-      (index) => trpc(
+  let benchmarks;
+  try {
+    benchmarks = [
+      await runEndpoint(
+        'list',
+        () => trpc(postgresBase, 'notes.list', { page: 1, size: 50, includePageInfo: true }, postgresToken, 'GET').then((item) => item.elapsedMs),
+        () => trpc(sqliteBase, 'notes.list', { page: 1, size: 50, includePageInfo: true }, sqliteToken, 'GET').then((item) => item.elapsedMs),
+      ),
+      await runEndpoint(
+        'detail',
+        () => trpc(postgresBase, 'notes.detail', { id: postgresNote.id }, postgresToken, 'GET').then((item) => item.elapsedMs),
+        () => trpc(sqliteBase, 'notes.detail', { id: postgresNote.id }, sqliteToken, 'GET').then((item) => item.elapsedMs),
+      ),
+      await runEndpoint(
+        'substring-search',
+        () => trpc(postgresBase, 'notes.list', { page: 1, size: 50, searchText }, postgresToken, 'GET').then((item) => item.elapsedMs),
+        () => trpc(sqliteBase, 'notes.list', { page: 1, size: 50, searchText }, sqliteToken, 'GET').then((item) => item.elapsedMs),
+      ),
+      await runEndpoint(
+        'write',
+        (index) => trpc(
+          postgresBase,
+          'notes.upsert',
+          { id: postgresNote.id, content: `${postgresNote.content}\n<!-- perf-postgres-${index % 2} -->`, type: postgresNote.type },
+          postgresToken,
+        ).then((item) => item.elapsedMs),
+        (index) => trpc(
+          sqliteBase,
+          'notes.upsert',
+          { id: postgresNote.id, content: `${sqliteNote.content}\n<!-- perf-sqlite-${index % 2} -->`, type: sqliteNote.type },
+          sqliteToken,
+        ).then((item) => item.elapsedMs),
+      ),
+    ];
+  } finally {
+    await Promise.all([
+      trpc(
         postgresBase,
         'notes.upsert',
-        { id: postgresNote.id, content: `${postgresNote.content}\n<!-- perf-postgres-${index % 2} -->`, type: postgresNote.type },
+        { id: postgresNote.id, content: postgresNote.content, type: postgresNote.type },
         postgresToken,
-      ).then((item) => item.elapsedMs),
-      (index) => trpc(
+      ),
+      trpc(
         sqliteBase,
         'notes.upsert',
-        { id: postgresNote.id, content: `${sqliteNote.content}\n<!-- perf-sqlite-${index % 2} -->`, type: sqliteNote.type },
+        { id: sqliteNote.id, content: sqliteNote.content, type: sqliteNote.type },
         sqliteToken,
-      ).then((item) => item.elapsedMs),
-    ),
-  ];
+      ),
+    ]);
+  }
   const report = {
     ok: benchmarks.every((item) => item.passes120PercentGate),
     samples,
