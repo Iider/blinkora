@@ -807,6 +807,33 @@ async function verifyOperationLogSettings(page, content) {
   assert(result?.items?.length > 0 && result.items.every(item => item.changedFields?.includes('content')),
     'Operation log content-field filter returned an unrelated record.', result);
   await page.getByText(contentPrefix, { exact: false }).first().waitFor({ state: 'visible', timeout: 10_000 });
+
+  const actorLoad = waitForTrpcQuery(page, 'operationLogs.list');
+  await page.getByLabel('操作者', { exact: true }).click();
+  await page.getByRole('option', { name: '用户', exact: true }).click();
+  const actorResponse = await actorLoad;
+  assert(actorResponse.ok(), 'Operation log user filter request failed.', { status: actorResponse.status() });
+  const actorResult = (await actorResponse.json())?.result?.data?.json;
+  assert(actorResult?.items?.length > 0 && actorResult.items.every(item => item.actor?.type === 'user'),
+    'Operation log user filter returned a non-user record.', actorResult);
+
+  const typeLoad = waitForTrpcQuery(page, 'operationLogs.list');
+  await page.getByLabel('笔记类型', { exact: true }).click();
+  await page.getByRole('option', { name: '笔记', exact: true }).click();
+  const typeResponse = await typeLoad;
+  assert(typeResponse.ok(), 'Operation log note-type filter request failed.', { status: typeResponse.status() });
+  const typeResult = (await typeResponse.json())?.result?.data?.json;
+  assert(typeResult?.items?.length > 0 && typeResult.items.every(item => item.target?.noteType === 1),
+    'Operation log note-type filter returned a non-note record.', typeResult);
+
+  const actionLoad = waitForTrpcQuery(page, 'operationLogs.list');
+  await page.getByLabel('操作', { exact: true }).click();
+  await page.getByRole('option', { name: '更新', exact: true }).click();
+  const actionResponse = await actionLoad;
+  assert(actionResponse.ok(), 'Operation log action filter request failed.', { status: actionResponse.status() });
+  const actionResult = (await actionResponse.json())?.result?.data?.json;
+  assert(actionResult?.items?.length > 0 && actionResult.items.every(item => item.action === 'update'),
+    'Operation log action filter returned a non-update record.', actionResult);
 }
 
 async function verifyBackupImport(page, archive) {
