@@ -414,6 +414,29 @@ async function verifyWithoutTagFilter(page, content) {
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('withoutTag'), undefined, { timeout: 10_000 });
 }
 
+async function verifyDateRangeFilter(page, content) {
+  await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
+  await page.locator('[data-filter-trigger="true"]').click();
+  await page.locator('[data-filter-date-trigger="true"]').click();
+  const calendar = page.getByRole('grid').last();
+  await calendar.waitFor({ state: 'visible', timeout: 10_000 });
+  const focusedDate = calendar.locator('[tabindex="0"]').first();
+  await focusedDate.focus();
+  await focusedDate.press('Enter');
+  await focusedDate.press('ArrowRight');
+  await focusedDate.press('Enter');
+
+  const filteredLoad = waitForTrpcQuery(page, 'notes.list');
+  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  const filteredResponse = await filteredLoad;
+  assert(filteredResponse.ok(), 'Date-range filter request failed.', { status: filteredResponse.status() });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+
+  await page.locator('[data-filter-trigger="true"]').click();
+  await page.getByRole('button', { name: '重置', exact: true }).click();
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+}
+
 async function createFontFixture(page) {
   assert(existsSync(FONT_FIXTURE_PATH), 'macOS system font fixture is missing.', { path: FONT_FIXTURE_PATH });
   const fileSize = statSync(FONT_FIXTURE_PATH).size;
@@ -1386,6 +1409,7 @@ try {
   );
   await switchWorkspace(page, workspace, '默认工作区');
   const todoFilterVisibleContent = `browser UI Markdown task ${stamp}`;
+  await verifyDateRangeFilter(page, updatedNote);
   await createNote(page, '闪念', `- [ ] ${todoFilterVisibleContent}`, '', todoFilterVisibleContent);
   await verifyTodoContentFilter(page, todoFilterVisibleContent);
   await invokeCardMenuAction(page, todoFilterVisibleContent, 'TrashItem', 'notes.trashMany');
@@ -1412,7 +1436,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, date-range/attachment/link/Todo-content/without-tag filters with reset and reload retention where supported, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();

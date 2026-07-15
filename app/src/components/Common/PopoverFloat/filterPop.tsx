@@ -142,7 +142,7 @@ export default function FilterPop() {
               ],
             }}>
               <PopoverTrigger>
-                <div className="flex items-center gap-2 bg-default-100 rounded-lg p-3">
+                <div data-filter-date-trigger="true" className="flex items-center gap-2 bg-default-100 rounded-lg p-3">
                   <Icon icon="solar:calendar-bold" className="text-default-500" width="20" height="20" />
                   <div className="flex items-center gap-2">
                     <span className="text-sm">
