@@ -175,6 +175,7 @@ export default function FilterPop() {
               {t('tag-status')}
             </div>
             <Select
+              aria-label={t('tag-status')}
               value={tagStatus}
               onChange={(e) => setTagStatus(e.target.value)}
               className="w-full"

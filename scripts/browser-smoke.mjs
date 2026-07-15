@@ -365,6 +365,27 @@ async function verifyTodoContentFilter(page, content) {
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('hasTodo'), undefined, { timeout: 10_000 });
 }
 
+async function verifyWithoutTagFilter(page, content) {
+  await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
+  await page.locator('[data-filter-trigger="true"]').click();
+  await page.getByLabel('标签状态', { exact: true }).click();
+  await page.getByRole('option', { name: '不包含标签', exact: true }).click();
+  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('withoutTag') === 'true', undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Without-tag filter did not reduce the list to the untagged fixture.');
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('withoutTag') === 'true', undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Without-tag filter changed after a reload.');
+
+  await page.locator('[data-filter-trigger="true"]').click();
+  await page.getByRole('button', { name: '重置', exact: true }).click();
+  await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('withoutTag'), undefined, { timeout: 10_000 });
+}
+
 async function verifyTagTreeFilter(page, parentTag, childTag, content) {
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
   const tree = page.getByRole('tree', { name: 'directory tree' });
@@ -1223,6 +1244,11 @@ try {
   await verifyTodoContentFilter(page, todoFilterVisibleContent);
   await invokeCardMenuAction(page, todoFilterVisibleContent, 'TrashItem', 'notes.trashMany');
   await deleteRecycledCard(page, todoFilterVisibleContent);
+  const untaggedFilterContent = `browser UI untagged ${stamp}`;
+  await createNote(page, '闪念', untaggedFilterContent, '');
+  await verifyWithoutTagFilter(page, untaggedFilterContent);
+  await invokeCardMenuAction(page, untaggedFilterContent, 'TrashItem', 'notes.trashMany');
+  await deleteRecycledCard(page, untaggedFilterContent);
   await verifyWorkspaceTokenGuide(page);
   await verifyStorageSettings(page);
   const backupWorkspace = `browser UI backup workspace ${stamp}`;
@@ -1233,7 +1259,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
