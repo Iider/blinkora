@@ -596,6 +596,24 @@ async function verifyBackupExport(page) {
   assert(response.ok(), 'Workspace backup export request failed.', { status: response.status() });
   const archive = await download;
   assert(archive.suggestedFilename().toLowerCase().endsWith('.zip'), 'Workspace export did not download a ZIP archive.');
+  return archive;
+}
+
+async function verifyBackupImport(page, archive) {
+  const archivePath = await archive.path();
+  assert(archivePath, 'Workspace export archive was not available for import.');
+  const importInput = page.locator('input[type="file"][accept*=".zip"]');
+  await importInput.waitFor({ state: 'attached', timeout: 10_000 });
+  const imported = page.waitForResponse(
+    response => response.request().method() === 'POST' && response.url().includes('/api/backup/import'),
+    { timeout: 15_000 },
+  );
+  await importInput.setInputFiles(archivePath);
+  const response = await imported;
+  assert(response.ok(), 'Workspace backup import request failed.', { status: response.status() });
+  const result = await response.json();
+  assert(result?.success === true && result.workspaceCount === 1 && result.noteCount === 0,
+    'Workspace backup import did not restore the temporary empty workspace.', result);
 }
 
 function noteCard(page, content) {
@@ -1182,11 +1200,15 @@ try {
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyWorkspaceTokenGuide(page);
   await verifyStorageSettings(page);
-  await verifyBackupExport(page);
+  const backupWorkspace = `browser UI backup workspace ${stamp}`;
+  await createAndSelectWorkspace(page, backupWorkspace);
+  const backupArchive = await verifyBackupExport(page);
+  await verifyBackupImport(page, backupArchive);
+  await switchWorkspace(page, backupWorkspace, '默认工作区');
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
