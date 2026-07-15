@@ -552,6 +552,52 @@ async function restoreRecycledCards(page, contents) {
   }
 }
 
+async function verifyWorkspaceTokenGuide(page) {
+  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
+  const refreshToken = page.getByRole('button', { name: '刷新当前工作区令牌', exact: true });
+  await refreshToken.waitFor({ state: 'visible', timeout: 10_000 });
+  const created = waitForTrpcMutation(page, 'agentTokens.create');
+  await refreshToken.click();
+  const response = await created;
+  assert(response.ok(), 'Create Workspace Agent token request failed.', { status: response.status() });
+  await page.waitForFunction(() => Array.from(document.querySelectorAll('pre')).some((guide) => {
+    const content = guide.textContent ?? '';
+    return content.includes('BLINKORA_AGENT_TOKEN=')
+      && !content.includes('<点击右侧刷新按钮生成工作区令牌>')
+      && content.includes('/sse');
+  }), undefined, { timeout: 10_000 });
+}
+
+async function verifyStorageSettings(page) {
+  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: '存储', exact: true }).click();
+  const localStorage = page.getByRole('button', { name: '本地文件系统', exact: true });
+  await localStorage.waitFor({ state: 'visible', timeout: 10_000 });
+  await localStorage.click();
+  await page.locator('[data-key="s3"]').last().click();
+
+  await page.locator('input[name="s3AccessKeyId"]').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.locator('input[name="s3AccessKeySecret"]').waitFor({ state: 'visible', timeout: 10_000 });
+  const validate = page.getByRole('button', { name: '保存并验证', exact: true });
+  assert(await validate.isDisabled(), 'Empty S3 configuration unexpectedly enabled validation.');
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: '存储', exact: true }).click();
+  await page.getByRole('button', { name: '本地文件系统', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function verifyBackupExport(page) {
+  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: '备份与恢复', exact: true }).click();
+  const exported = waitForTrpcMutation(page, 'task.exportMarkdown');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出', exact: true }).click();
+  const response = await exported;
+  assert(response.ok(), 'Workspace backup export request failed.', { status: response.status() });
+  const archive = await download;
+  assert(archive.suggestedFilename().toLowerCase().endsWith('.zip'), 'Workspace export did not download a ZIP archive.');
+}
+
 function noteCard(page, content) {
   return page.locator('.blinkora-flip-card').filter({ hasText: content });
 }
@@ -1134,10 +1180,13 @@ try {
     blinkoraPaginationContents.filter(content => content !== permanentlyDeletedContent),
   );
   await switchWorkspace(page, workspace, '默认工作区');
+  await verifyWorkspaceTokenGuide(page);
+  await verifyStorageSettings(page);
+  await verifyBackupExport(page);
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
