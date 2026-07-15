@@ -172,7 +172,7 @@ async function createNote(page, currentType, targetType, content, expectedPath) 
   }
 }
 
-async function editNote(page, originalContent, updatedContent) {
+async function editNote(page, originalContent, updatedContent, beforeSave) {
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'commit' });
   await page.waitForFunction(() => window.location.search.includes('path=notes'), undefined, { timeout: 10_000 });
   const card = page.locator('.blinkora-flip-card').filter({ hasText: originalContent });
@@ -192,13 +192,50 @@ async function editNote(page, originalContent, updatedContent) {
   await editEditor.click();
   await page.keyboard.press('End');
   await page.keyboard.insertText(updatedContent.slice(originalContent.length));
+  await beforeSave?.();
+  await saveEditedNote(page);
+}
 
+async function attachFileToEditedNote(page, fileName) {
+  const editorRoot = page.locator('#vditor-edit').locator('xpath=ancestor::*[.//input[@type="file"]][1]');
+  const fileInput = editorRoot.locator('input[type="file"]');
+  await fileInput.waitFor({ state: 'attached', timeout: 10_000 });
+  const uploaded = page.waitForResponse(
+    response => response.request().method() === 'POST' && response.url().includes('/api/file/upload'),
+    { timeout: 15_000 },
+  );
+  await fileInput.setInputFiles({
+    name: fileName,
+    mimeType: 'text/plain',
+    buffer: Buffer.from(`temporary browser smoke attachment ${stamp}`),
+  });
+  const response = await uploaded;
+  assert(response.ok(), 'Upload attachment request failed.', { status: response.status() });
+  await page.getByText(fileName, { exact: true }).last().waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function addReferenceToEditedNote(page, targetContent) {
+  const editorRoot = page.locator('#vditor-edit').locator('xpath=ancestor::*[.//*[@role="button" and @aria-label="引用"]][1]');
+  const reference = editorRoot.getByRole('button', { name: '引用', exact: true });
+  await reference.waitFor({ state: 'visible', timeout: 10_000 });
+  await reference.click();
+
+  const target = await visibleElement(
+    page,
+    page.locator('[data-reference-option="true"]').filter({ hasText: targetContent }),
+    'Reference target',
+  );
+  await target.click();
+  await page.locator('.reference-container').getByText(targetContent, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function saveEditedNote(page) {
   const sendButtons = page.locator('div[class*="w-[60px]"]');
   assert(await sendButtons.count() >= 2, 'Edit mode did not expose its save action.');
   const saved = waitForNoteUpsert(page);
   await sendButtons.last().click();
   const response = await saved;
-  assert(response.ok(), 'Edit note request failed.', { status: response.status() });
+  assert(response.ok(), 'Save edited note request failed.', { status: response.status() });
 }
 
 async function verifyGlobalSearch(page, content) {
@@ -338,6 +375,46 @@ async function verifyComment(page, note, content) {
   await page.keyboard.press('Escape');
 }
 
+async function moveCardToDefaultWorkspace(page, content) {
+  await openCardMenu(page, content);
+  const moveAction = page.locator('[data-key="MoveWorkspaceItem"]').last();
+  await moveAction.waitFor({ state: 'visible', timeout: 10_000 });
+  await moveAction.click();
+
+  const dialog = page.getByRole('dialog').filter({ hasText: '移动卡片到工作区' }).last();
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+
+  const moved = waitForTrpcMutation(page, 'notes.moveToWorkspace');
+  await dialog.getByRole('button', { name: '移动到工作区', exact: true }).click();
+  const response = await moved;
+  assert(response.ok(), 'Move card to default workspace request failed.', { status: response.status() });
+  await dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'hidden', timeout: 10_000 });
+}
+
+async function switchWorkspace(page, currentWorkspace, targetWorkspace) {
+  const current = page.locator('button').filter({ hasText: currentWorkspace }).first();
+  await current.waitFor({ state: 'visible', timeout: 10_000 });
+  await current.click();
+  const target = page.locator('[role="menuitemradio"]').filter({ hasText: targetWorkspace }).last();
+  await target.waitFor({ state: 'visible', timeout: 10_000 });
+  await target.click();
+  await page.locator('button').filter({ hasText: targetWorkspace }).first().waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function verifyMovedCardData(page, note, comment) {
+  await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
+  await noteCard(page, note).waitFor({ state: 'visible', timeout: 10_000 });
+
+  const card = noteCard(page, note);
+  await card.hover();
+  await card.locator('button[data-drag-ignore="true"][aria-label*="评论"]').click();
+  const dialog = page.getByRole('dialog').filter({ hasText: '评论' }).last();
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await dialog.getByText(comment, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await page.keyboard.press('Escape');
+}
+
 async function createFolder(page, folderName) {
   await page.getByRole('button', { name: '新建文件夹', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '新建文件夹' });
@@ -352,19 +429,70 @@ async function createFolder(page, folderName) {
   await page.getByText(folderName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-async function verifyResourceFolders(page, rootFolder, nestedFolder) {
+function resourceEntry(page, folderName) {
+  return page.locator('.group').filter({ hasText: folderName }).first();
+}
+
+async function openResourceMenu(page, folderName) {
+  const entry = resourceEntry(page, folderName);
+  await entry.waitFor({ state: 'visible', timeout: 10_000 });
+  const more = entry.getByRole('button', { name: '更多信息', exact: true });
+  await more.waitFor({ state: 'visible', timeout: 10_000 });
+  await more.click();
+}
+
+async function renameFolder(page, folderName, renamedFolderName) {
+  await openResourceMenu(page, folderName);
+  const rename = page.locator('[data-key="rename"]').last();
+  await rename.waitFor({ state: 'visible', timeout: 10_000 });
+  await rename.click();
+
+  const dialog = page.getByRole('dialog', { name: '重命名' });
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await dialog.locator('input').fill(renamedFolderName);
+  const renamed = waitForTrpcMutation(page, 'attachments.rename');
+  await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  const response = await renamed;
+  assert(response.ok(), 'Rename resource folder request failed.', { status: response.status() });
+  await dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.getByText(renamedFolderName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function deleteFolder(page, folderName) {
+  await openResourceMenu(page, folderName);
+  const remove = page.locator('[data-key="delete"]').last();
+  await remove.waitFor({ state: 'visible', timeout: 10_000 });
+  await remove.click();
+
+  const dialog = page.getByRole('dialog', { name: '确认删除' });
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  const deleted = waitForTrpcMutation(page, 'attachments.delete');
+  await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  const response = await deleted;
+  assert(response.ok(), 'Delete resource folder request failed.', { status: response.status() });
+  await dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.getByText(folderName, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
+}
+
+async function verifyResourceFolders(page, rootFolder, renamedRootFolder, nestedFolder, disposableFolder) {
   await page.goto(new URL('/resources', base).toString(), { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: '新建文件夹', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   await createFolder(page, rootFolder);
+  await renameFolder(page, rootFolder, renamedRootFolder);
 
-  await page.getByText(rootFolder, { exact: true }).click();
+  await page.getByText(renamedRootFolder, { exact: true }).click();
   await page.waitForFunction(
     (folder) => new URLSearchParams(window.location.search).get('folder') === folder,
-    rootFolder,
+    renamedRootFolder,
     { timeout: 10_000 },
   );
   await page.getByText('根目录', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   await createFolder(page, nestedFolder);
+
+  await page.getByText('根目录', { exact: true }).click();
+  await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('folder'), undefined, { timeout: 10_000 });
+  await createFolder(page, disposableFolder);
+  await deleteFolder(page, disposableFolder);
 }
 
 async function verifyMobile(browser, diagnostics) {
@@ -405,13 +533,17 @@ const diagnostics = createDiagnostics(page, 'desktop');
 
 try {
   const blinkora = `browser UI blinkora ${stamp}`;
-  const note = `browser UI note ${stamp}`;
+  const tag = `browser_smoke_tag_${stamp.replace(/[^a-zA-Z0-9]/g, '')}`;
+  const note = `browser UI note ${stamp} #${tag}`;
   const todo = `browser UI todo ${stamp}`;
   const updatedNote = `${note} (edited)`;
   const workspace = `browser UI workspace ${stamp}`;
   const rootFolder = `browser UI folder ${stamp}`;
+  const renamedRootFolder = `browser UI folder renamed ${stamp}`;
   const nestedFolder = `browser UI nested folder ${stamp}`;
+  const disposableFolder = `browser UI disposable folder ${stamp}`;
   const comment = `browser UI comment ${stamp}`;
+  const attachmentName = `browser-ui-attachment-${stamp}.txt`;
 
   await registerAndSignIn(page);
   await createAndSelectWorkspace(page, workspace);
@@ -419,15 +551,21 @@ try {
   await createNote(page, '闪念', '笔记', note, 'path=notes');
   await createNote(page, '笔记', '待办', todo, 'path=todo');
   await verifyGlobalSearch(page, blinkora);
-  await editNote(page, note, updatedNote);
+  await editNote(page, note, updatedNote, async () => {
+    await attachFileToEditedNote(page, attachmentName);
+    await addReferenceToEditedNote(page, blinkora);
+  });
   await verifyTodoCompletion(page, todo);
   await verifyCardStateActions(page, updatedNote, blinkora);
   await verifyComment(page, updatedNote, comment);
-  await verifyResourceFolders(page, rootFolder, nestedFolder);
+  await moveCardToDefaultWorkspace(page, updatedNote);
+  await switchWorkspace(page, workspace, '默认工作区');
+  await verifyMovedCardData(page, updatedNote, comment);
+  await verifyResourceFolders(page, rootFolder, renamedRootFolder, nestedFolder, disposableFolder);
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, workspace creation and switch, three note types, edit/history, Todo complete/restore, pin/archive/recycle/restore, annotation, global search, nested resource folders; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation, global search, resource folder rename/nesting/delete; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();

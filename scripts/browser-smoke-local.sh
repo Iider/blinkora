@@ -90,6 +90,29 @@ EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE '%
   echo "error: browser smoke could not find the edited Note" >&2
   exit 1
 }
+MOVED_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT \"workspaceId\" FROM notes WHERE id = $EDITED_NOTE_ID;")"
+DEFAULT_WORKSPACE_ID="$(sqlite3 "$DB_PATH" 'SELECT id FROM workspaces WHERE "isDefault"=1 LIMIT 1;')"
+SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name LIKE 'browser UI workspace %' LIMIT 1;")"
+[[ -n "$MOVED_WORKSPACE_ID" && "$MOVED_WORKSPACE_ID" == "$DEFAULT_WORKSPACE_ID" && "$MOVED_WORKSPACE_ID" != "$SOURCE_WORKSPACE_ID" ]] || {
+  echo "error: browser smoke did not move the edited Note to the default Workspace" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"noteHistory\" WHERE \"noteId\"=$EDITED_NOTE_ID AND \"workspaceId\"=$MOVED_WORKSPACE_ID;")" -ge 1 ]] || {
+  echo "error: browser smoke did not move Note history with the edited Note" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM comments WHERE \"noteId\"=$EDITED_NOTE_ID AND \"workspaceId\"=$MOVED_WORKSPACE_ID;")" == "1" ]] || {
+  echo "error: browser smoke did not move the Note comment with the edited Note" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM attachments WHERE \"noteId\"=$EDITED_NOTE_ID AND \"workspaceId\"=$MOVED_WORKSPACE_ID AND name LIKE 'browser-ui-attachment-%';")" == "1" ]] || {
+  echo "error: browser smoke did not move the Note attachment with the edited Note" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"tagsToNote\" t JOIN tag g ON g.id=t.\"tagId\" WHERE t.\"noteId\"=$EDITED_NOTE_ID AND g.\"workspaceId\"=$MOVED_WORKSPACE_ID;")" -ge 1 ]] || {
+  echo "error: browser smoke did not keep the edited Note tag in the target Workspace" >&2
+  exit 1
+}
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"noteHistory\" WHERE \"noteId\" = $EDITED_NOTE_ID;")" -ge 1 ]] || {
   echo "error: browser smoke did not persist a history version for the edited Note" >&2
   exit 1
@@ -118,8 +141,8 @@ EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE '%
   echo "error: browser smoke did not persist its selected Workspace" >&2
   exit 1
 }
-[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM attachments WHERE name = '.folder' AND \"perfixPath\" LIKE 'browser UI folder %';")" == "2" ]] || {
-  echo "error: browser smoke did not persist its root and nested resource folders" >&2
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM attachments WHERE name = '.folder' AND \"perfixPath\" LIKE 'browser UI folder renamed %';")" == "2" ]] || {
+  echo "error: browser smoke did not persist its renamed root and nested resource folders" >&2
   exit 1
 }
 [[ "$(sqlite3 "$DB_PATH" 'SELECT count(*) FROM notes WHERE "isTop"=1;')" == "1" ]] || {

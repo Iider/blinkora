@@ -193,6 +193,7 @@ export const ResourceContextMenu = observer(({ onTrigger }: ResourceContextMenuP
         <Button
           isIconOnly
           variant="light"
+          aria-label={t('more')}
         >
           <Icon icon="mdi:dots-vertical" width="20" height="20" />
         </Button>
@@ -247,4 +248,4 @@ export const ResourceContextMenu = observer(({ onTrigger }: ResourceContextMenuP
       </DropdownMenu>
     </Dropdown>
   );
-}); 
+});

@@ -68,6 +68,11 @@ export const BlinkoraSelectNote = observer(({ iconButton, onSelect, blackList = 
           {blinkora.referenceSearchList?.value?.map((item) => (
             <div
               key={item.id}
+              role="button"
+              aria-label={item.content}
+              aria-disabled={blackList.includes(item.id)}
+              data-reference-option="true"
+              tabIndex={blackList.includes(item.id) ? -1 : 0}
               className={`flex flex-col w-full bg-background hover:bg-hover rounded-md cursor-pointer p-1
                 ${blackList.includes(item.id) ? 'opacity-50 pointer-events-none' : ''}`}
               onClick={() => {
@@ -77,6 +82,11 @@ export const BlinkoraSelectNote = observer(({ iconButton, onSelect, blackList = 
                   }
                   onSelect(item);
                 }
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                event.currentTarget.click();
               }}
             >
               <div className="flex flex-col w-full p-1">

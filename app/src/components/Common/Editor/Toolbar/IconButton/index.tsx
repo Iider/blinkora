@@ -17,9 +17,13 @@ export const IconButton = observer(({ tooltip, icon, onClick, classNames, childr
   containerSize?: number
 }) => {
   const { t } = useTranslation()
+  const label = typeof tooltip === 'string' ? t(tooltip) : undefined
   return (
-    <Tooltip content={typeof tooltip == 'string' ? t(tooltip) : tooltip} placement="bottom" delay={300}>
+    <Tooltip content={label ?? tooltip} placement="bottom" delay={300}>
       <motion.div
+        role="button"
+        aria-label={label}
+        tabIndex={0}
         whileTap={{ y: 1 }}
         className={`hover:bg-hover !transition-all duration-200 cursor-pointer rounded-md flex items-center justify-center ${classNames?.base}`}
         style={{
@@ -28,6 +32,11 @@ export const IconButton = observer(({ tooltip, icon, onClick, classNames, childr
         }}
         onClick={e => {
           onClick?.(e)
+        }}
+        onKeyDown={event => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          event.currentTarget.click();
         }}
       >
         {typeof icon === 'string' && icon.includes('svg') ? (
