@@ -81,8 +81,8 @@ bun run smoke:browser
   echo "error: SQLite foreign_key_check reported rows after browser smoke" >&2
   exit 1
 }
-[[ "$(sqlite3 "$DB_PATH" 'SELECT type || "=" || count(*) FROM notes GROUP BY type ORDER BY type;')" == $'0=12\n1=1\n2=1' ]] || {
-  echo "error: browser smoke did not persist its Blinkora pagination fixture, Note, and Todo" >&2
+[[ "$(sqlite3 "$DB_PATH" 'SELECT type || "=" || count(*) FROM notes GROUP BY type ORDER BY type;')" == $'0=12\n1=13\n2=12' ]] || {
+  echo "error: browser smoke did not persist its Blinkora, Note, and Todo pagination fixtures" >&2
   exit 1
 }
 EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE type = 1 AND content LIKE '%(edited)%' LIMIT 1;")"
@@ -90,7 +90,7 @@ EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE type = 1 AND co
   echo "error: browser smoke could not find the edited Note" >&2
   exit 1
 }
-EDITED_BLINKORA_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE 'browser UI pagination blinkora %' AND content LIKE '%edited%' LIMIT 1;")"
+EDITED_BLINKORA_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE 'browser UI blinkora %' AND content LIKE '%edited%' LIMIT 1;")"
 EDITED_BLINKORA_HISTORY_COUNT="0"
 if [[ -n "$EDITED_BLINKORA_ID" ]]; then
   EDITED_BLINKORA_HISTORY_COUNT="$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"noteHistory\" WHERE \"noteId\"=$EDITED_BLINKORA_ID;")"

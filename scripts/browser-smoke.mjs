@@ -370,18 +370,30 @@ async function verifyTagTreeFilter(page, parentTag, childTag, content) {
     'Child tag filter changed after a reload.');
 }
 
-async function createPaginationNotes(page, count) {
-  await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
+function listUrl(path = '', pageNumber) {
+  const url = new URL('/', base);
+  if (path) url.searchParams.set('path', path);
+  if (pageNumber) url.searchParams.set('page', String(pageNumber));
+  return url;
+}
+
+async function createPaginationFixtures(page, {
+  targetType,
+  path,
+  fixtureName,
+  count,
+}) {
+  await page.goto(listUrl(path).toString(), { waitUntil: 'networkidle' });
   const contents = [];
   for (let index = 1; index <= count; index += 1) {
-    const content = `browser UI pagination blinkora ${String(index).padStart(2, '0')} ${stamp}`;
-    await createNote(page, '闪念', content, '');
+    const content = `browser UI pagination ${fixtureName} ${String(index).padStart(2, '0')} ${stamp}`;
+    await createNote(page, targetType, content, path && `path=${path}`);
     contents.push(content);
   }
   return contents;
 }
 
-async function verifyPagination(page, paginationContents) {
+async function configurePagination(page) {
   await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: '偏好', exact: true }).click();
 
@@ -396,13 +408,15 @@ async function verifyPagination(page, paginationContents) {
   const pageSize = pageSizeItem.locator('input[type="number"][min="10"][max="100"]');
   await pageSize.fill('10');
   await page.waitForFunction(() => localStorage.getItem('pageSize') === '10', undefined, { timeout: 10_000 });
+}
 
-  await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
+async function verifyPagination(page, { path, fixtureName, paginationContents }) {
+  await page.goto(listUrl(path).toString(), { waitUntil: 'networkidle' });
   const pagination = page.locator('[data-note-pagination="true"]');
   await pagination.waitFor({ state: 'visible', timeout: 10_000 });
   await page.locator('.blinkora-flip-card').first().waitFor({ state: 'visible', timeout: 10_000 });
   assert(await page.locator('.blinkora-flip-card').count() === 10,
-    'The first pagination page did not render exactly ten Blinkora cards.');
+    `The first pagination page did not render exactly ten ${fixtureName} cards.`);
 
   const pageTwo = pagination.locator('[data-slot="item"]').filter({ hasText: '2' });
   assert(await pageTwo.count() === 1, 'Pagination did not render exactly one page-two button.', {
@@ -418,13 +432,13 @@ async function verifyPagination(page, paginationContents) {
     }
   }
   assert(secondPageContents.length === 2,
-    'Pagination page two did not contain exactly two known Blinkora fixtures.', { secondPageContents });
+    `Pagination page two did not contain exactly two known ${fixtureName} fixtures.`, { secondPageContents });
 
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 2, undefined, { timeout: 10_000 });
 
-  await page.goto(new URL('/?page=999', base).toString(), { waitUntil: 'networkidle' });
+  await page.goto(listUrl(path, 999).toString(), { waitUntil: 'networkidle' });
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('page'), undefined, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 10, undefined, { timeout: 10_000 });
 
@@ -435,12 +449,17 @@ async function verifyPagination(page, paginationContents) {
     }
   }
   assert(currentFirstPageContents.length === 10,
-    'Pagination page one did not contain exactly ten known Blinkora fixtures after out-of-range reset.', { currentFirstPageContents });
+    `Pagination page one did not contain exactly ten known ${fixtureName} fixtures after out-of-range reset.`, { currentFirstPageContents });
   return { firstPageContents: currentFirstPageContents, secondPageContents };
 }
 
-async function verifyPaginationAfterDeletion(page, deletedContent, remainingContent) {
-  await page.goto(new URL('/?page=2', base).toString(), { waitUntil: 'networkidle' });
+async function verifyPaginationAfterDeletion(page, {
+  path,
+  fixtureName,
+  deletedContent,
+  remainingContent,
+}) {
+  await page.goto(listUrl(path, 2).toString(), { waitUntil: 'networkidle' });
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
   const deletedCard = noteCard(page, deletedContent);
   await deletedCard.waitFor({ state: 'visible', timeout: 10_000 });
@@ -448,14 +467,14 @@ async function verifyPaginationAfterDeletion(page, deletedContent, remainingCont
   const trashed = waitForTrpcMutation(page, 'notes.trashMany');
   await deletedCard.getByRole('button', { name: '回收站', exact: true }).click();
   const response = await trashed;
-  assert(response.ok(), 'Delete second-page Blinkora request failed.', { status: response.status() });
+  assert(response.ok(), `Delete second-page ${fixtureName} request failed.`, { status: response.status() });
   await deletedCard.waitFor({ state: 'hidden', timeout: 10_000 });
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
   await noteCard(page, remainingContent).waitFor({ state: 'visible', timeout: 10_000 });
   assert(await page.locator('.blinkora-flip-card').count() === 1,
-    'Deleting a second-page Blinkora did not keep the remaining card on page two.');
+    `Deleting a second-page ${fixtureName} did not keep the remaining card on page two.`);
 
-  await page.goto(new URL('/?path=trash', base).toString(), { waitUntil: 'networkidle' });
+  await page.goto(listUrl('trash').toString(), { waitUntil: 'networkidle' });
   await invokeCardMenuAction(page, deletedContent, 'ArchivedItem');
   await noteCard(page, deletedContent).waitFor({ state: 'hidden', timeout: 10_000 });
 }
@@ -887,22 +906,17 @@ try {
   await waitForApp(page);
   await createNote(page, '笔记', note, 'path=notes');
   await createNote(page, '待办', todo, 'path=todo');
-  const paginationBlinkoras = await createPaginationNotes(page, 11);
-  const paginationPages = await verifyPagination(page, [blinkora, ...paginationBlinkoras]);
-  await verifyGlobalSearch(page, blinkora);
-  const [editableBlinkora, stateActionBlinkora] = paginationPages.firstPageContents;
-  assert(stateActionBlinkora,
-    'Pagination fixture did not provide separate Blinkoras for edit-history and card-state coverage.');
-  const updatedBlinkora = `${editableBlinkora} (edited)`;
-  await editNote(page, editableBlinkora, updatedBlinkora, undefined, '');
+  const updatedBlinkora = `${blinkora} (edited)`;
+  await editNote(page, blinkora, updatedBlinkora, undefined, '');
   await editNote(page, note, updatedNote, async () => {
     await attachFileToEditedNote(page, attachmentName);
-    await addReferenceToEditedNote(page, blinkora);
+    await addReferenceToEditedNote(page, updatedBlinkora);
   });
   const updatedTodo = `${todo} (edited)`;
   await editNote(page, todo, updatedTodo, undefined, 'todo');
   await verifyTodoCompletion(page, updatedTodo);
-  await verifyCardStateActions(page, updatedNote, stateActionBlinkora);
+  await verifyCardStateActions(page, updatedNote, updatedBlinkora);
+  await verifyGlobalSearch(page, updatedBlinkora);
   const commentTree = await verifyCommentTree(page, updatedNote, comment);
   await verifyAttachmentFilter(page, updatedNote);
   await verifyLinkFilter(page, updatedNote);
@@ -925,16 +939,63 @@ try {
   });
   await deleteResource(page, attachmentName);
   await switchWorkspace(page, '默认工作区', workspace);
-  await verifyPaginationAfterDeletion(
-    page,
-    paginationPages.secondPageContents[0],
-    paginationPages.secondPageContents[1],
-  );
+  const paginationBlinkoras = await createPaginationFixtures(page, {
+    targetType: '闪念',
+    path: '',
+    fixtureName: 'blinkora',
+    count: 11,
+  });
+  const paginationNotes = await createPaginationFixtures(page, {
+    targetType: '笔记',
+    path: 'notes',
+    fixtureName: 'note',
+    count: 12,
+  });
+  const paginationTodos = await createPaginationFixtures(page, {
+    targetType: '待办',
+    path: 'todo',
+    fixtureName: 'todo',
+    count: 11,
+  });
+  await configurePagination(page);
+  const paginationPages = await verifyPagination(page, {
+    path: '',
+    fixtureName: 'Blinkora',
+    paginationContents: [updatedBlinkora, ...paginationBlinkoras],
+  });
+  const notePaginationPages = await verifyPagination(page, {
+    path: 'notes',
+    fixtureName: 'Note',
+    paginationContents: paginationNotes,
+  });
+  const todoPaginationPages = await verifyPagination(page, {
+    path: 'todo',
+    fixtureName: 'Todo',
+    paginationContents: [updatedTodo, ...paginationTodos],
+  });
+  await verifyPaginationAfterDeletion(page, {
+    path: '',
+    fixtureName: 'Blinkora',
+    deletedContent: paginationPages.secondPageContents[0],
+    remainingContent: paginationPages.secondPageContents[1],
+  });
+  await verifyPaginationAfterDeletion(page, {
+    path: 'notes',
+    fixtureName: 'Note',
+    deletedContent: notePaginationPages.secondPageContents[0],
+    remainingContent: notePaginationPages.secondPageContents[1],
+  });
+  await verifyPaginationAfterDeletion(page, {
+    path: 'todo',
+    fixtureName: 'Todo',
+    deletedContent: todoPaginationPages.secondPageContents[0],
+    remainingContent: todoPaginationPages.secondPageContents[1],
+  });
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
