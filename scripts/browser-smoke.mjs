@@ -138,7 +138,7 @@ async function createAndSelectWorkspace(page, name) {
   await page.locator('button').filter({ hasText: name }).first().waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-async function createNote(page, targetType, content, expectedPath) {
+async function createNote(page, targetType, content, expectedPath, visibleContent = content) {
   await page.waitForFunction((labels) => labels.some(label => {
     const button = document.querySelector(`#global-editor button[aria-label="${label}"]`);
     return button instanceof HTMLElement && button.offsetParent !== null;
@@ -179,7 +179,7 @@ async function createNote(page, targetType, content, expectedPath) {
   if (expectedPath) {
     await page.waitForFunction(path => window.location.search.includes(path), expectedPath, { timeout: 10_000 });
   }
-  const noteText = page.getByText(content, { exact: true }).first();
+  const noteText = page.getByText(visibleContent, { exact: true }).first();
   try {
     await noteText.waitFor({ state: 'visible', timeout: 10_000 });
   } catch {
@@ -343,6 +343,26 @@ async function verifyLinkFilter(page, content) {
   await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
   assert(await page.locator('.blinkora-flip-card').count() === 1,
     'Link filter changed after a reload.');
+}
+
+async function verifyTodoContentFilter(page, content) {
+  await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
+  await page.locator('[data-filter-trigger="true"]').click();
+  await page.getByRole('radio', { name: '包含待办', exact: true }).click();
+  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('hasTodo') === 'true', undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Todo-content filter did not reduce the list to the checked Todo.');
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('hasTodo') === 'true', undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Todo-content filter changed after a reload.');
+
+  await page.locator('[data-filter-trigger="true"]').click();
+  await page.getByRole('button', { name: '重置', exact: true }).click();
+  await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('hasTodo'), undefined, { timeout: 10_000 });
 }
 
 async function verifyTagTreeFilter(page, parentTag, childTag, content) {
@@ -1198,6 +1218,11 @@ try {
     blinkoraPaginationContents.filter(content => content !== permanentlyDeletedContent),
   );
   await switchWorkspace(page, workspace, '默认工作区');
+  const todoFilterVisibleContent = `browser UI Markdown task ${stamp}`;
+  await createNote(page, '闪念', `- [ ] ${todoFilterVisibleContent}`, '', todoFilterVisibleContent);
+  await verifyTodoContentFilter(page, todoFilterVisibleContent);
+  await invokeCardMenuAction(page, todoFilterVisibleContent, 'TrashItem', 'notes.trashMany');
+  await deleteRecycledCard(page, todoFilterVisibleContent);
   await verifyWorkspaceTokenGuide(page);
   await verifyStorageSettings(page);
   const backupWorkspace = `browser UI backup workspace ${stamp}`;
@@ -1208,7 +1233,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
