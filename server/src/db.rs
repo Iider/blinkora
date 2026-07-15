@@ -525,8 +525,8 @@ mod tests {
         let matches: i64 = sqlx::query_scalar(
             "SELECT blinkora_json_contains($1, $2)",
         )
-        .bind(r#"{"state":"open","nested":{"rank":2},"flags":["a","b"],"active":true,"empty":null}"#)
-        .bind(r#"{"nested":{"rank":2},"flags":["b"],"active":true,"empty":null}"#)
+        .bind(r#"{"state":"open","score":2,"nested":{"rank":2,"label":"ready"},"flags":["a","b"],"active":true,"disabled":false,"empty":null}"#)
+        .bind(r#"{"state":"open","score":2,"nested":{"rank":2,"label":"ready"},"flags":["b"],"active":true,"disabled":false,"empty":null}"#)
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -539,6 +539,14 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(does_not_match, 0);
+
+        let absent_array_member: i64 = sqlx::query_scalar("SELECT blinkora_json_contains($1, $2)")
+            .bind(r#"{"flags":["a","b"]}"#)
+            .bind(r#"{"flags":["missing"]}"#)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(absent_array_member, 0);
 
         let merged: String = sqlx::query_scalar("SELECT blinkora_json_merge($1, $2)")
             .bind(r#"{"nested":{"left":true},"keep":"old"}"#)

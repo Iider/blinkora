@@ -980,8 +980,9 @@ assert(
   Array.isArray(comments)
     && comments.some((item) => item.id === comment.id
       && item.status === 'resolved'
+      && item.metadata?.smoke === true
       && item.metadata?.convertedToTodoId === todo.id),
-  'comments list resolved metadata',
+  'comments list preserves merged metadata after conversion',
   comments,
 );
 
