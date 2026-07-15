@@ -16,10 +16,11 @@ type IProps = {
   isInDialog?: boolean,
   withoutOutline?: boolean,
   initialData?: { file?: File, text?: string },
-  showTopToolbar?: boolean
+  showTopToolbar?: boolean,
+  initialNoteType?: NoteType,
 }
 
-export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDialog, withoutOutline, initialData, showTopToolbar = false }: IProps) => {
+export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDialog, withoutOutline, initialData, showTopToolbar = false, initialNoteType }: IProps) => {
   const { t } = useTranslation();
   const isCreateMode = mode == 'create'
   const blinkora = RootStore.Get(BlinkoraStore)
@@ -157,6 +158,7 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
       withoutOutline={withoutOutline}
       initialData={initialData}
       showTopToolbar={showTopToolbar}
+      initialNoteType={initialNoteType}
       onHeightChange={() => {
         onHeightChange?.(editorRef.current?.clientHeight ?? 75)
         if (editorRef.current) {

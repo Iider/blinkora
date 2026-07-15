@@ -46,6 +46,14 @@ sqlite3 ~/.blinkora/local/data/blinkora.sqlite3 'SELECT COUNT(*) FROM pragma_for
 
 健康接口仅在 SQLite 已打开、schema 已完成且探针成功时返回 `200`。页面打不开时先检查 `bun run deploy:local status`、端口监听和 `~/.blinkora/local/logs/blinkora.err.log`。若数据目录只读、磁盘空间不足、数据库损坏或 schema 版本过新，服务会拒绝提供健康状态；先保留原文件，再根据错误恢复。
 
+需要回归浏览器数据主路径时，在安装了本机 Google Chrome 的 macOS 开发机运行：
+
+```bash
+bun run smoke:browser-local
+```
+
+该命令会重新构建一个临时原生 release，在独立 SQLite 目录中完成桌面和移动登录、三类笔记创建、笔记编辑/历史及全局搜索，并检查浏览器 console、SQLite 完整性、外键和 orphan。它不访问 `6676` 的常驻服务，结束时会删除临时服务、数据和构建目录。
+
 macOS 可能因复制后二进制保留的 Finder provenance 而以 `OS_REASON_CODESIGNING` 终止 `launchd` 服务。`install`、`update` 和 `start` 会清理该元数据并重新进行 ad-hoc 签名；若系统提示缺少 `codesign`，先安装 Xcode Command Line Tools。
 
 ## 物理备份与恢复

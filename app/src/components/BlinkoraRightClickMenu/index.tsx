@@ -202,13 +202,16 @@ export const ShowEditTimeModel = (showExpired: boolean = false) => {
 
 export const ShowEditBlinkoraModel = (size: string = '2xl', mode: 'create' | 'edit' = 'edit', initialData?: { file?: File, text?: string }) => {
   const blinkora = RootStore.Get(BlinkoraStore)
+  const initialNoteType = mode === 'edit'
+    ? toNoteTypeEnum(blinkora.curSelectedNote?.type)
+    : undefined;
   RootStore.Get(DialogStore).setData({
     size: size as any,
     isOpen: true,
     onlyContent: true,
     isDismissable: false,
     showOnlyContentCloseButton: true,
-    content: <BlinkoraEditor isInDialog mode={mode} initialData={initialData} key={`editor-key-${mode}`} onSended={() => {
+    content: <BlinkoraEditor isInDialog mode={mode} initialData={initialData} initialNoteType={initialNoteType} key={`editor-key-${mode}`} onSended={() => {
       RootStore.Get(DialogStore).close()
       blinkora.isCreateMode = false
     }} />

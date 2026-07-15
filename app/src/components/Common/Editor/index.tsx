@@ -28,6 +28,7 @@ import { EditorStore } from "./editorStore";
 import { FullScreenButton } from "./Toolbar/FullScreenButton";
 import { eventBus } from "@/lib/event";
 import { ResourceReferenceButton } from "./Toolbar/ResourceReferenceButton";
+import { type NoteType } from '@shared/lib/types';
 
 //https://ld246.com/guide/markdown
 type IProps = {
@@ -43,10 +44,11 @@ type IProps = {
   hiddenToolbar?: boolean,
   withoutOutline?: boolean,
   initialData?: { file?: File, text?: string },
-  showTopToolbar?: boolean
+  showTopToolbar?: boolean,
+  initialNoteType?: NoteType,
 }
 
-const Editor = observer(({ content, onChange, onSend, isSendLoading, originFiles, originReference = [], mode, onHeightChange, hiddenToolbar = false, withoutOutline = false, initialData, showTopToolbar = false }: IProps) => {
+const Editor = observer(({ content, onChange, onSend, isSendLoading, originFiles, originReference = [], mode, onHeightChange, hiddenToolbar = false, withoutOutline = false, initialData, showTopToolbar = false, initialNoteType }: IProps) => {
   const cardRef = React.useRef(null)
   const isPc = useMediaQuery('(min-width: 768px)')
   const store = useLocalObservable(() => new EditorStore())
@@ -108,7 +110,7 @@ const Editor = observer(({ content, onChange, onSend, isSendLoading, originFiles
     initalContent = initialData.text
   }
 
-  useEditorInit(store, onChange, onSend, mode, originReference, initalContent);
+  useEditorInit(store, onChange, onSend, mode, originReference, initalContent, initialNoteType);
   useEditorEvents(store);
   useEditorFiles(store, blinkora, originFiles);
   useEditorHeight(onHeightChange, blinkora, content, store);

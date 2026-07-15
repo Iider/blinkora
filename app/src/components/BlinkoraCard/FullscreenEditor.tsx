@@ -17,6 +17,7 @@ import { useTranslation } from "react-i18next";
 import { CardActionButtons } from "./cardActions";
 import { NotePropertiesPanel } from "./NotePropertiesPanel";
 import { useIsIOS } from "@/lib/hooks";
+import { toNoteTypeEnum } from '@shared/lib/types';
 
 const EDGE_BACK_GESTURE_WIDTH = 28;
 const EDGE_BACK_MIN_DISTANCE = 72;
@@ -351,6 +352,7 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
     <Tooltip content={t('edit')}>
       <Button
         isIconOnly
+        aria-label={t('edit')}
         variant="light"
         size="sm"
         onPress={handleSwitchToEdit}
@@ -363,6 +365,7 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
     <Tooltip content={t('preview')}>
       <Button
         isIconOnly
+        aria-label={t('preview')}
         variant="light"
         size="sm"
         onPress={handleSwitchToPreview}
@@ -467,6 +470,7 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
               <BlinkoraEditor
                 key={`editor-${blinkoraItem.id}`}
                 mode="edit"
+                initialNoteType={toNoteTypeEnum(activeNote.type)}
                 onSended={handleEditorSended}
                 withoutOutline={true}
                 showTopToolbar={true}

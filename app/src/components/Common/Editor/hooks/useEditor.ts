@@ -206,7 +206,8 @@ export const useEditorInit = (
   onSend: (args: OnSendContentType) => Promise<any>,
   mode: 'create' | 'edit' | 'comment',
   originReference: number[] = [],
-  content: string
+  content: string,
+  initialNoteType?: NoteType,
 ) => {
   const { t } = useTranslation()
   const isPc = useMediaQuery('(min-width: 768px)')
@@ -597,9 +598,12 @@ export const useEditorInit = (
         store.currentTagLabel = ''
       }
     } else {
-      store.noteType = toNoteTypeEnum(blinkora.curSelectedNote?.type)
+      // Dialog and fullscreen editors can be mounted while another card changes
+      // the global selection. Keep the note's type with the editor instance so
+      // a plain content edit never converts NOTE/TODO back to BLINKORA.
+      store.noteType = initialNoteType ?? toNoteTypeEnum(blinkora.curSelectedNote?.type)
     }
-  }, [mode, searchParams.get('path'), searchParams.get('tagId')]);
+  }, [mode, searchParams.get('path'), searchParams.get('tagId'), initialNoteType]);
 };
 
 
