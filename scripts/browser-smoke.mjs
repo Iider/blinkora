@@ -723,6 +723,40 @@ async function verifyFullJsonBackupExport(page) {
     'Full JSON export request did not preserve the selected scope and format.', requestInput);
   const archive = await download;
   assert(archive.suggestedFilename().toLowerCase().endsWith('.zip'), 'Full JSON export did not download a ZIP archive.');
+  return archive;
+}
+
+async function verifyFullJsonBackupImport(page, archive) {
+  const archivePath = await archive.path();
+  assert(archivePath, 'Full JSON export archive was not available for import.');
+  await page.getByLabel('导入模式', { exact: true }).click();
+  await page.getByRole('option', { name: '全量恢复', exact: true }).click();
+  const importInput = page.locator('input[type="file"][accept*=".zip"]');
+  await importInput.waitFor({ state: 'attached', timeout: 10_000 });
+  const imported = page.waitForResponse(
+    response => response.request().method() === 'POST' && response.url().includes('/api/backup/import'),
+    { timeout: 15_000 },
+  );
+  await importInput.setInputFiles(archivePath);
+  const response = await imported;
+  assert(response.ok(), 'Full JSON backup import request failed.', { status: response.status() });
+  const result = await response.json();
+  assert(result?.success === true && result.mode === 'full' && result.workspaceCount > 1,
+    'Full JSON backup import did not create every exported workspace.', result);
+
+  const workspaces = await runTrpcFixtureMutation(page, 'workspaces.list', {});
+  const importedWorkspaceIds = workspaces
+    .filter(workspace => typeof workspace.name === 'string' && workspace.name.startsWith('Imported - '))
+    .map(workspace => workspace.id);
+  assert(importedWorkspaceIds.length === result.workspaceCount,
+    'Full JSON import did not expose every imported workspace for cleanup.', {
+      expected: result.workspaceCount,
+      actual: importedWorkspaceIds.length,
+    });
+  for (const id of importedWorkspaceIds) {
+    const deleted = await runTrpcFixtureMutation(page, 'workspaces.delete', { id });
+    assert(deleted?.success === true, 'Cleaning up an imported full-backup workspace failed.', { id });
+  }
 }
 
 async function verifyBackupImport(page, archive) {
@@ -1343,13 +1377,14 @@ try {
   const backupWorkspace = `browser UI backup workspace ${stamp}`;
   await createAndSelectWorkspace(page, backupWorkspace);
   const backupArchive = await verifyBackupExport(page);
-  await verifyFullJsonBackupExport(page);
+  const fullJsonArchive = await verifyFullJsonBackupExport(page);
+  await verifyFullJsonBackupImport(page, fullJsonArchive);
   await verifyBackupImport(page, backupArchive);
   await switchWorkspace(page, backupWorkspace, '默认工作区');
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
