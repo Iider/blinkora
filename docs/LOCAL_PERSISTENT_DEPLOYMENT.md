@@ -52,7 +52,7 @@ sqlite3 ~/.blinkora/local/data/blinkora.sqlite3 'SELECT COUNT(*) FROM pragma_for
 bun run smoke:browser-local
 ```
 
-该命令会重新构建一个临时原生 release，在独立 SQLite 目录中完成桌面和移动登录、工作区创建并自动切换、三类笔记创建、笔记编辑/历史、全局搜索，以及根目录和嵌套资源目录创建。它检查浏览器 console、SQLite 完整性、外键、orphan 和工作区/目录记录落盘。它不访问 `6676` 的常驻服务，结束时会删除临时服务、数据和构建目录。
+该命令会重新构建一个临时原生 release，在独立 SQLite 目录中完成桌面和移动登录、工作区创建/自动切换/重载后回显、三类笔记创建、笔记编辑与历史、待办完成/恢复、置顶、归档/恢复、回收站/恢复、评论新增、全局搜索，以及根目录和嵌套资源目录创建。它要求浏览器 console 与本机 4xx/5xx 为 0，并检查 SQLite 完整性、外键、连续历史版本、编辑操作日志、orphan 和工作区/目录记录落盘。它不访问 `6676` 的常驻服务，结束时会删除临时服务、数据和构建目录。
 
 macOS 可能因复制后二进制保留的 Finder provenance 而以 `OS_REASON_CODESIGNING` 终止 `launchd` 服务。`install`、`update` 和 `start` 会清理该元数据并重新进行 ad-hoc 签名；若系统提示缺少 `codesign`，先安装 Xcode Command Line Tools。
 

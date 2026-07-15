@@ -208,6 +208,8 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
   errMsg: string = "";
 
   loadingLock = true;
+  private requestVersion = 0;
+  private pendingResetArgs?: Parameters<T>;
 
   toJSON() {
     return {
@@ -235,11 +237,13 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
   private async call(...args: Parameters<T>): Promise<Awaited<U> | undefined> {
     const toast = RootStore.Get(ToastPlugin);
     const base = RootStore.Get(BaseStore);
+    let requestVersion = 0;
 
     try {
       if (this.loadingLock && this.loading.value == true) {
         return
       };
+      requestVersion = ++this.requestVersion;
       this.loading.setValue(true);
       if (args?.[0]) {
         Object.assign(args?.[0], { page: this.page, size: Number(this.size.value) })
@@ -251,6 +255,7 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
       }
       if (!this.isPaginationMode && this.isLoadAll) return this.value
       const res = await this.function.apply(this.context, args);
+      if (requestVersion !== this.requestVersion) return this.value;
       const items = isPageResponse(res) ? res.items : res;
       if (isPageResponse(res)) {
         this.total = Number(res.total ?? items.length) || 0;
@@ -302,6 +307,7 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
       }
       return this.value;
     } catch (error) {
+      if (requestVersion !== this.requestVersion) return this.value;
       if (this.autoAlert && base.isOnline) {
         if (isUnauthorizedError(error)) {
           toast.dismiss();
@@ -318,6 +324,13 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
       }
     } finally {
       this.loading.setValue(false);
+      const pendingResetArgs = this.pendingResetArgs;
+      this.pendingResetArgs = undefined;
+      if (pendingResetArgs) {
+        queueMicrotask(() => {
+          void this.resetAndCall(...pendingResetArgs);
+        });
+      }
     }
   }
 
@@ -325,6 +338,12 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
     this.isLoadAll = false
     this.page = 1
     this.total = 0
+    if (this.loading.value) {
+      // A workspace switch can supersede a still-running list request.
+      this.requestVersion++;
+      this.pendingResetArgs = args;
+      return;
+    }
     //@ts-ignore
     return await this.call(...args)
   }

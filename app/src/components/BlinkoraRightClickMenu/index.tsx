@@ -564,6 +564,7 @@ export const BlinkoraRightClickMenu = observer(() => {
 })
 
 export const LeftCickMenu = observer(({ onTrigger, className }: { onTrigger: () => void, className: string }) => {
+  const { t } = useTranslation()
   const [isDetailPage, setIsDetailPage] = useState(false)
   const blinkora = RootStore.Get(BlinkoraStore)
   const workspaceStore = RootStore.Get(WorkspaceStore)
@@ -585,11 +586,17 @@ export const LeftCickMenu = observer(({ onTrigger, className }: { onTrigger: () 
     ...(!canMoveToWorkspace ? ['MoveWorkspaceItem'] : [])
   ]
 
-  return <Dropdown onOpenChange={e => onTrigger()}>
+  return <Dropdown onOpenChange={() => onTrigger()}>
     <DropdownTrigger >
-      <div data-drag-ignore="true" onClick={onTrigger} className={`${className} text-desc hover:text-primary cursor-pointer hover:scale-1.3 !transition-all`}>
+      <button
+        type="button"
+        aria-label={t('more')}
+        data-drag-ignore="true"
+        onClick={onTrigger}
+        className={`${className} cursor-pointer border-0 bg-transparent p-0 text-desc hover:text-primary hover:scale-1.3 !transition-all`}
+      >
         <Icon icon="fluent:more-vertical-16-regular" width="16" height="16" />
-      </div>
+      </button>
     </DropdownTrigger>
     <DropdownMenu aria-label="Static Actions" disabledKeys={disabledKeys}>
       <DropdownItem key="EditItem" onPress={() => handleEdit(isDetailPage)}><EditItem /></DropdownItem>

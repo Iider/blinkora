@@ -119,6 +119,7 @@ export const CardActionButtons = observer(({
       <Tooltip content={blinkoraItem.isRecycle ? t('delete') : t('trash')} delay={1000}>
         <button
           type="button"
+          aria-label={blinkoraItem.isRecycle ? t('delete') : t('trash')}
           data-drag-ignore="true"
           className={`cursor-pointer border-0 bg-transparent p-0 leading-none text-desc hover:text-red-500 ${actionItemClassName}`}
           onClick={handleDelete}

@@ -85,8 +85,29 @@ bun run smoke:browser
   echo "error: browser smoke did not persist exactly one Blinkora, Note, and Todo" >&2
   exit 1
 }
-[[ "$(sqlite3 "$DB_PATH" 'SELECT count(*) || ":" || max(version) FROM "noteHistory";')" == "1:1" ]] || {
-  echo "error: browser smoke did not persist one complete Note history version" >&2
+EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE '%(edited)%' LIMIT 1;")"
+[[ -n "$EDITED_NOTE_ID" ]] || {
+  echo "error: browser smoke could not find the edited Note" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"noteHistory\" WHERE \"noteId\" = $EDITED_NOTE_ID;")" -ge 1 ]] || {
+  echo "error: browser smoke did not persist a history version for the edited Note" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" '
+  SELECT count(*)
+  FROM (
+    SELECT "noteId"
+    FROM "noteHistory"
+    GROUP BY "noteId"
+    HAVING min(version) <> 1 OR max(version) <> count(*)
+  );
+')" == "0" ]] || {
+  echo "error: browser smoke found non-contiguous Note history versions" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"operationLog\" WHERE \"noteId\" = $EDITED_NOTE_ID;")" -ge 1 ]] || {
+  echo "error: browser smoke did not persist an operation log for the edited Note" >&2
   exit 1
 }
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM notes WHERE content LIKE '%(edited)%';")" == "1" ]] || {
@@ -101,6 +122,18 @@ bun run smoke:browser
   echo "error: browser smoke did not persist its root and nested resource folders" >&2
   exit 1
 }
+[[ "$(sqlite3 "$DB_PATH" 'SELECT count(*) FROM notes WHERE "isTop"=1;')" == "1" ]] || {
+  echo "error: browser smoke did not persist the pinned Note" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" 'SELECT count(*) FROM notes WHERE "isArchived"=1 OR "isRecycle"=1;')" == "0" ]] || {
+  echo "error: browser smoke did not restore all archived and recycled Notes" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM comments WHERE content LIKE 'browser UI comment %';")" == "1" ]] || {
+  echo "error: browser smoke did not persist its annotation" >&2
+  exit 1
+}
 [[ "$(sqlite3 "$DB_PATH" '
   SELECT
     (SELECT count(*) FROM notes n LEFT JOIN workspaces w ON w.id = n."workspaceId" WHERE n."workspaceId" IS NOT NULL AND w.id IS NULL)
@@ -108,7 +141,8 @@ bun run smoke:browser
     + (SELECT count(*) FROM comments c LEFT JOIN notes n ON n.id = c."noteId" WHERE n.id IS NULL)
     + (SELECT count(*) FROM attachments a LEFT JOIN notes n ON n.id = a."noteId" WHERE a."noteId" IS NOT NULL AND n.id IS NULL)
     + (SELECT count(*) FROM "tagsToNote" t LEFT JOIN notes n ON n.id = t."noteId" WHERE n.id IS NULL)
-    + (SELECT count(*) FROM "tagsToNote" t LEFT JOIN tag g ON g.id = t."tagId" WHERE g.id IS NULL);
+    + (SELECT count(*) FROM "tagsToNote" t LEFT JOIN tag g ON g.id = t."tagId" WHERE g.id IS NULL)
+    + (SELECT count(*) FROM "operationLog" o LEFT JOIN notes n ON n.id = o."noteId" WHERE o."noteId" IS NOT NULL AND n.id IS NULL);
 ')" == "0" ]] || {
   echo "error: orphan check failed after browser smoke" >&2
   exit 1

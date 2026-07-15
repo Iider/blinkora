@@ -94,6 +94,7 @@ const AnnotationDialog = observer(({ note }: { note: Note }) => {
                   <Tooltip content={t('delete')} delay={800}>
                     <button
                       type="button"
+                      aria-label={t('delete')}
                       className="ml-auto flex cursor-pointer items-center border-0 bg-transparent p-1 text-desc hover:text-danger"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -170,6 +171,7 @@ export const AnnotationTriggerButton = observer(({
 }) => {
   const { t } = useTranslation();
   const count = (blinkoraItem as any)._count?.comments ?? 0;
+  const label = count ? t('annotations-count', { count }) : t('add-annotation');
 
   const open = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -180,6 +182,7 @@ export const AnnotationTriggerButton = observer(({
     <Tooltip content={count ? t('annotations-count', { count }) : t('add-annotation')} delay={800}>
       <button
         type="button"
+        aria-label={label}
         data-drag-ignore="true"
         className={`flex cursor-pointer items-center border-0 bg-transparent p-0 leading-none text-desc hover:text-primary ${className}`}
         onClick={open}

@@ -2,6 +2,7 @@ import { Icon } from '@/components/Common/Iconify/icons';
 import { SendIcon } from '../../../Icons';
 import { EditorStore } from '../../editorStore';
 import { observer } from 'mobx-react-lite';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   store: EditorStore;
@@ -9,8 +10,14 @@ interface Props {
 }
 
 export const SendButton = observer(({ store, isSendLoading }: Props) => {
+  const { t } = useTranslation();
+
   return (
     <div
+      role="button"
+      aria-label={t('submit')}
+      aria-disabled={isSendLoading || undefined}
+      tabIndex={isSendLoading ? -1 : 0}
       onClick={
         (e) => {
           if(isSendLoading) return
@@ -22,6 +29,11 @@ export const SendButton = observer(({ store, isSendLoading }: Props) => {
         e.stopPropagation()
         if(isSendLoading) return
         store.handleSend()
+      }}
+      onKeyDown={(e) => {
+        if (isSendLoading || (e.key !== 'Enter' && e.key !== ' ')) return;
+        e.preventDefault();
+        store.handleSend();
       }}
     >
       <div

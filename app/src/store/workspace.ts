@@ -134,6 +134,11 @@ export class WorkspaceStore implements Store {
         this.currentWorkspaceId.save(this.workspaceList[0].id);
       }
     }
+
+    // BlinkoraStore can request its first list before the persisted workspace is
+    // available. Announce the resolved workspace so that list is refreshed with
+    // the same workspace header after every authenticated initialization.
+    eventBus.emit('workspace:switched', this.currentWorkspaceId.value);
   }
 
   use() {

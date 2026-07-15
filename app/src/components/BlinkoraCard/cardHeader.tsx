@@ -64,9 +64,11 @@ export const CardHeader = observer(({
       <div className={`relative flex items-center w-full gap-1 ${rightSlotClass} ${isExpanded ? 'text-base' : 'text-xs'}`}>
         {blinkoraItem.type === NoteType.TODO && (
           <Tooltip content={blinkoraItem.isArchived ? t('restore') : t('complete')} delay={1000}>
-            <div
+            <button
+              type="button"
+              aria-label={blinkoraItem.isArchived ? t('restore') : t('complete')}
               data-drag-ignore="true"
-              className="flex items-center cursor-pointer"
+              className="flex cursor-pointer items-center border-0 bg-transparent p-0"
               onClick={handleTodoToggle}
             >
               <Icon
@@ -75,7 +77,7 @@ export const CardHeader = observer(({
                 width="16"
                 height="16"
               />
-            </div>
+            </button>
           </Tooltip>
         )}
 
