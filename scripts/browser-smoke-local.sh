@@ -93,6 +93,14 @@ bun run smoke:browser
   echo "error: browser smoke did not persist the edited Note content" >&2
   exit 1
 }
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM workspaces WHERE name LIKE 'browser UI workspace %';")" == "1" ]] || {
+  echo "error: browser smoke did not persist its selected Workspace" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM attachments WHERE name = '.folder' AND \"perfixPath\" LIKE 'browser UI folder %';")" == "2" ]] || {
+  echo "error: browser smoke did not persist its root and nested resource folders" >&2
+  exit 1
+}
 [[ "$(sqlite3 "$DB_PATH" '
   SELECT
     (SELECT count(*) FROM notes n LEFT JOIN workspaces w ON w.id = n."workspaceId" WHERE n."workspaceId" IS NOT NULL AND w.id IS NULL)

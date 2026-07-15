@@ -73,6 +73,13 @@ function waitForNoteUpsert(page) {
   );
 }
 
+function waitForTrpcMutation(page, procedure) {
+  return page.waitForResponse(
+    response => response.request().method() === 'POST' && response.url().includes(`/api/trpc/${procedure}`),
+    { timeout: 15_000 },
+  );
+}
+
 async function registerAndSignIn(page) {
   await page.goto(new URL('/signup', base).toString(), { waitUntil: 'networkidle' });
   await page.locator('input[name="username"]').fill(user);
@@ -90,6 +97,40 @@ async function registerAndSignIn(page) {
     page.locator('form button').filter({ hasText: '登录' }).click(),
   ]);
   await waitForApp(page);
+}
+
+async function createAndSelectWorkspace(page, name) {
+  const currentWorkspace = page.locator('button').filter({ hasText: '默认工作区' }).first();
+  await currentWorkspace.waitFor({ state: 'visible', timeout: 10_000 });
+  await currentWorkspace.click();
+  await page.locator('[role="menuitemradio"]').filter({ hasText: '管理工作区' }).click();
+
+  const manageDialog = page.getByRole('dialog', { name: '管理工作区' });
+  await manageDialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await manageDialog.getByRole('button', { name: '创建工作区', exact: true }).click();
+
+  const createDialog = page.getByRole('dialog', { name: '创建工作区' });
+  await createDialog.waitFor({ state: 'visible', timeout: 10_000 });
+  const inputs = createDialog.locator('input');
+  await inputs.nth(0).fill(name);
+  await inputs.nth(1).fill('temporary isolated browser smoke workspace');
+
+  const created = waitForTrpcMutation(page, 'workspaces.create');
+  await createDialog.getByRole('button', { name: '创建', exact: true }).click();
+  const response = await created;
+  assert(response.ok(), 'Create workspace request failed.', { status: response.status() });
+  await createDialog.waitFor({ state: 'hidden', timeout: 10_000 });
+
+  const workspaceRadio = manageDialog.locator(`input[type="radio"][aria-label="切换工作区: ${name}"]`);
+  await workspaceRadio.waitFor({ state: 'attached', timeout: 10_000 });
+  await page.waitForFunction((label) => {
+    const input = document.querySelector(`input[type="radio"][aria-label="${label}"]`);
+    return input instanceof HTMLInputElement && input.checked;
+  }, `切换工作区: ${name}`, { timeout: 10_000 });
+
+  await manageDialog.getByRole('button', { name: '取消', exact: true }).click();
+  await manageDialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.locator('button').filter({ hasText: name }).first().waitFor({ state: 'visible', timeout: 10_000 });
 }
 
 async function createNote(page, currentType, targetType, content, expectedPath) {
@@ -154,6 +195,35 @@ async function verifyGlobalSearch(page, content) {
   await page.keyboard.press('Escape');
 }
 
+async function createFolder(page, folderName) {
+  await page.getByRole('button', { name: '新建文件夹', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: '新建文件夹' });
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await dialog.locator('input').fill(folderName);
+
+  const created = waitForTrpcMutation(page, 'attachments.createFolder');
+  await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  const response = await created;
+  assert(response.ok(), 'Create resource folder request failed.', { status: response.status() });
+  await dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.getByText(folderName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function verifyResourceFolders(page, rootFolder, nestedFolder) {
+  await page.goto(new URL('/resources', base).toString(), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: '新建文件夹', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await createFolder(page, rootFolder);
+
+  await page.getByText(rootFolder, { exact: true }).click();
+  await page.waitForFunction(
+    (folder) => new URLSearchParams(window.location.search).get('folder') === folder,
+    rootFolder,
+    { timeout: 10_000 },
+  );
+  await page.getByText('根目录', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await createFolder(page, nestedFolder);
+}
+
 async function verifyMobile(browser, diagnostics) {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -195,17 +265,22 @@ try {
   const note = `browser UI note ${stamp}`;
   const todo = `browser UI todo ${stamp}`;
   const updatedNote = `${note} (edited)`;
+  const workspace = `browser UI workspace ${stamp}`;
+  const rootFolder = `browser UI folder ${stamp}`;
+  const nestedFolder = `browser UI nested folder ${stamp}`;
 
   await registerAndSignIn(page);
+  await createAndSelectWorkspace(page, workspace);
   await createNote(page, '闪念', '闪念', blinkora, '');
   await createNote(page, '闪念', '笔记', note, 'path=notes');
   await createNote(page, '笔记', '待办', todo, 'path=todo');
   await verifyGlobalSearch(page, blinkora);
   await editNote(page, note, updatedNote);
+  await verifyResourceFolders(page, rootFolder, nestedFolder);
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, three note types, note edit, global search; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, workspace creation and switch, three note types, note edit, global search, nested resource folders; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
