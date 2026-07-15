@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 const postgresBase = process.env.BLINKORA_POSTGRES_BASE_URL || '';
@@ -41,14 +42,26 @@ const readProcedures = new Set([
   'workspaces.getDefault',
 ]);
 
-// The PostgreSQL implementation intentionally had no ORDER BY for these
-// lists. They remain value-equivalent sets, not an accidental database-plan
-// ordering contract. Explicitly ordered endpoints stay in strictValueProcedures.
+// The PostgreSQL implementation either had no ORDER BY or no final stable
+// tie-breaker for these lists. They remain value-equivalent sets, not an
+// accidental database-plan ordering contract. Explicitly ordered endpoints
+// stay in strictValueProcedures.
 const setValueProcedures = new Set([
-  'notes.dailyReviewNoteList',
+  'notes.list',
   'notes.listByIds',
   'notes.noteReferenceList',
 ]);
+
+const randomValueProcedures = new Set([
+  'notes.dailyReviewNoteList',
+  'notes.randomNoteList',
+]);
+
+// All persisted rows are compared exactly before the mutation pass. During
+// that pass, these endpoints can also surface rows independently created by
+// the two test requests, whose generated UTC timestamps are intentionally
+// normalized while their remaining values stay exact.
+const generatedTimestampProcedures = new Set(['operationLogs.list']);
 
 const strictValueProcedures = new Set([
   'attachments.list',
@@ -56,15 +69,10 @@ const strictValueProcedures = new Set([
   'fonts.list',
   'fonts.getFontData',
   'fonts.getByName',
-  'notes.list',
-  'notes.listByIds',
   'notes.detail',
-  'notes.dailyReviewNoteList',
   'notes.deleteImpact',
-  'notes.noteReferenceList',
   'notes.getNoteHistory',
   'notes.getNoteVersion',
-  'operationLogs.list',
   'system.serverVersion',
   'system.linkPreview',
   'tags.list',
@@ -80,10 +88,14 @@ const strictValueProcedures = new Set([
 // UTC RFC3339 forms; the cross-backend value comparison below catches any
 // precision drift instead of rejecting the established legacy representation.
 const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}(?:\d{3})?Z$/;
+const unorderedNestedArrayKeys = new Set(['references', 'referencedBy']);
+let randomNoteFixtures = null;
 
 function fail(message, details) {
   const error = new Error(message);
-  error.details = details;
+  // Differential fixtures can contain private notes and credentials. Failure
+  // reports retain useful counts, IDs and hashes without echoing source data.
+  error.details = details === undefined ? null : diagnosticValue(details);
   throw error;
 }
 
@@ -142,7 +154,12 @@ function errorEnvelope(response) {
 }
 
 function redactSecrets(value, key = '') {
-  if (Array.isArray(value)) return value.map((item) => redactSecrets(item));
+  if (Array.isArray(value)) {
+    const items = value.map((item) => redactSecrets(item));
+    return unorderedNestedArrayKeys.has(key)
+      ? items.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+      : items;
+  }
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value)
@@ -152,6 +169,38 @@ function redactSecrets(value, key = '') {
   }
   if (typeof value === 'string' && /token|secret|password|accesskey|secretkey/i.test(key)) {
     return '<redacted>';
+  }
+  return value;
+}
+
+function diagnosticValue(value, key = '') {
+  if (Array.isArray(value)) {
+    const ids = value
+      .map((item) => item?.id)
+      .filter(Number.isInteger);
+    if (value.length > 10) {
+      return {
+        type: 'array',
+        count: value.length,
+        ids: ids.slice(0, 100),
+      };
+    }
+    return value.map((item) => diagnosticValue(item));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([childKey, childValue]) => [childKey, diagnosticValue(childValue, childKey)]),
+    );
+  }
+  if (typeof value === 'string') {
+    if (/token|secret|password|accesskey|secretkey/i.test(key)) return '<redacted>';
+    return {
+      type: 'string',
+      length: value.length,
+      sha256: createHash('sha256').update(value).digest('hex'),
+    };
   }
   return value;
 }
@@ -277,7 +326,12 @@ function sameValue(left, right) {
 }
 
 function normalizeVolatileValue(value, key = '') {
-  if (Array.isArray(value)) return value.map((item) => normalizeVolatileValue(item));
+  if (Array.isArray(value)) {
+    const items = value.map((item) => normalizeVolatileValue(item));
+    return unorderedNestedArrayKeys.has(key)
+      ? items.sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))
+      : items;
+  }
   if (value && typeof value === 'object') {
     return Object.fromEntries(
       Object.entries(value)
@@ -329,6 +383,58 @@ function sameTopLevelSet(left, right) {
   return JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 }
 
+function compareRandomProcedure(procedure, postgresValue, sqliteValue) {
+  if (!randomNoteFixtures) {
+    fail(`${procedure} random-note fixture was not initialized`);
+  }
+
+  const dailyReview = procedure === 'notes.dailyReviewNoteList';
+  const backends = [
+    ['postgres', postgresValue, randomNoteFixtures.postgres],
+    ['sqlite', sqliteValue, randomNoteFixtures.sqlite],
+  ];
+
+  for (const [backend, value, fixture] of backends) {
+    if (!Array.isArray(value)) {
+      fail(`${procedure} must return an array`, { backend, value });
+    }
+    const eligible = new Map(
+      [...fixture].filter(([, note]) => !dailyReview || note.isReviewed === false),
+    );
+    const expectedCount = Math.min(20, eligible.size);
+    if (value.length !== expectedCount) {
+      fail(`${procedure} returned the wrong number of notes`, {
+        backend,
+        expectedCount,
+        actualCount: value.length,
+      });
+    }
+
+    const seen = new Set();
+    for (const note of value) {
+      const id = note?.id;
+      const expected = eligible.get(id);
+      if (!Number.isInteger(id) || seen.has(id) || !expected) {
+        fail(`${procedure} returned an ineligible or duplicate note`, { backend, id });
+      }
+      if (
+        note.isArchived !== false
+        || note.isRecycle !== false
+        || (dailyReview && note.isReviewed !== false)
+        || !sameValue(note, expected)
+      ) {
+        fail(`${procedure} returned an invalid note value`, {
+          backend,
+          id,
+          expected,
+          actual: note,
+        });
+      }
+      seen.add(id);
+    }
+  }
+}
+
 function compareProcedure(procedure, postgres, sqlite) {
   if (postgres.status !== sqlite.status) {
     fail(`${procedure} HTTP status differs`, { postgres: postgres.status, sqlite: sqlite.status });
@@ -346,6 +452,10 @@ function compareProcedure(procedure, postgres, sqlite) {
   const sqliteValue = resultData(sqlite);
   assertUtcFields(postgresValue);
   assertUtcFields(sqliteValue);
+  if (randomValueProcedures.has(procedure)) {
+    compareRandomProcedure(procedure, postgresValue, sqliteValue);
+    return 'random';
+  }
   if (setValueProcedures.has(procedure)) {
     if (!sameTopLevelSet(postgresValue, sqliteValue)) {
       fail(`${procedure} unordered result members differ`, {
@@ -354,6 +464,15 @@ function compareProcedure(procedure, postgres, sqlite) {
       });
     }
     return 'set';
+  }
+  if (generatedTimestampProcedures.has(procedure)) {
+    if (!sameNormalizedValue(postgresValue, sqliteValue)) {
+      fail(`${procedure} generated-value result differs`, {
+        postgres: postgresValue,
+        sqlite: sqliteValue,
+      });
+    }
+    return 'generated-time';
   }
   if (strictValueProcedures.has(procedure)) {
     if (!sameValue(postgresValue, sqliteValue)) {
@@ -436,6 +555,55 @@ function notesFrom(response, label) {
   const notes = resultData(response);
   if (!Array.isArray(notes)) {
     fail(`${label} did not return a note array`, response.json || response.text);
+  }
+  return notes;
+}
+
+async function loadActiveNoteFixture(base, token, label) {
+  const size = 200;
+  const notes = [];
+  let total;
+
+  for (let page = 1; ; page += 1) {
+    const response = await trpc(
+      base,
+      'notes.list',
+      { page, size, includePageInfo: true },
+      token,
+    );
+    if (response.status !== 200) {
+      fail(`${label} fixture page ${page} returned ${response.status}`, response.json || response.text);
+    }
+    const payload = resultData(response);
+    if (!Array.isArray(payload?.items) || !Number.isInteger(payload?.total)) {
+      fail(`${label} fixture page ${page} is malformed`, payload);
+    }
+    if (total === undefined) total = payload.total;
+    if (payload.total !== total) {
+      fail(`${label} fixture total changed while paging`, {
+        page,
+        initialTotal: total,
+        currentTotal: payload.total,
+      });
+    }
+    notes.push(...payload.items);
+    if (notes.length >= total) break;
+    if (payload.items.length === 0 || page > 10_000) {
+      fail(`${label} fixture pagination did not reach its declared total`, {
+        page,
+        total,
+        collected: notes.length,
+      });
+    }
+  }
+
+  const ids = notes.map((note) => note?.id);
+  if (notes.length !== total || ids.some((id) => !Number.isInteger(id)) || new Set(ids).size !== ids.length) {
+    fail(`${label} fixture pagination returned missing or duplicate notes`, {
+      total,
+      collected: notes.length,
+      ids,
+    });
   }
   return notes;
 }
@@ -898,14 +1066,57 @@ async function main() {
     trpc(postgresBase, 'attachments.list', { page: 1, size: 50 }, postgresToken),
     trpc(sqliteBase, 'attachments.list', { page: 1, size: 50 }, sqliteToken),
   ]);
-  if (!sameValue(resultData(postgresDefault), resultData(sqliteDefault)) || !sameValue(resultData(postgresNotes), resultData(sqliteNotes)) || !sameValue(resultData(postgresTags), resultData(sqliteTags)) || !sameValue(resultData(postgresAttachments), resultData(sqliteAttachments))) {
+  const [postgresExistingLogs, sqliteExistingLogs] = await Promise.all([
+    trpc(postgresBase, 'operationLogs.list', { page: 1, size: 50 }, postgresToken),
+    trpc(sqliteBase, 'operationLogs.list', { page: 1, size: 50 }, sqliteToken),
+  ]);
+  if (
+    !sameValue(resultData(postgresDefault), resultData(sqliteDefault))
+    || !sameTopLevelSet(resultData(postgresNotes), resultData(sqliteNotes))
+    || !sameValue(resultData(postgresTags), resultData(sqliteTags))
+    || !sameValue(resultData(postgresAttachments), resultData(sqliteAttachments))
+    || postgresExistingLogs.status !== sqliteExistingLogs.status
+    || !sameValue(postgresExistingLogs.json, sqliteExistingLogs.json)
+  ) {
     fail('initial differential fixture is not equivalent');
   }
+  assertUtcFields(resultData(postgresExistingLogs));
+  assertUtcFields(resultData(sqliteExistingLogs));
+  const [postgresActiveNotes, sqliteActiveNotes] = await Promise.all([
+    loadActiveNoteFixture(postgresBase, postgresToken, 'PostgreSQL active-note'),
+    loadActiveNoteFixture(sqliteBase, sqliteToken, 'SQLite active-note'),
+  ]);
+  if (!sameTopLevelSet(postgresActiveNotes, sqliteActiveNotes)) {
+    fail('complete active-note fixtures are not equivalent', {
+      postgres: postgresActiveNotes,
+      sqlite: sqliteActiveNotes,
+    });
+  }
+  randomNoteFixtures = {
+    postgres: new Map(postgresActiveNotes.map((note) => [note.id, note])),
+    sqlite: new Map(sqliteActiveNotes.map((note) => [note.id, note])),
+  };
   const workspaceId = resultData(postgresDefault)?.id;
-  const noteId = resultData(postgresNotes)?.[0]?.id;
   const tagId = resultData(postgresTags)?.[0]?.id;
-  const history = await trpc(postgresBase, 'notes.getNoteHistory', { noteId }, postgresToken);
-  const historyVersion = resultData(history)?.[0]?.version;
+  let noteId;
+  let historyVersion;
+  for (const candidate of postgresActiveNotes) {
+    const candidateId = candidate?.id;
+    if (!Number.isInteger(candidateId)) continue;
+    const [postgresHistory, sqliteHistory] = await Promise.all([
+      trpc(postgresBase, 'notes.getNoteHistory', { noteId: candidateId }, postgresToken),
+      trpc(sqliteBase, 'notes.getNoteHistory', { noteId: candidateId }, sqliteToken),
+    ]);
+    if (!sameValue(resultData(postgresHistory), resultData(sqliteHistory))) {
+      fail('fixture note history differs', { noteId: candidateId });
+    }
+    const candidateVersion = resultData(postgresHistory)?.[0]?.version;
+    if (Number.isInteger(candidateVersion)) {
+      noteId = candidateId;
+      historyVersion = candidateVersion;
+      break;
+    }
+  }
   if (![workspaceId, noteId, tagId, historyVersion].every(Number.isInteger)) {
     fail('fixture is missing workspace, note, tag or note history', { workspaceId, noteId, tagId, historyVersion });
   }
@@ -946,8 +1157,11 @@ async function main() {
     procedures: coverage,
     exactComparisons: coverage.filter((item) => item.comparison === 'exact').length,
     setComparisons: coverage.filter((item) => item.comparison === 'set').length,
+    randomComparisons: coverage.filter((item) => item.comparison === 'random').length,
+    generatedTimestampComparisons: coverage.filter((item) => item.comparison === 'generated-time').length,
     structuralComparisons: coverage.filter((item) => item.comparison === 'shape').length,
     matchingErrors: coverage.filter((item) => item.comparison === 'error').length,
+    preMutationExact: ['operationLogs.list'],
     rest: ['health', ...(attachment ? ['attachment download'] : []), ...rest],
     mcp,
     searchBoundaries,
