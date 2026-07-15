@@ -351,15 +351,36 @@ async function verifyPagination(page) {
   });
   await pageTwo.click();
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
-  await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 1, undefined, { timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 2, undefined, { timeout: 10_000 });
 
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
-  await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 1, undefined, { timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 2, undefined, { timeout: 10_000 });
 
   await page.goto(new URL('/?page=999', base).toString(), { waitUntil: 'networkidle' });
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('page'), undefined, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 10, undefined, { timeout: 10_000 });
+}
+
+async function verifyPaginationAfterDeletion(page, deletedContent, remainingContent) {
+  await page.goto(new URL('/?page=2', base).toString(), { waitUntil: 'networkidle' });
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
+  const deletedCard = noteCard(page, deletedContent);
+  await deletedCard.waitFor({ state: 'visible', timeout: 10_000 });
+  await deletedCard.hover();
+  const trashed = waitForTrpcMutation(page, 'notes.trashMany');
+  await deletedCard.getByRole('button', { name: '回收站', exact: true }).click();
+  const response = await trashed;
+  assert(response.ok(), 'Delete second-page Blinkora request failed.', { status: response.status() });
+  await deletedCard.waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
+  await noteCard(page, remainingContent).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Deleting a second-page Blinkora did not keep the remaining card on page two.');
+
+  await page.goto(new URL('/?path=trash', base).toString(), { waitUntil: 'networkidle' });
+  await invokeCardMenuAction(page, deletedContent, 'ArchivedItem');
+  await noteCard(page, deletedContent).waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
 function noteCard(page, content) {
@@ -735,7 +756,7 @@ try {
   await waitForApp(page);
   await createNote(page, '笔记', note, 'path=notes');
   await createNote(page, '待办', todo, 'path=todo');
-  const paginationBlinkoras = await createPaginationNotes(page, 10);
+  const paginationBlinkoras = await createPaginationNotes(page, 11);
   await verifyPagination(page);
   await verifyGlobalSearch(page, blinkora);
   const updatedBlinkora = `${paginationBlinkoras[0]} (edited)`;
@@ -764,10 +785,13 @@ try {
     siblingFolder,
     siblingFolderWithPrefix,
   });
+  await switchWorkspace(page, '默认工作区', workspace);
+  await verifyPaginationAfterDeletion(page, blinkora, paginationBlinkoras[1]);
+  await switchWorkspace(page, workspace, '默认工作区');
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation create/delete, attachment filter/reset, pagination page-two reload/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation create/delete, attachment filter/reset, pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();

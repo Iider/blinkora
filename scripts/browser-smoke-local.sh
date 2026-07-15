@@ -81,7 +81,7 @@ bun run smoke:browser
   echo "error: SQLite foreign_key_check reported rows after browser smoke" >&2
   exit 1
 }
-[[ "$(sqlite3 "$DB_PATH" 'SELECT type || "=" || count(*) FROM notes GROUP BY type ORDER BY type;')" == $'0=11\n1=1\n2=1' ]] || {
+[[ "$(sqlite3 "$DB_PATH" 'SELECT type || "=" || count(*) FROM notes GROUP BY type ORDER BY type;')" == $'0=12\n1=1\n2=1' ]] || {
   echo "error: browser smoke did not persist its Blinkora pagination fixture, Note, and Todo" >&2
   exit 1
 }
