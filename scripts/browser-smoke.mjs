@@ -353,6 +353,10 @@ async function verifyPagination(page) {
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 1, undefined, { timeout: 10_000 });
 
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
+  await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 1, undefined, { timeout: 10_000 });
+
   await page.goto(new URL('/?page=999', base).toString(), { waitUntil: 'networkidle' });
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('page'), undefined, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 10, undefined, { timeout: 10_000 });
@@ -706,7 +710,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation create/delete, attachment filter/reset, pagination/out-of-range reset, global search, resource folder rename/nesting/delete; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation create/delete, attachment filter/reset, pagination page-two reload/out-of-range reset, global search, resource folder rename/nesting/delete; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
