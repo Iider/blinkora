@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
 
@@ -10,6 +10,7 @@ const browserExecutable = process.env.BLINKORA_BROWSER_EXECUTABLE
 const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`;
 const user = `browser_smoke_${stamp}`;
 const password = 'BrowserSmoke!local';
+const FONT_FIXTURE_PATH = '/System/Library/Fonts/Symbol.ttf';
 const NOTE_TYPE_LABELS = ['闪念', '笔记', '待办'];
 
 function fail(message, details) {
@@ -80,6 +81,26 @@ function waitForTrpcMutation(page, procedure) {
     response => response.request().method() === 'POST' && response.url().includes(`/api/trpc/${procedure}`),
     { timeout: 15_000 },
   );
+}
+
+async function runTrpcFixtureMutation(page, procedure, input) {
+  const result = await page.evaluate(async ({ procedure, input }) => {
+    const storedToken = window.localStorage.getItem('blinkoraToken');
+    const token = storedToken ? JSON.parse(storedToken)?.token : null;
+    const response = await fetch(`/api/trpc/${procedure}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ json: input }),
+    });
+    const payload = await response.json().catch(() => null);
+    return { ok: response.ok, status: response.status, payload };
+  }, { procedure, input });
+
+  assert(result.ok, `Fixture mutation ${procedure} failed.`, { status: result.status });
+  return result.payload?.result?.data?.json;
 }
 
 async function registerAndSignIn(page) {
@@ -384,6 +405,50 @@ async function verifyWithoutTagFilter(page, content) {
   await page.locator('[data-filter-trigger="true"]').click();
   await page.getByRole('button', { name: '重置', exact: true }).click();
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('withoutTag'), undefined, { timeout: 10_000 });
+}
+
+async function createFontFixture(page) {
+  assert(existsSync(FONT_FIXTURE_PATH), 'macOS system font fixture is missing.', { path: FONT_FIXTURE_PATH });
+  const fileSize = statSync(FONT_FIXTURE_PATH).size;
+  assert(fileSize > 0 && fileSize <= 10 * 1024 * 1024,
+    'macOS system font fixture has an unsupported size.', { path: FONT_FIXTURE_PATH, fileSize });
+
+  const name = `browser-smoke-font-${stamp}`;
+  const displayName = `Browser Smoke Font ${stamp}`;
+  const font = await runTrpcFixtureMutation(page, 'fonts.upload', {
+    name,
+    displayName,
+    fileData: readFileSync(FONT_FIXTURE_PATH).toString('base64'),
+    category: 'sans-serif',
+  });
+  assert(font?.id && font.name === name && font.isLocal === true,
+    'Creating local font fixture returned an invalid font.', { id: font?.id, name: font?.name, isLocal: font?.isLocal });
+  return { id: font.id, name, displayName };
+}
+
+async function verifyFontSelection(page, font) {
+  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: '偏好设置', exact: true }).click();
+  const fontButton = page.getByRole('button', { name: '系统默认字体', exact: true });
+  await fontButton.waitFor({ state: 'visible', timeout: 10_000 });
+
+  const updateFont = waitForTrpcMutation(page, 'config.update');
+  await fontButton.click();
+  await page.getByRole('menuitem', { name: font.displayName, exact: true }).click();
+  const selected = await updateFont;
+  assert(selected.ok(), 'Selecting local font did not update config.', { status: selected.status() });
+  await page.waitForFunction(name => document.body.style.fontFamily.includes(name), font.name, { timeout: 10_000 });
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: font.displayName, exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await page.waitForFunction(name => document.body.style.fontFamily.includes(name), font.name, { timeout: 10_000 });
+
+  const resetFont = waitForTrpcMutation(page, 'config.update');
+  await page.getByRole('button', { name: font.displayName, exact: true }).click();
+  await page.getByRole('menuitem', { name: '系统默认字体', exact: true }).click();
+  const reset = await resetFont;
+  assert(reset.ok(), 'Resetting local font did not update config.', { status: reset.status() });
+  await page.waitForFunction(() => document.body.style.fontFamily === '', undefined, { timeout: 10_000 });
 }
 
 async function verifyTagTreeFilter(page, parentTag, childTag, content) {
@@ -1249,6 +1314,10 @@ try {
   await verifyWithoutTagFilter(page, untaggedFilterContent);
   await invokeCardMenuAction(page, untaggedFilterContent, 'TrashItem', 'notes.trashMany');
   await deleteRecycledCard(page, untaggedFilterContent);
+  const fontFixture = await createFontFixture(page);
+  await verifyFontSelection(page, fontFixture);
+  const deletedFont = await runTrpcFixtureMutation(page, 'fonts.delete', { id: fontFixture.id });
+  assert(deletedFont?.success === true, 'Deleting local font fixture failed.');
   await verifyWorkspaceTokenGuide(page);
   await verifyStorageSettings(page);
   const backupWorkspace = `browser UI backup workspace ${stamp}`;
@@ -1259,7 +1328,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
