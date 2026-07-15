@@ -2,7 +2,7 @@ use super::common::workspace_id;
 use crate::app::AppState;
 use crate::auth::CurrentUser;
 use crate::trpc::{ProcedureContext, ProcedureFuture, ProcedureHandler};
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use axum::extract::{Multipart, State};
 use axum::http::StatusCode;
 use axum::routing::post;
@@ -28,6 +28,91 @@ pub fn register(registry: &mut HashMap<&'static str, ProcedureHandler>) {
 struct MarkdownExportFile {
     path: String,
     content: String,
+}
+
+struct StagedImportFile {
+    staged_path: PathBuf,
+    final_path: PathBuf,
+    activated: bool,
+}
+
+struct ImportFileStaging {
+    root: PathBuf,
+    files_root: PathBuf,
+    files: Vec<StagedImportFile>,
+    committed: bool,
+}
+
+impl ImportFileStaging {
+    fn new(data_dir: &str) -> anyhow::Result<Self> {
+        let files_root = Path::new(data_dir).join("files");
+        let root = files_root
+            .join(".imports")
+            .join(Uuid::new_v4().simple().to_string());
+        fs::create_dir_all(&root)?;
+        set_private_directory(&files_root)?;
+        set_private_directory(&root)?;
+        Ok(Self {
+            root,
+            files_root,
+            files: Vec::new(),
+            committed: false,
+        })
+    }
+
+    fn stage(&mut self, content: &[u8], original_name: &str) -> anyhow::Result<String> {
+        let safe_name = sanitize_file_name(original_name);
+        let extension = Path::new(&safe_name)
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(|value| format!(".{value}"))
+            .unwrap_or_default();
+        let file_name = format!(
+            "{}_{}{}",
+            chrono::Utc::now().timestamp_millis(),
+            Uuid::new_v4().simple(),
+            extension
+        );
+        let staged_path = self.root.join(&file_name);
+        let final_path = self.files_root.join(&file_name);
+        if final_path.exists() {
+            bail!("generated attachment target already exists");
+        }
+        fs::write(&staged_path, content)?;
+        set_private_file(&staged_path)?;
+        self.files.push(StagedImportFile {
+            staged_path,
+            final_path,
+            activated: false,
+        });
+        Ok(format!("/api/file/{file_name}"))
+    }
+
+    fn activate(&mut self) -> anyhow::Result<()> {
+        for file in &mut self.files {
+            fs::rename(&file.staged_path, &file.final_path)?;
+            file.activated = true;
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) {
+        self.committed = true;
+        if let Err(error) = fs::remove_dir_all(&self.root) {
+            tracing::warn!(%error, path = %self.root.display(), "could not remove completed import staging directory");
+        }
+    }
+}
+
+impl Drop for ImportFileStaging {
+    fn drop(&mut self) {
+        if !self.committed {
+            for file in self.files.iter().filter(|file| file.activated) {
+                let _ = fs::remove_file(&file.final_path);
+            }
+        }
+        let _ = fs::remove_dir_all(&self.root);
+    }
 }
 
 async fn import_backup(
@@ -94,6 +179,8 @@ async fn import_backup(
     };
 
     let _write_guard = state.write_guard().await;
+    let mut file_staging =
+        ImportFileStaging::new(&state.config.data_dir).map_err(internal_error)?;
     let mut tx = state.pool().begin().await.map_err(internal_error)?;
     let mut imported_workspace_ids = Vec::new();
     let mut imported_note_count = 0usize;
@@ -202,13 +289,11 @@ async fn import_backup(
                 .get("name")
                 .and_then(Value::as_str)
                 .unwrap_or("attachment");
-            match restore_zip_file(
-                &state.config.data_dir,
-                &archive_bytes,
-                file_ref,
-                original_name,
-            ) {
-                Ok(new_path) => {
+            match read_zip_file(&archive_bytes, file_ref) {
+                Ok(content) => {
+                    let new_path = file_staging
+                        .stage(&content, original_name)
+                        .map_err(internal_error)?;
                     attachment_path_map.insert(old_path.to_string(), new_path);
                     restored_attachment_files += 1;
                 }
@@ -585,7 +670,9 @@ async fn import_backup(
         }
     }
 
+    file_staging.activate().map_err(internal_error)?;
     tx.commit().await.map_err(internal_error)?;
+    file_staging.finish();
 
     Ok(Json(json!({
         "success": true,
@@ -611,16 +698,18 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         if scope != "workspace" && scope != "full" {
             bail!("unsupported export scope");
         }
+        let _write_guard = ctx.state.write_guard().await;
+        let mut tx = ctx.state.pool().begin().await?;
         let workspaces = if scope == "full" {
             sqlx::query(r#"SELECT id, name, description, icon, color, "isDefault", "createdAt", "updatedAt" FROM workspaces WHERE "accountId"=$1 ORDER BY "isDefault" DESC, id ASC"#)
                 .bind(user.id)
-                .fetch_all(ctx.state.pool())
+                .fetch_all(&mut *tx)
                 .await?
         } else {
             sqlx::query(r#"SELECT id, name, description, icon, color, "isDefault", "createdAt", "updatedAt" FROM workspaces WHERE "accountId"=$1 AND id=$2"#)
                 .bind(user.id)
                 .bind(ws)
-                .fetch_all(ctx.state.pool())
+                .fetch_all(&mut *tx)
                 .await?
         };
         let mut manifest_workspaces = Vec::new();
@@ -635,7 +724,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             )
             .bind(user.id)
             .bind(workspace_id)
-            .fetch_all(ctx.state.pool())
+            .fetch_all(&mut *tx)
             .await?;
             let attachments = sqlx::query(
                 r#"SELECT id, name, path, CAST(size AS TEXT) AS size, type, "noteId", "sortOrder", "perfixPath", depth, metadata, "createdAt", "updatedAt"
@@ -643,7 +732,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             )
             .bind(user.id)
             .bind(workspace_id)
-            .fetch_all(ctx.state.pool())
+            .fetch_all(&mut *tx)
             .await?;
             let tags = sqlx::query(
                 r#"SELECT id, name, icon, parent, "sortOrder", "createdAt", "updatedAt"
@@ -651,14 +740,14 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             )
             .bind(user.id)
             .bind(workspace_id)
-            .fetch_all(ctx.state.pool())
+            .fetch_all(&mut *tx)
             .await?;
             let configs = sqlx::query(
                 r#"SELECT id, key, config FROM config WHERE "userId"=$1 AND "workspaceId"=$2 ORDER BY id ASC"#,
             )
             .bind(user.id)
             .bind(workspace_id)
-            .fetch_all(ctx.state.pool())
+            .fetch_all(&mut *tx)
             .await?;
             let note_ids: Vec<i32> = notes.iter().map(|row| row.get::<i32, _>("id")).collect();
             let tag_links = if note_ids.is_empty() {
@@ -666,7 +755,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
             } else {
                 sqlx::query(r#"SELECT "noteId", "tagId" FROM "tagsToNote" WHERE "noteId" IN (SELECT value FROM json_each($1))"#)
                     .bind(crate::db::json_array(&note_ids))
-                    .fetch_all(ctx.state.pool())
+                    .fetch_all(&mut *tx)
                     .await?
             };
             let comments = if note_ids.is_empty() {
@@ -678,7 +767,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 )
                 .bind(crate::db::json_array(&note_ids))
                 .bind(workspace_id)
-                .fetch_all(ctx.state.pool())
+                .fetch_all(&mut *tx)
                 .await?
             };
             let note_references = if note_ids.is_empty() {
@@ -690,7 +779,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                        ORDER BY "createdAt" ASC, id ASC"#,
                 )
                 .bind(crate::db::json_array(&note_ids))
-                .fetch_all(ctx.state.pool())
+                .fetch_all(&mut *tx)
                 .await?
             };
             let note_history = if note_ids.is_empty() {
@@ -704,7 +793,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 .bind(crate::db::json_array(&note_ids))
                 .bind(user.id)
                 .bind(workspace_id)
-                .fetch_all(ctx.state.pool())
+                .fetch_all(&mut *tx)
                 .await?
             };
             let operation_logs = if format == "json" {
@@ -716,7 +805,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 )
                 .bind(user.id)
                 .bind(workspace_id)
-                .fetch_all(ctx.state.pool())
+                .fetch_all(&mut *tx)
                 .await?
             } else {
                 Vec::new()
@@ -838,6 +927,7 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 })).collect::<Vec<_>>()
             }));
         }
+        tx.commit().await?;
         let mut manifest = json!({
             "schema": "blinkora.backup.v1",
             "app": "blinkora",
@@ -853,12 +943,26 @@ fn export_markdown(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         });
         let temp_dir = PathBuf::from(&ctx.state.config.data_dir).join("files").join("temp");
         fs::create_dir_all(&temp_dir)?;
-        let file_name = format!("blinkora-export-{}.zip", chrono::Utc::now().timestamp_millis());
+        set_private_directory(&temp_dir)?;
+        let file_name = format!(
+            "blinkora-export-{}-{}.zip",
+            chrono::Utc::now().timestamp_millis(),
+            Uuid::new_v4().simple()
+        );
         let archive_path = temp_dir.join(&file_name);
         let file = File::create(&archive_path)?;
+        set_private_file(&archive_path)?;
         let mut zip = zip::ZipWriter::new(file);
         let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        let (attachment_file_count, missing_file_count) = add_attachment_files_to_zip(&mut zip, &mut manifest, &ctx.state.config.data_dir, options)?;
+        let s3_config = crate::s3::load_s3_config(&ctx.state).await?;
+        let (attachment_file_count, missing_file_count) = add_attachment_files_to_zip(
+            &mut zip,
+            &mut manifest,
+            &ctx.state.config.data_dir,
+            s3_config.as_ref(),
+            options,
+        )
+        .await?;
         if format == "markdown" {
             add_markdown_files_to_zip(&mut zip, &markdown_files, options)?;
         }
@@ -943,10 +1047,11 @@ fn is_supported_note_property_value(value: &Value) -> bool {
     }
 }
 
-fn add_attachment_files_to_zip(
+async fn add_attachment_files_to_zip(
     zip: &mut zip::ZipWriter<File>,
     manifest: &mut Value,
     data_dir: &str,
+    s3_config: Option<&crate::s3::S3Config>,
     options: SimpleFileOptions,
 ) -> anyhow::Result<(usize, usize)> {
     let mut attachment_file_count = 0usize;
@@ -971,13 +1076,7 @@ fn add_attachment_files_to_zip(
                 continue;
             }
             let path = attachment.get("path").and_then(Value::as_str).unwrap_or("");
-            let Some(relative_path) = api_file_relative_path(path) else {
-                missing_file_count += 1;
-                attachment["fileMissing"] = json!(true);
-                continue;
-            };
-            let file_path = Path::new(data_dir).join("files").join(relative_path);
-            let Ok(content) = fs::read(&file_path) else {
+            let Ok(content) = read_attachment_for_export(data_dir, path, s3_config).await else {
                 missing_file_count += 1;
                 attachment["fileMissing"] = json!(true);
                 continue;
@@ -990,12 +1089,7 @@ fn add_attachment_files_to_zip(
                 attachment
                     .get("name")
                     .and_then(Value::as_str)
-                    .unwrap_or_else(|| {
-                        file_path
-                            .file_name()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or("attachment")
-                    }),
+                    .unwrap_or("attachment"),
             );
             let file_ref =
                 format!("files/workspace-{workspace_id}/attachment-{attachment_id}/{name}");
@@ -1008,32 +1102,49 @@ fn add_attachment_files_to_zip(
     Ok((attachment_file_count, missing_file_count))
 }
 
-fn restore_zip_file(
+async fn read_attachment_for_export(
     data_dir: &str,
-    archive_bytes: &[u8],
-    file_ref: &str,
-    original_name: &str,
-) -> anyhow::Result<String> {
+    api_path: &str,
+    s3_config: Option<&crate::s3::S3Config>,
+) -> anyhow::Result<Vec<u8>> {
+    if let Some(relative_path) = api_file_relative_path(api_path) {
+        return Ok(tokio::fs::read(Path::new(data_dir).join("files").join(relative_path)).await?);
+    }
+    if let Some(key) = crate::attachment_files::s3_key_from_api_path(api_path) {
+        let config = s3_config.context("S3 config is unavailable")?;
+        return crate::s3::get_object(config, &key).await;
+    }
+    bail!("attachment path is not restorable")
+}
+
+fn read_zip_file(archive_bytes: &[u8], file_ref: &str) -> anyhow::Result<Vec<u8>> {
     let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes))?;
     let mut file = archive.by_name(file_ref)?;
     let mut content = Vec::new();
     file.read_to_end(&mut content)?;
-    let safe_name = sanitize_file_name(original_name);
-    let extension = Path::new(&safe_name)
-        .extension()
-        .and_then(|value| value.to_str())
-        .map(|value| format!(".{value}"))
-        .unwrap_or_default();
-    let file_name = format!(
-        "{}_{}{}",
-        chrono::Utc::now().timestamp_millis(),
-        Uuid::new_v4().simple(),
-        extension
-    );
-    let root = Path::new(data_dir).join("files");
-    fs::create_dir_all(&root)?;
-    fs::write(root.join(&file_name), content)?;
-    Ok(format!("/api/file/{file_name}"))
+    Ok(content)
+}
+
+fn set_private_directory(path: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(path, permissions)?;
+    }
+    Ok(())
+}
+
+fn set_private_file(path: &Path) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(path)?.permissions();
+        permissions.set_mode(0o600);
+        fs::set_permissions(path, permissions)?;
+    }
+    Ok(())
 }
 
 fn replace_attachment_paths(content: &str, path_map: &HashMap<String, String>) -> String {
@@ -1055,9 +1166,7 @@ fn is_restorable_attachment(attachment: &Value) -> bool {
 }
 
 fn api_file_relative_path(path: &str) -> Option<PathBuf> {
-    let relative = path
-        .strip_prefix("/api/file/")
-        .or_else(|| path.strip_prefix("/api/s3file/"))?;
+    let relative = path.strip_prefix("/api/file/")?;
     if relative.contains('\0')
         || relative.contains('\\')
         || relative.starts_with('/')
@@ -1124,4 +1233,53 @@ fn internal_error(error: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
         StatusCode::INTERNAL_SERVER_ERROR,
         Json(json!({ "error": error.to_string() })),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_attachment_for_export, ImportFileStaging};
+
+    #[tokio::test]
+    async fn imported_files_are_visible_only_after_activation_and_removed_on_rollback() {
+        let data_dir =
+            std::env::temp_dir().join(format!("blinkora-backup-staging-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        let rolled_back_path = {
+            let mut staging = ImportFileStaging::new(data_dir.to_str().unwrap()).unwrap();
+            let api_path = staging.stage(b"rollback", "rollback.txt").unwrap();
+            let final_path = data_dir
+                .join("files")
+                .join(api_path.trim_start_matches("/api/file/"));
+            assert!(!final_path.exists());
+            staging.activate().unwrap();
+            assert!(final_path.exists());
+            final_path
+        };
+        assert!(!rolled_back_path.exists());
+
+        let committed_path = {
+            let mut staging = ImportFileStaging::new(data_dir.to_str().unwrap()).unwrap();
+            let api_path = staging.stage(b"committed", "committed.txt").unwrap();
+            let final_path = data_dir
+                .join("files")
+                .join(api_path.trim_start_matches("/api/file/"));
+            staging.activate().unwrap();
+            staging.finish();
+            final_path
+        };
+        assert_eq!(std::fs::read(&committed_path).unwrap(), b"committed");
+        let api_path = format!(
+            "/api/file/{}",
+            committed_path.file_name().unwrap().to_string_lossy()
+        );
+        assert_eq!(
+            read_attachment_for_export(data_dir.to_str().unwrap(), &api_path, None)
+                .await
+                .unwrap(),
+            b"committed"
+        );
+
+        std::fs::remove_dir_all(data_dir).unwrap();
+    }
 }

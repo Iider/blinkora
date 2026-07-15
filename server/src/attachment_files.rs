@@ -39,7 +39,7 @@ pub(crate) async fn delete_physical_attachment(
     }
 }
 
-fn api_file_relative_path(path: &str) -> Option<PathBuf> {
+pub(crate) fn api_file_relative_path(path: &str) -> Option<PathBuf> {
     let relative = path.strip_prefix("/api/file/")?;
     if relative.contains('\0')
         || relative.contains('\\')
@@ -51,7 +51,7 @@ fn api_file_relative_path(path: &str) -> Option<PathBuf> {
     Some(PathBuf::from(relative))
 }
 
-fn s3_key_from_api_path(path: &str) -> Option<String> {
+pub(crate) fn s3_key_from_api_path(path: &str) -> Option<String> {
     let key = path.strip_prefix("/api/s3file/")?;
     if key.contains('\0')
         || key.contains('\\')

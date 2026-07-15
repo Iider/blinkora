@@ -60,6 +60,10 @@ if [[ "$(sqlite3 "$output_dir/blinkora.sqlite3" 'PRAGMA integrity_check;')" != "
   echo "error: SQLite backup failed integrity_check" >&2
   exit 1
 fi
+if [[ "$(sqlite3 "$output_dir/blinkora.sqlite3" 'SELECT COUNT(*) FROM pragma_foreign_key_check;')" != "0" ]]; then
+  echo "error: SQLite backup failed foreign_key_check" >&2
+  exit 1
+fi
 
 if [[ -d "$data_dir/files" ]]; then
   cp -a "$data_dir/files" "$output_dir/files"

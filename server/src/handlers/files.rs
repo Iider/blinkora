@@ -81,6 +81,7 @@ async fn upload_file(
         ));
     };
 
+    let _write_guard = state.write_guard().await;
     let upload = persist_upload(&state, &file_name, &bytes, &content_type)
         .await
         .map_err(internal_error)?;
@@ -93,8 +94,7 @@ async fn upload_file(
     } else {
         None
     };
-    let _write_guard = state.write_guard().await;
-    sqlx::query(
+    let insert_result = sqlx::query(
         r#"INSERT INTO attachments (name, path, size, type, "accountId", "workspaceId", metadata, "updatedAt")
            VALUES ($1,$2,$3,$4,$5,$6,$7,blinkora_now())"#,
     )
@@ -106,8 +106,13 @@ async fn upload_file(
     .bind(workspace_id)
     .bind(metadata_value)
     .execute(state.pool())
-    .await
-    .map_err(internal_error)?;
+    .await;
+    if let Err(error) = insert_result {
+        if let Err(cleanup_error) = upload.rollback().await {
+            tracing::error!(%cleanup_error, "failed to remove an attachment after its database insert failed");
+        }
+        return Err(internal_error(error));
+    }
 
     Ok(Json(json!({
         "Message": "Success",
@@ -169,11 +174,11 @@ async fn upload_by_url(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("upload_{}", chrono::Utc::now().timestamp_millis()));
     let bytes = response.bytes().await.map_err(internal_error)?;
+    let _write_guard = state.write_guard().await;
     let upload = persist_upload(&state, &name, &bytes, &content_type)
         .await
         .map_err(internal_error)?;
-    let _write_guard = state.write_guard().await;
-    sqlx::query(
+    let insert_result = sqlx::query(
         r#"INSERT INTO attachments (name, path, size, type, "accountId", "workspaceId", "updatedAt")
            VALUES ($1,$2,$3,$4,$5,$6,blinkora_now())"#,
     )
@@ -184,8 +189,13 @@ async fn upload_by_url(
     .bind(user.id)
     .bind(workspace_id)
     .execute(state.pool())
-    .await
-    .map_err(internal_error)?;
+    .await;
+    if let Err(error) = insert_result {
+        if let Err(cleanup_error) = upload.rollback().await {
+            tracing::error!(%cleanup_error, "failed to remove a URL attachment after its database insert failed");
+        }
+        return Err(internal_error(error));
+    }
 
     Ok(Json(json!({
         "Message": "Success",
@@ -291,16 +301,18 @@ async fn serve_file(
     } else {
         format!("/api/file/{decoded}")
     };
-    if !decoded.starts_with("temp/") && !decoded.ends_with(".bko") {
-        let Some(current_user) = user.as_ref() else {
-            return json_error(StatusCode::UNAUTHORIZED, "Unauthorized");
-        };
-        if let Err(response) = authorize_file_read(current_user, &state, &api_path).await {
-            return response;
-        }
+    let Some(current_user) = user.as_ref() else {
+        return json_error(StatusCode::UNAUTHORIZED, "Unauthorized");
+    };
+    if decoded.starts_with("temp/") && current_user.is_workspace_agent() {
+        return json_error(StatusCode::UNAUTHORIZED, "Unauthorized");
     }
-    if decoded.ends_with(".bko") && user.as_ref().map(|u| u.role.as_str()) != Some("superadmin") {
-        return json_error(StatusCode::UNAUTHORIZED, "Only superadmin can access");
+    if decoded.ends_with(".bko") {
+        if current_user.role != "superadmin" {
+            return json_error(StatusCode::UNAUTHORIZED, "Only superadmin can access");
+        }
+    } else if let Err(response) = authorize_file_read(current_user, &state, &api_path).await {
+        return response;
     }
 
     let (bytes, content_type) = if api_path.starts_with("/api/s3file/") {
@@ -327,9 +339,14 @@ async fn serve_file(
         HeaderValue::from_str(&content_type)
             .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
     );
+    let cache_control = if decoded.starts_with("temp/") || decoded.ends_with(".bko") {
+        "private, no-store"
+    } else {
+        "private, max-age=3600"
+    };
     response.headers_mut().insert(
         header::CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=3600"),
+        HeaderValue::from_static(cache_control),
     );
     if query
         .get("download")
@@ -383,6 +400,25 @@ async fn authorize_file_read(
 
 struct UploadResult {
     api_path: String,
+    storage: UploadStorage,
+}
+
+enum UploadStorage {
+    Local(PathBuf),
+    S3 { config: s3::S3Config, key: String },
+}
+
+impl UploadResult {
+    async fn rollback(&self) -> anyhow::Result<()> {
+        match &self.storage {
+            UploadStorage::Local(path) => match tokio::fs::remove_file(path).await {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error.into()),
+            },
+            UploadStorage::S3 { config, key } => s3::delete_object(config, key).await,
+        }
+    }
 }
 
 async fn persist_upload(
@@ -414,6 +450,7 @@ async fn persist_upload(
         s3::put_object(&config, &key, bytes, content_type).await?;
         return Ok(UploadResult {
             api_path: format!("/api/s3file/{key}"),
+            storage: UploadStorage::S3 { config, key },
         });
     }
     let stored_name = format!(
@@ -424,12 +461,45 @@ async fn persist_upload(
     let file_name = format!("{stored_name}{extension}");
     let root = files_root(state);
     tokio::fs::create_dir_all(&root).await?;
+    set_private_directory(&root).await?;
     let path = root.join(&file_name);
-    let mut file = tokio::fs::File::create(path).await?;
-    file.write_all(bytes).await?;
+    let write_result = async {
+        let mut file = tokio::fs::File::create(&path).await?;
+        file.write_all(bytes).await?;
+        file.sync_all().await?;
+        set_private_file(&path).await
+    }
+    .await;
+    if let Err(error) = write_result {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(error);
+    }
     Ok(UploadResult {
         api_path: format!("/api/file/{file_name}"),
+        storage: UploadStorage::Local(path),
     })
+}
+
+async fn set_private_directory(path: &FsPath) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = tokio::fs::metadata(path).await?.permissions();
+        permissions.set_mode(0o700);
+        tokio::fs::set_permissions(path, permissions).await?;
+    }
+    Ok(())
+}
+
+async fn set_private_file(path: &FsPath) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = tokio::fs::metadata(path).await?.permissions();
+        permissions.set_mode(0o600);
+        tokio::fs::set_permissions(path, permissions).await?;
+    }
+    Ok(())
 }
 
 fn files_root(state: &AppState) -> PathBuf {
