@@ -324,6 +324,37 @@ async function verifyAttachmentFilter(page, content) {
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('withFile'), undefined, { timeout: 10_000 });
 }
 
+async function verifyLinkFilter(page, content) {
+  await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
+  await page.locator('[data-filter-trigger="true"]').click();
+  await page.getByRole('radio', { name: '包含链接', exact: true }).click();
+  await page.getByRole('button', { name: '应用筛选', exact: true }).click();
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).get('withLink') === 'true', undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Link filter did not reduce the list to the linked Note.');
+}
+
+async function verifyTagTreeFilter(page, parentTag, childTag, content) {
+  await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
+  const tree = page.getByRole('tree', { name: 'directory tree' });
+  const parent = tree.locator(`[title="${parentTag}"]`);
+  await parent.waitFor({ state: 'visible', timeout: 10_000 });
+  await parent.click();
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).has('tagId'), undefined, { timeout: 10_000 });
+  const parentTagId = await page.evaluate(() => new URLSearchParams(window.location.search).get('tagId'));
+  assert(parentTagId, 'Selecting the parent tag did not set a tagId.');
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+
+  const child = tree.locator(`[title="${childTag}"]`);
+  await child.waitFor({ state: 'visible', timeout: 10_000 });
+  await child.click();
+  await page.waitForFunction(() => new URLSearchParams(window.location.search).has('tagId'), undefined, { timeout: 10_000 });
+  const childTagId = await page.evaluate(() => new URLSearchParams(window.location.search).get('tagId'));
+  assert(childTagId && childTagId !== parentTagId, 'Selecting the child tag did not replace the parent tagId.');
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+}
+
 async function createPaginationNotes(page, count) {
   await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
   const contents = [];
@@ -817,8 +848,10 @@ const diagnostics = createDiagnostics(page, 'desktop');
 
 try {
   const blinkora = `browser UI blinkora ${stamp}`;
-  const tag = `browser_smoke_tag_${stamp.replace(/[^a-zA-Z0-9]/g, '')}`;
-  const note = `browser UI note ${stamp} #${tag}`;
+  const tagParent = `browser_smoke_tag_${stamp.replace(/[^a-zA-Z0-9]/g, '')}`;
+  const tagChild = `${tagParent}_child`;
+  const externalLink = `https://example.com/${stamp}`;
+  const note = `browser UI note ${stamp} #${tagParent}/${tagChild} ${externalLink}`;
   const todo = `browser UI todo ${stamp}`;
   const updatedNote = `${note} (edited)`;
   const workspace = `browser UI workspace ${stamp}`;
@@ -857,6 +890,8 @@ try {
   await verifyCardStateActions(page, updatedNote, stateActionBlinkora);
   const commentTree = await verifyCommentTree(page, updatedNote, comment);
   await verifyAttachmentFilter(page, updatedNote);
+  await verifyLinkFilter(page, updatedNote);
+  await verifyTagTreeFilter(page, tagParent, tagChild, updatedNote);
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
   await moveCardToDefaultWorkspace(page, updatedNote);
   await switchWorkspace(page, workspace, '默认工作区');
@@ -884,7 +919,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment filter/reset, pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters and reset, pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
