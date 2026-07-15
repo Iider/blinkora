@@ -204,19 +204,31 @@ async function verifyDailyReview(page, content) {
   await page.getByText(content, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
-async function editNote(page, originalContent, updatedContent, beforeSave) {
-  await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'commit' });
-  await page.waitForFunction(() => window.location.search.includes('path=notes'), undefined, { timeout: 10_000 });
+async function editNote(page, originalContent, updatedContent, beforeSave, path = 'notes') {
+  const url = new URL('/', base);
+  if (path) url.searchParams.set('path', path);
+  await page.goto(url.toString(), { waitUntil: 'commit' });
+  await page.waitForFunction((expectedPath) => {
+    const currentPath = new URLSearchParams(window.location.search).get('path') ?? '';
+    return currentPath === expectedPath;
+  }, path, { timeout: 10_000 });
   const card = page.locator('.blinkora-flip-card').filter({ hasText: originalContent });
   await card.waitFor({ state: 'visible', timeout: 10_000 });
 
-  await card.click({ position: { x: 200, y: 80 } });
-  await page.waitForTimeout(250);
-  const fullscreenEdit = page.getByRole('button', { name: '编辑', exact: true });
-  if (await fullscreenEdit.count()) {
-    await fullscreenEdit.click();
+  if (path === 'notes') {
+    await card.click({ position: { x: 200, y: 80 } });
+    await page.waitForTimeout(250);
+    const fullscreenEdit = page.getByRole('button', { name: '编辑', exact: true });
+    if (await fullscreenEdit.count()) {
+      await fullscreenEdit.click();
+    } else {
+      await card.dblclick({ position: { x: 200, y: 80 } });
+    }
   } else {
-    await card.dblclick({ position: { x: 200, y: 80 } });
+    await openCardMenu(page, originalContent);
+    const edit = page.locator('[data-key="EditItem"]').last();
+    await edit.waitFor({ state: 'visible', timeout: 10_000 });
+    await edit.click();
   }
 
   const editEditor = page.locator('#vditor-edit .vditor-ir [contenteditable="true"]');
@@ -226,6 +238,7 @@ async function editNote(page, originalContent, updatedContent, beforeSave) {
   await page.keyboard.insertText(updatedContent.slice(originalContent.length));
   await beforeSave?.();
   await saveEditedNote(page);
+  await noteCard(page, updatedContent).waitFor({ state: 'visible', timeout: 10_000 });
 }
 
 async function attachFileToEditedNote(page, fileName) {
@@ -654,12 +667,16 @@ try {
   const paginationBlinkoras = await createPaginationNotes(page, 10);
   await verifyPagination(page);
   await verifyGlobalSearch(page, blinkora);
+  const updatedBlinkora = `${paginationBlinkoras[0]} (edited)`;
+  await editNote(page, paginationBlinkoras[0], updatedBlinkora, undefined, '');
   await editNote(page, note, updatedNote, async () => {
     await attachFileToEditedNote(page, attachmentName);
     await addReferenceToEditedNote(page, blinkora);
   });
-  await verifyTodoCompletion(page, todo);
-  await verifyCardStateActions(page, updatedNote, paginationBlinkoras[0]);
+  const updatedTodo = `${todo} (edited)`;
+  await editNote(page, todo, updatedTodo, undefined, 'todo');
+  await verifyTodoCompletion(page, updatedTodo);
+  await verifyCardStateActions(page, updatedNote, updatedBlinkora);
   await verifyComment(page, updatedNote, comment);
   await verifyAttachmentFilter(page, updatedNote);
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });

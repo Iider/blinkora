@@ -85,9 +85,19 @@ bun run smoke:browser
   echo "error: browser smoke did not persist its Blinkora pagination fixture, Note, and Todo" >&2
   exit 1
 }
-EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE '%(edited)%' LIMIT 1;")"
+EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE type = 1 AND content LIKE '%(edited)%' LIMIT 1;")"
 [[ -n "$EDITED_NOTE_ID" ]] || {
   echo "error: browser smoke could not find the edited Note" >&2
+  exit 1
+}
+EDITED_BLINKORA_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE 'browser UI pagination blinkora % (edited)' LIMIT 1;")"
+[[ -n "$EDITED_BLINKORA_ID" && "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"noteHistory\" WHERE \"noteId\"=$EDITED_BLINKORA_ID;")" -ge 1 ]] || {
+  echo "error: browser smoke could not find a history version for the edited Blinkora" >&2
+  exit 1
+}
+EDITED_TODO_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE 'browser UI todo % (edited)' LIMIT 1;")"
+[[ -n "$EDITED_TODO_ID" && "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"noteHistory\" WHERE \"noteId\"=$EDITED_TODO_ID;")" -ge 1 ]] || {
+  echo "error: browser smoke could not find a history version for the edited Todo" >&2
   exit 1
 }
 MOVED_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT \"workspaceId\" FROM notes WHERE id = $EDITED_NOTE_ID;")"
@@ -133,8 +143,8 @@ SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name 
   echo "error: browser smoke did not persist an operation log for the edited Note" >&2
   exit 1
 }
-[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM notes WHERE content LIKE '%(edited)%';")" == "1" ]] || {
-  echo "error: browser smoke did not persist the edited Note content" >&2
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM notes WHERE content LIKE '%(edited)%';")" == "3" ]] || {
+  echo "error: browser smoke did not persist all three edited note contents" >&2
   exit 1
 }
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM workspaces WHERE name LIKE 'browser UI workspace %';")" == "1" ]] || {
