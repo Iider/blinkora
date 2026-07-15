@@ -526,6 +526,24 @@ async function verifyMovedCardData(page, note, comment) {
   await page.keyboard.press('Escape');
 }
 
+async function deleteComment(page, note, content) {
+  await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
+  const card = noteCard(page, note);
+  await card.waitFor({ state: 'visible', timeout: 10_000 });
+  await card.hover();
+  await card.locator('button[data-drag-ignore="true"][aria-label*="评论"]').click();
+
+  const dialog = page.getByRole('dialog').filter({ hasText: '评论' }).last();
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await dialog.getByText(content, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  const deleted = waitForTrpcMutation(page, 'comments.delete');
+  await dialog.getByRole('button', { name: '删除', exact: true }).click();
+  const response = await deleted;
+  assert(response.ok(), 'Delete annotation request failed.', { status: response.status() });
+  await dialog.getByText(content, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.keyboard.press('Escape');
+}
+
 async function createFolder(page, folderName) {
   await page.getByRole('button', { name: '新建文件夹', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: '新建文件夹' });
@@ -683,11 +701,12 @@ try {
   await moveCardToDefaultWorkspace(page, updatedNote);
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyMovedCardData(page, updatedNote, comment);
+  await deleteComment(page, updatedNote, comment);
   await verifyResourceFolders(page, rootFolder, renamedRootFolder, nestedFolder, disposableFolder);
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation, attachment filter/reset, pagination/out-of-range reset, global search, resource folder rename/nesting/delete; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation create/delete, attachment filter/reset, pagination/out-of-range reset, global search, resource folder rename/nesting/delete; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();

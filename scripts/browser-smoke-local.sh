@@ -163,8 +163,8 @@ SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name 
   echo "error: browser smoke did not restore all archived and recycled Notes" >&2
   exit 1
 }
-[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM comments WHERE content LIKE 'browser UI comment %';")" == "1" ]] || {
-  echo "error: browser smoke did not persist its annotation" >&2
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM comments WHERE content LIKE 'browser UI comment %';")" == "0" ]] || {
+  echo "error: browser smoke did not delete its annotation" >&2
   exit 1
 }
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM notes WHERE content LIKE 'browser UI blinkora %' AND \"isReviewed\"=1;")" == "1" ]] || {
