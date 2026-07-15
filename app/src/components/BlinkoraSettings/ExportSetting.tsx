@@ -122,6 +122,7 @@ export const ExportSetting = observer(() => {
           leftContent={<>{t('export-level')}</>}
           rightContent={
             <Select
+              aria-label={t('export-level')}
               selectedKeys={[exportScope]}
               onChange={e => setExportScope(e.target.value as 'workspace' | 'full')}
               className="w-[220px]"
@@ -137,6 +138,7 @@ export const ExportSetting = observer(() => {
           leftContent={<>{t('backup-archive-format')}</>}
           rightContent={
             <Select
+              aria-label={t('backup-archive-format')}
               selectedKeys={[exportFormat]}
               onChange={e => setExportFormat(e.target.value as 'markdown' | 'json')}
               className="w-[200px]"
@@ -196,6 +198,7 @@ export const ExportSetting = observer(() => {
           leftContent={<>{t('import-mode')}</>}
           rightContent={
             <Select
+              aria-label={t('import-mode')}
               selectedKeys={[importMode]}
               onChange={e => setImportMode(e.target.value as 'workspace' | 'full')}
               className="w-[220px]"

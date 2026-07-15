@@ -705,6 +705,26 @@ async function verifyBackupExport(page) {
   return archive;
 }
 
+async function verifyFullJsonBackupExport(page) {
+  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: '备份与恢复', exact: true }).click();
+  await page.getByLabel('导出层级', { exact: true }).click();
+  await page.getByRole('option', { name: '全量备份导出', exact: true }).click();
+  await page.getByLabel('备份包内容格式', { exact: true }).click();
+  await page.getByRole('option', { name: 'JSON 备份包（.zip）', exact: true }).click();
+
+  const exported = waitForTrpcMutation(page, 'task.exportMarkdown');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: '导出', exact: true }).click();
+  const response = await exported;
+  assert(response.ok(), 'Full JSON backup export request failed.', { status: response.status() });
+  const requestInput = JSON.parse(response.request().postData() || '{}')?.json;
+  assert(requestInput?.scope === 'full' && requestInput.format === 'json',
+    'Full JSON export request did not preserve the selected scope and format.', requestInput);
+  const archive = await download;
+  assert(archive.suggestedFilename().toLowerCase().endsWith('.zip'), 'Full JSON export did not download a ZIP archive.');
+}
+
 async function verifyBackupImport(page, archive) {
   const archivePath = await archive.path();
   assert(archivePath, 'Workspace export archive was not available for import.');
@@ -1323,12 +1343,13 @@ try {
   const backupWorkspace = `browser UI backup workspace ${stamp}`;
   await createAndSelectWorkspace(page, backupWorkspace);
   const backupArchive = await verifyBackupExport(page);
+  await verifyFullJsonBackupExport(page);
   await verifyBackupImport(page, backupArchive);
   await switchWorkspace(page, backupWorkspace, '默认工作区');
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace backup export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
