@@ -83,6 +83,13 @@ function waitForTrpcMutation(page, procedure) {
   );
 }
 
+function waitForTrpcQuery(page, procedure) {
+  return page.waitForResponse(
+    response => response.url().includes(`/api/trpc/${procedure}`),
+    { timeout: 15_000 },
+  );
+}
+
 async function runTrpcFixtureMutation(page, procedure, input) {
   const result = await page.evaluate(async ({ procedure, input }) => {
     const storedToken = window.localStorage.getItem('blinkoraToken');
@@ -759,6 +766,26 @@ async function verifyFullJsonBackupImport(page, archive) {
   }
 }
 
+async function verifyOperationLogSettings(page, content) {
+  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
+  const initialLoad = waitForTrpcQuery(page, 'operationLogs.list');
+  await page.getByRole('button', { name: '操作日志', exact: true }).click();
+  const initialResponse = await initialLoad;
+  assert(initialResponse.ok(), 'Operation log initial list request failed.', { status: initialResponse.status() });
+  const contentPrefix = content.slice(0, 48);
+  await page.getByText(contentPrefix, { exact: false }).first().waitFor({ state: 'visible', timeout: 10_000 });
+
+  const filteredLoad = waitForTrpcQuery(page, 'operationLogs.list');
+  await page.getByLabel('变更字段', { exact: true }).click();
+  await page.getByRole('option', { name: '正文', exact: true }).click();
+  const filteredResponse = await filteredLoad;
+  assert(filteredResponse.ok(), 'Operation log content-field filter request failed.', { status: filteredResponse.status() });
+  const result = (await filteredResponse.json())?.result?.data?.json;
+  assert(result?.items?.length > 0 && result.items.every(item => item.changedFields?.includes('content')),
+    'Operation log content-field filter returned an unrelated record.', result);
+  await page.getByText(contentPrefix, { exact: false }).first().waitFor({ state: 'visible', timeout: 10_000 });
+}
+
 async function verifyBackupImport(page, archive) {
   const archivePath = await archive.path();
   assert(archivePath, 'Workspace export archive was not available for import.');
@@ -1368,6 +1395,7 @@ try {
   await verifyWithoutTagFilter(page, untaggedFilterContent);
   await invokeCardMenuAction(page, untaggedFilterContent, 'TrashItem', 'notes.trashMany');
   await deleteRecycledCard(page, untaggedFilterContent);
+  await verifyOperationLogSettings(page, updatedNote);
   const fontFixture = await createFontFixture(page);
   await verifyFontSelection(page, fontFixture);
   const deletedFont = await runTrpcFixtureMutation(page, 'fonts.delete', { id: fontFixture.id });
@@ -1384,7 +1412,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link/Todo-content/without-tag filters with reset and reload retention, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
