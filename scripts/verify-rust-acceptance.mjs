@@ -21,6 +21,7 @@ function run(name, command, args, env = {}) {
 
 run('rust smoke script syntax', 'node', ['--check', 'scripts/rust-smoke.mjs']);
 run('strict S3 smoke script syntax', 'node', ['--check', 'scripts/s3-smoke.mjs']);
+run('local S3 smoke script syntax', 'bash', ['-n', 'scripts/s3-smoke-local.sh']);
 run('SQLite runtime residuals', 'node', ['scripts/verify-sqlite-runtime-residuals.mjs']);
 run('FNAS systemd unit template', 'node', ['scripts/verify-fnas-systemd-unit.mjs']);
 run('workspace agent smoke script syntax', 'node', ['--check', 'scripts/workspace-agent-smoke.mjs']);
