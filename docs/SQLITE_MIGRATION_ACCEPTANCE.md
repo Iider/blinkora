@@ -5,7 +5,7 @@
 ## 本次候选
 
 - 基线提交：`f061365fa802e63ccbe1090aa9c0c837b8064057`（迁移前运行时）。
-- 候选提交：`e4a9fe4`（SQLite 运行时替换、验收门禁、浏览器兼容性、两步验证登录、PostgreSQL 残留防回归、REST/MCP/搜索边界差分，以及不完整附件备份的零写入拒绝）。
+- 候选提交：`c158b13`（SQLite 运行时替换、验收门禁、浏览器兼容性、两步验证登录、PostgreSQL 残留防回归、REST/MCP/搜索边界差分、不完整附件备份的零写入拒绝，以及本机部署旧数据库环境清理）。
 - 部署范围：`blinkora_local` 仅在 macOS 本机持久化模式部署，不包含飞牛部署。本记录不把模板校验视为飞牛实机验收，也不据此宣称飞牛或全平台已通过。
 - 平台：macOS arm64、本地文件系统、OrbStack Docker、PostgreSQL 14.23、SQLite CLI 3.x、Rust 1.96。
 - 数据规模：真实接口 smoke；2,100 条批量笔记；10 客户端 300 秒并发；物理备份/空目录恢复；PostgreSQL 真实迁移夹具。
@@ -30,7 +30,7 @@
 | 异常启动拒绝 | 损坏 SQLite 页启动时报完整性错误；只读 bind mount 报 `Read-only file system`；32 KiB tmpfs 报磁盘 I/O 错误，三者均以非零退出且未返回健康。未来 schema 版本由 Rust 集成测试覆盖并明确拒绝。 |
 | 强制终止恢复 | 在 20,000 个 hashtag 的笔记写入/标签同步请求中对服务发送 `SIGKILL`，客户端请求失败。重启后健康检查正常，`integrity_check=ok`、外键检查为 0，写入中的笔记、标签关系和标签均为 0 条，未出现半写。 |
 | 同机 p95 性能 | 同一 macOS arm64 主机、同一迁移夹具、PostgreSQL 与 SQLite macOS release 二进制各采样 100 次、预热 20 次：SQLite/PG p95 为列表 27.6%（2.604/9.446 ms）、详情 36.5%（2.470/6.770 ms）、子串搜索 40.0%（3.014/7.540 ms）、写入 21.8%（3.290/15.091 ms），均低于 120% 门槛。 |
-| 导入导出性能 | 同机 release 夹具执行 Workspace/full × Markdown/JSON 各 5 次；每次导入后删除导入 Workspace，双方都回到 2 个 Workspace。SQLite/PG 的导出、导入 p95 比例分别为：Workspace Markdown 24.1%/13.2%、Workspace JSON 27.5%/14.4%、full Markdown 39.7%/11.8%、full JSON 28.6%/13.0%，全部低于 150% 门槛。 |
+| 导入导出性能 | 固定基线 `f061365` 与候选 `c158b13` 在同一 macOS arm64 主机使用 release 二进制、原生 PostgreSQL 14 和由其无损迁移出的 SQLite；夹具只含 smoke 生成的 2 个 Workspace、16 条笔记、6 个本地附件，不复用真实数据或 S3。Workspace/full × Markdown/JSON 各执行 5 次，每次导入后删除导入 Workspace，双方都回到 2 个 Workspace。SQLite/PG 的导出、导入 p95 比例分别为：Workspace Markdown 66.2%/70.3%、Workspace JSON 64.1%/88.7%、full Markdown 66.4%/52.2%、full JSON 51.5%/38.6%，全部低于 150% 门槛；最终 `integrity_check=ok`、外键检查为 0。指标和迁移计数保存在 `~/.blinkora/acceptance-evidence-20260716/backup-performance-synthetic-*-c158b13.json` 及同目录迁移日志，权限均为 `0600`。 |
 | 构建与 Docker 运行时 | `bun run build:web --force`、`bun run verify:rust`、macOS 原生 `cargo build --release --locked --manifest-path server/Cargo.toml`、当前候选的 `bun run build:rust-release`（arm64）及强制 amd64 Docker build 均通过，产物分别为 aarch64 与 x86-64 Linux ELF。`docker compose config --services` 仅输出 `web`，无 PostgreSQL 端口或服务。隔离 arm64 runtime 实际将临时 `DATA_DIR` 挂载到 `/app/.blinkora`（正式镜像的默认路径）：健康检查、静态首页、完整 `smoke:rust` 与 `smoke:agent` 均通过。容器重建后原账号可登录；离线前后账号/笔记/附件行数均为 `1/16/6`，`integrity_check=ok`、外键检查为 0。数据目录为 `0700`，数据库及 WAL 为 `0600`。 |
 | PostgreSQL 残留防回归 | `verify:rust` 会执行 `scripts/verify-sqlite-runtime-residuals.mjs`：检查 17 个部署文档、模板与 Compose 文件不含 PostgreSQL URL、`psql`、旧容器名、默认端口或运行时环境变量；检查 30 个正式运行时源文件不含 PostgreSQL 专用 backend 或 SQL 语法，并要求 Compose 只定义 `web` 服务。 |
 | 浏览器核心 smoke | 同一隔离 SQLite Docker 实例中，桌面和 390×844 移动视口均完成真实登录与主界面验证；笔记列表、带附件笔记、底部导航与移动侧栏开合正常。最新候选重新构建后，以全新登录标签页验证桌面待办页和编辑器，以及 390×844 待办页；控制台 error、warn、warning 均为 0。当前 macOS 原生本地服务也已验证未登录的桌面与 390×844 登录、注册页正常渲染，控制台 error、warn、warning 均为 0。 |
