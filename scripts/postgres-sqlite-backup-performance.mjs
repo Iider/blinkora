@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 
 const postgresBase = process.env.BLINKORA_POSTGRES_BASE_URL || '';
@@ -10,6 +11,9 @@ const samples = Math.max(3, Number(process.env.BLINKORA_BACKUP_PERF_SAMPLES || 5
 const format = process.env.BLINKORA_BACKUP_PERF_FORMAT || 'markdown';
 const scope = process.env.BLINKORA_BACKUP_PERF_SCOPE || 'workspace';
 const reportPath = process.env.BLINKORA_BACKUP_PERF_REPORT_PATH || '';
+const workspaceIdText = process.env.BLINKORA_BACKUP_PERF_WORKSPACE_ID || '';
+const workspaceId = workspaceIdText ? Number(workspaceIdText) : null;
+const isolatedRun = process.env.BLINKORA_BACKUP_PERF_ISOLATED === '1';
 
 if (!postgresBase || !sqliteBase || !user || !password) {
   throw new Error(
@@ -18,6 +22,18 @@ if (!postgresBase || !sqliteBase || !user || !password) {
 }
 if (!['markdown', 'json'].includes(format) || !['workspace', 'full'].includes(scope)) {
   throw new Error('BLINKORA_BACKUP_PERF_FORMAT must be markdown or json; BLINKORA_BACKUP_PERF_SCOPE must be workspace or full');
+}
+if (workspaceId !== null && (!Number.isInteger(workspaceId) || workspaceId <= 0)) {
+  throw new Error('BLINKORA_BACKUP_PERF_WORKSPACE_ID must be a positive integer when provided');
+}
+if (!isolatedRun) {
+  throw new Error('BLINKORA_BACKUP_PERF_ISOLATED=1 is required because this test imports and deletes temporary workspaces');
+}
+for (const [label, base] of [['PostgreSQL', postgresBase], ['SQLite', sqliteBase]]) {
+  const hostname = new URL(base).hostname;
+  if (!['127.0.0.1', 'localhost', '::1'].includes(hostname)) {
+    throw new Error(`${label} backup performance service must use a loopback URL`);
+  }
 }
 
 function percentile(values, ratio) {
@@ -44,7 +60,10 @@ async function request(base, route, options = {}) {
     // Export downloads are ZIP files and intentionally bypass JSON parsing.
   }
   if (!response.ok || json?.error) {
-    throw new Error(`${options.method || 'GET'} ${route} failed (${response.status}): ${text.slice(0, 500)}`);
+    const bodyHash = createHash('sha256').update(text).digest('hex');
+    throw new Error(
+      `${options.method || 'GET'} ${route} failed (${response.status}); response-bytes=${Buffer.byteLength(text)}; sha256=${bodyHash}`,
+    );
   }
   return { response, text, json };
 }
@@ -59,10 +78,18 @@ async function login(base) {
   return result.json.token;
 }
 
+function authenticatedHeaders(token, extra = {}) {
+  return {
+    Authorization: `Bearer ${token}`,
+    ...(workspaceId === null ? {} : { 'x-workspace-id': String(workspaceId) }),
+    ...extra,
+  };
+}
+
 async function trpc(base, procedure, input, token) {
   const result = await request(base, `/api/trpc/${procedure}`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    headers: authenticatedHeaders(token, { 'content-type': 'application/json' }),
     body: JSON.stringify({ json: input }),
   });
   return result.json?.result?.data?.json;
@@ -72,12 +99,18 @@ async function exportBackup(base, token) {
   const startedAt = performance.now();
   const exportResult = await request(base, '/api/trpc/task.exportMarkdown', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    headers: authenticatedHeaders(token, { 'content-type': 'application/json' }),
     body: JSON.stringify({ json: { format, scope } }),
   });
-  const downloadUrl = exportResult.json?.result?.data?.json?.downloadUrl;
+  const exportData = exportResult.json?.result?.data?.json;
+  if (exportData?.missingFileCount !== 0) {
+    throw new Error('backup export is incomplete; refusing to import or clean up temporary workspaces');
+  }
+  const downloadUrl = exportData?.downloadUrl;
   if (!downloadUrl) throw new Error('export response has no downloadUrl');
-  const download = await fetch(`${base}${downloadUrl}`, { headers: { Authorization: `Bearer ${token}` } });
+  const download = await fetch(`${base}${downloadUrl}`, {
+    headers: authenticatedHeaders(token),
+  });
   if (!download.ok) throw new Error(`export download failed (${download.status})`);
   const bytes = new Uint8Array(await download.arrayBuffer());
   return { elapsedMs: performance.now() - startedAt, bytes };
@@ -90,11 +123,14 @@ async function importBackup(base, token, bytes, fileName) {
   form.append('file', new Blob([bytes], { type: 'application/zip' }), fileName);
   const result = await request(base, '/api/backup/import', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
+    headers: authenticatedHeaders(token),
     body: form,
   });
   if (result.json?.success !== true || result.json.workspaceCount < 1) {
     throw new Error('import response did not report a restored workspace');
+  }
+  if (result.json.missingAttachmentFiles !== 0) {
+    throw new Error('backup import is incomplete; refusing to delete the imported workspace');
   }
   return {
     elapsedMs: performance.now() - startedAt,
@@ -123,9 +159,13 @@ async function main() {
       const archive = await exportBackup(base, token);
       exported.push(archive.elapsedMs);
       archiveBytes.push({ backend: label, bytes: archive.bytes.length });
-      const restored = await importBackup(base, token, archive.bytes, `backup-performance-${label}-${index}.zip`);
-      imported.push(restored.elapsedMs);
-      await deleteImportedWorkspaces(base, token, restored.workspaceIds);
+      let restored;
+      try {
+        restored = await importBackup(base, token, archive.bytes, `backup-performance-${label}-${index}.zip`);
+        imported.push(restored.elapsedMs);
+      } finally {
+        if (restored) await deleteImportedWorkspaces(base, token, restored.workspaceIds);
+      }
     };
     if (runPostgresFirst) {
       await run(postgresBase, postgresToken, postgresExport, postgresImport, 'postgres');
@@ -147,6 +187,8 @@ async function main() {
     samples,
     format,
     scope,
+    workspaceId,
+    isolatedRun,
     archiveBytes,
     export: {
       postgres: exportPostgres,

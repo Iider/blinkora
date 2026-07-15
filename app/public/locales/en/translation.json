@@ -94,6 +94,7 @@
   "error.unsupported-export-format": "Unsupported export format.",
   "error.unsupported-export-scope": "Unsupported export scope.",
   "error.backup-manifest-not-found": "Backup manifest not found.",
+  "error.backup-attachment-file-missing": "The backup is missing an attachment file; no data was imported.",
   "error.promise-page-state-array-required": "The paginated request returned an invalid format.",
   "error.network-request-failed": "Network request failed. Please check whether the service is available.",
   "error.request-timeout": "The request timed out. Please try again later.",

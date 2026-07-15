@@ -80,6 +80,7 @@ const exactErrorKeys: Record<string, string> = {
   "unsupported export format": "error.unsupported-export-format",
   "unsupported export scope": "error.unsupported-export-scope",
   "backup manifest not found": "error.backup-manifest-not-found",
+  "backup attachment file is missing": "error.backup-attachment-file-missing",
   "PromisePageState function must return array": "error.promise-page-state-array-required",
   "Failed to fetch": "error.network-request-failed",
   "NetworkError when attempting to fetch resource.": "error.network-request-failed",

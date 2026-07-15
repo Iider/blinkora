@@ -10,7 +10,7 @@ use axum::{Json, Router};
 use futures::FutureExt;
 use serde_json::{json, Map, Value};
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
@@ -178,17 +178,67 @@ async fn import_backup(
         workspaces.iter().collect()
     };
 
+    // A backup is only safe to import when every restorable attachment is
+    // physically present in the archive. Falling back to the source path here
+    // would make the imported workspace share ownership of the original S3
+    // object; deleting the import could then delete the source object's bytes.
+    validate_import_attachment_files(&archive_bytes, &selected_workspaces).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "backup attachment file is missing" })),
+        )
+    })?;
+
     let _write_guard = state.write_guard().await;
     let mut file_staging =
         ImportFileStaging::new(&state.config.data_dir).map_err(internal_error)?;
+    let mut attachment_path_maps = Vec::with_capacity(selected_workspaces.len());
+    let mut restored_attachment_files = 0usize;
+    for item in &selected_workspaces {
+        let mut attachment_path_map = HashMap::new();
+        for attachment in item
+            .get("attachments")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if !is_restorable_attachment(attachment) {
+                continue;
+            }
+            let old_path = attachment.get("path").and_then(Value::as_str).unwrap_or("");
+            let file_ref = attachment
+                .get("fileRef")
+                .and_then(Value::as_str)
+                .expect("attachment archive was preflighted");
+            let content = read_zip_file(&archive_bytes, file_ref).map_err(|_| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": "backup attachment file is missing" })),
+                )
+            })?;
+            let original_name = attachment
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("attachment");
+            let new_path = file_staging
+                .stage(&content, original_name)
+                .map_err(internal_error)?;
+            attachment_path_map.insert(old_path.to_string(), new_path);
+            restored_attachment_files += 1;
+        }
+        attachment_path_maps.push(attachment_path_map);
+    }
+
     let mut tx = state.pool().begin().await.map_err(internal_error)?;
     let mut imported_workspace_ids = Vec::new();
     let mut imported_note_count = 0usize;
     let mut imported_attachment_count = 0usize;
-    let mut restored_attachment_files = 0usize;
-    let mut missing_attachment_files = 0usize;
+    let missing_attachment_files = 0usize;
 
-    for item in selected_workspaces {
+    for (item, attachment_path_map) in selected_workspaces
+        .into_iter()
+        .zip(attachment_path_maps.iter())
+    {
         let workspace = item.get("workspace").unwrap_or(item);
         let source_name = workspace
             .get("name")
@@ -271,38 +321,6 @@ async fn import_backup(
                 .map_err(internal_error)?;
         }
 
-        let mut attachment_path_map: HashMap<String, String> = HashMap::new();
-        for attachment in item
-            .get("attachments")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            let old_path = attachment.get("path").and_then(Value::as_str).unwrap_or("");
-            let Some(file_ref) = attachment.get("fileRef").and_then(Value::as_str) else {
-                if is_restorable_attachment(attachment) {
-                    missing_attachment_files += 1;
-                }
-                continue;
-            };
-            let original_name = attachment
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("attachment");
-            match read_zip_file(&archive_bytes, file_ref) {
-                Ok(content) => {
-                    let new_path = file_staging
-                        .stage(&content, original_name)
-                        .map_err(internal_error)?;
-                    attachment_path_map.insert(old_path.to_string(), new_path);
-                    restored_attachment_files += 1;
-                }
-                Err(_) => {
-                    missing_attachment_files += 1;
-                }
-            }
-        }
-
         let mut note_id_map: HashMap<i32, i32> = HashMap::new();
         for note in item
             .get("notes")
@@ -313,7 +331,7 @@ async fn import_backup(
             let old_id = note.get("id").and_then(Value::as_i64).unwrap_or_default() as i32;
             let content = replace_attachment_paths(
                 note.get("content").and_then(Value::as_str).unwrap_or(""),
-                &attachment_path_map,
+                attachment_path_map,
             );
             let note_type = note.get("type").and_then(Value::as_i64).unwrap_or(0) as i32;
             let is_archived = note
@@ -1125,6 +1143,40 @@ fn read_zip_file(archive_bytes: &[u8], file_ref: &str) -> anyhow::Result<Vec<u8>
     Ok(content)
 }
 
+fn validate_import_attachment_files(
+    archive_bytes: &[u8],
+    workspaces: &[&Value],
+) -> anyhow::Result<()> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes))?;
+    let mut file_refs = HashSet::new();
+    for workspace in workspaces {
+        for attachment in workspace
+            .get("attachments")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if !is_restorable_attachment(attachment) {
+                continue;
+            }
+            let Some(file_ref) = attachment
+                .get("fileRef")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+            else {
+                bail!("backup attachment file is missing");
+            };
+            if !file_refs.insert(file_ref.to_string()) {
+                continue;
+            }
+            let Ok(_) = archive.by_name(file_ref) else {
+                bail!("backup attachment file is missing");
+            };
+        }
+    }
+    Ok(())
+}
+
 fn set_private_directory(path: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
@@ -1236,7 +1288,130 @@ fn internal_error(error: impl std::fmt::Display) -> (StatusCode, Json<Value>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{read_attachment_for_export, ImportFileStaging};
+    use super::{read_attachment_for_export, validate_import_attachment_files, ImportFileStaging};
+    use crate::handlers::test_support::HandlerTestFixture;
+    use axum::body::{to_bytes, Body};
+    use axum::http::{Request, StatusCode};
+    use serde_json::json;
+    use std::io::Write;
+    use tower::ServiceExt;
+
+    fn backup_archive(file_ref: Option<&str>) -> (Vec<u8>, serde_json::Value) {
+        let mut attachment = json!({
+            "name": "evidence.txt",
+            "path": "/api/s3file/source/evidence.txt",
+            "type": "text/plain"
+        });
+        if let Some(file_ref) = file_ref {
+            attachment["fileRef"] = json!(file_ref);
+        }
+        let workspace = json!({ "attachments": [attachment] });
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(cursor);
+        if let Some(file_ref) = file_ref {
+            zip.start_file(file_ref, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"isolated attachment bytes").unwrap();
+        }
+        zip.start_file("manifest.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(
+            serde_json::to_string(&json!({
+                "schema": "blinkora.backup.v1",
+                "workspaces": [workspace.clone()]
+            }))
+            .unwrap()
+            .as_bytes(),
+        )
+        .unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        (bytes, workspace)
+    }
+
+    fn multipart_import_body(boundary: &str, archive: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+        write!(
+            body,
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"mode\"\r\n\r\nworkspace\r\n"
+        )
+        .unwrap();
+        write!(
+            body,
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"incomplete.zip\"\r\nContent-Type: application/zip\r\n\r\n"
+        )
+        .unwrap();
+        body.extend_from_slice(archive);
+        write!(body, "\r\n--{boundary}--\r\n").unwrap();
+        body
+    }
+
+    #[test]
+    fn import_preflight_requires_every_restorable_attachment_file() {
+        let (archive, workspace) = backup_archive(None);
+        let selected = vec![&workspace];
+
+        let error = validate_import_attachment_files(&archive, &selected).unwrap_err();
+
+        assert_eq!(error.to_string(), "backup attachment file is missing");
+    }
+
+    #[test]
+    fn import_preflight_reads_complete_attachment_files() {
+        let file_ref = "files/workspace-1/attachment-1/evidence.txt";
+        let (archive, workspace) = backup_archive(Some(file_ref));
+        let selected = vec![&workspace];
+
+        validate_import_attachment_files(&archive, &selected).unwrap();
+    }
+
+    #[tokio::test]
+    async fn incomplete_import_returns_bad_request_before_database_or_file_writes() {
+        let fixture = HandlerTestFixture::new("backup-missing-attachment").await;
+        let workspace_count_before: i64 = sqlx::query_scalar("SELECT count(*) FROM workspaces")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+        let (archive, _) = backup_archive(None);
+        let boundary = "blinkora-import-safety-boundary";
+        let token = crate::auth::generate_jwt(
+            fixture.account_id,
+            "owner",
+            "Owner",
+            "superadmin",
+            &fixture.ctx.state.config.auth_secret,
+        )
+        .unwrap();
+        let response = super::router()
+            .with_state(fixture.ctx.state.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/import")
+                    .header("authorization", format!("Bearer {token}"))
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(multipart_import_body(boundary, &archive)))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let response_body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&response_body).unwrap(),
+            json!({ "error": "backup attachment file is missing" })
+        );
+        let workspace_count_after: i64 = sqlx::query_scalar("SELECT count(*) FROM workspaces")
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+        assert_eq!(workspace_count_after, workspace_count_before);
+        assert!(!fixture.data_dir.join("files/.imports").exists());
+        fixture.cleanup().await;
+    }
 
     #[tokio::test]
     async fn imported_files_are_visible_only_after_activation_and_removed_on_rollback() {
