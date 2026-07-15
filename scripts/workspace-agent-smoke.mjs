@@ -46,7 +46,11 @@ function redact(value) {
 }
 
 async function request(path, options = {}) {
-  const response = await fetch(base + path, options);
+  const response = await fetchWithContext(
+    `request ${path}`,
+    base + path,
+    options,
+  );
   const text = await response.text();
   let json = null;
   try {
@@ -58,9 +62,22 @@ async function request(path, options = {}) {
 }
 
 async function requestBytes(path, options = {}) {
-  const response = await fetch(base + path, options);
+  const response = await fetchWithContext(
+    `request bytes ${path}`,
+    base + path,
+    options,
+  );
   const bytes = new Uint8Array(await response.arrayBuffer());
   return { response, bytes };
+}
+
+async function fetchWithContext(label, url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    error.message = `${label}: ${error.message}`;
+    throw error;
+  }
 }
 
 function trpcData(payload) {
@@ -359,14 +376,18 @@ async function main() {
     new Blob([readableAttachmentBody], { type: "text/plain" }),
     `agent-readable-${stamp}.txt`,
   );
-  const readableAttachmentUpload = await fetch(base + "/api/file/upload", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accountToken}`,
-      "x-workspace-id": String(workspaceA.id),
+  const readableAttachmentUpload = await fetchWithContext(
+    "seed readable attachment",
+    base + "/api/file/upload",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accountToken}`,
+        "x-workspace-id": String(workspaceA.id),
+      },
+      body: readableAttachmentForm,
     },
-    body: readableAttachmentForm,
-  });
+  );
   const readableAttachment = await readableAttachmentUpload
     .json()
     .catch(() => null);
@@ -409,17 +430,19 @@ async function main() {
     },
   );
 
-  const deniedAttachmentForm = new FormData();
-  deniedAttachmentForm.append(
-    "file",
-    new Blob(["denied"], { type: "text/plain" }),
-    `agent-denied-${stamp}.txt`,
+  // The auth layer must reject this route before multipart parsing. Sending a
+  // streaming body would let the server close it after the 401 while Node is
+  // still writing, obscuring the response as a client-side EPIPE.
+  const agentAttachmentUpload = await fetchWithContext(
+    "reject agent attachment upload",
+    base + "/api/file/upload",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${agentToken}`,
+      },
+    },
   );
-  const agentAttachmentUpload = await fetch(base + "/api/file/upload", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${agentToken}` },
-    body: deniedAttachmentForm,
-  });
   assert(
     agentAttachmentUpload.status === 401,
     "workspace token cannot upload attachment files",
@@ -858,6 +881,9 @@ try {
 } catch (error) {
   await cleanup();
   console.error(`\nFAIL: ${error.message}`);
+  if (error.cause) {
+    console.error("Cause:", error.cause);
+  }
   if (error.details !== undefined) {
     console.error(
       typeof error.details === "string"
