@@ -512,7 +512,7 @@ async function verifyCardStateActions(page, note, blinkora) {
   await noteCard(page, blinkora).waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-async function verifyComment(page, note, content) {
+async function openCommentDialog(page, note) {
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
   const card = noteCard(page, note);
   await card.waitFor({ state: 'visible', timeout: 10_000 });
@@ -522,6 +522,16 @@ async function verifyComment(page, note, content) {
 
   const dialog = page.getByRole('dialog').filter({ hasText: '评论' }).last();
   await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  return dialog;
+}
+
+function commentEntry(dialog, content) {
+  return dialog
+    .getByText(content, { exact: true })
+    .locator('xpath=ancestor::*[@data-comment-id][1]');
+}
+
+async function submitComment(page, dialog, content, procedure) {
   const editor = await visibleElement(
     page,
     dialog.locator('#vditor-comment [contenteditable="true"]'),
@@ -529,7 +539,7 @@ async function verifyComment(page, note, content) {
   );
   await editor.click();
   await page.keyboard.insertText(content);
-  const created = waitForTrpcMutation(page, 'comments.create');
+  const created = waitForTrpcMutation(page, procedure);
   const submit = await visibleElement(
     page,
     dialog.locator('[role="button"][aria-label="提交"]'),
@@ -537,9 +547,49 @@ async function verifyComment(page, note, content) {
   );
   await submit.click();
   const response = await created;
-  assert(response.ok(), 'Create annotation request failed.', { status: response.status() });
+  assert(response.ok(), `${procedure} request failed.`, { status: response.status() });
   await dialog.getByText(content, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function verifyCommentTree(page, note, content) {
+  const dialog = await openCommentDialog(page, note);
+  await submitComment(page, dialog, content, 'comments.create');
+
+  const root = commentEntry(dialog, content);
+  await root.getByRole('button', { name: '回复', exact: true }).click();
+  await dialog.locator('[data-comment-composer-context="true"]').waitFor({ state: 'visible', timeout: 10_000 });
+
+  const reply = `${content} reply`;
+  await submitComment(page, dialog, reply, 'comments.create');
+  const replyEntry = commentEntry(dialog, reply);
+  const rootId = await root.getAttribute('data-comment-id');
+  assert(rootId, 'Root comment id is missing.');
+  const thread = dialog.locator(`[data-comment-thread-id="${rootId}"]`);
+  assert(await thread.locator('[data-comment-id]').count() === 2, 'Comment reply was not rendered in its root thread.');
+  await replyEntry.getByRole('button', { name: '编辑', exact: true }).click();
+  await dialog.locator('[data-comment-composer-context="true"]').getByText('编辑', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+
+  const replyEditor = await visibleElement(
+    page,
+    dialog.locator('#vditor-comment [contenteditable="true"]'),
+    'Reply editor',
+  );
+  await replyEditor.click();
+  const updatedReply = `${reply} (edited)`;
+  await page.keyboard.press('Meta+A');
+  await page.keyboard.insertText(updatedReply);
+  const updated = waitForTrpcMutation(page, 'comments.update');
+  const submit = await visibleElement(
+    page,
+    dialog.locator('[role="button"][aria-label="提交"]'),
+    'Comment update submit action',
+  );
+  await submit.click();
+  const response = await updated;
+  assert(response.ok(), 'Update comment reply request failed.', { status: response.status() });
+  await dialog.getByText(updatedReply, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   await page.keyboard.press('Escape');
+  return { root: content, reply: updatedReply };
 }
 
 async function moveCardToDefaultWorkspace(page, content) {
@@ -569,7 +619,7 @@ async function switchWorkspace(page, currentWorkspace, targetWorkspace) {
   await page.locator('button').filter({ hasText: targetWorkspace }).first().waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-async function verifyMovedCardData(page, note, comment) {
+async function verifyMovedCardData(page, note, comments) {
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
   await noteCard(page, note).waitFor({ state: 'visible', timeout: 10_000 });
 
@@ -578,25 +628,21 @@ async function verifyMovedCardData(page, note, comment) {
   await card.locator('button[data-drag-ignore="true"][aria-label*="评论"]').click();
   const dialog = page.getByRole('dialog').filter({ hasText: '评论' }).last();
   await dialog.waitFor({ state: 'visible', timeout: 10_000 });
-  await dialog.getByText(comment, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  for (const content of comments) {
+    await dialog.getByText(content, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  }
   await page.keyboard.press('Escape');
 }
 
 async function deleteComment(page, note, content) {
-  await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
-  const card = noteCard(page, note);
-  await card.waitFor({ state: 'visible', timeout: 10_000 });
-  await card.hover();
-  await card.locator('button[data-drag-ignore="true"][aria-label*="评论"]').click();
-
-  const dialog = page.getByRole('dialog').filter({ hasText: '评论' }).last();
-  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
-  await dialog.getByText(content, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  const dialog = await openCommentDialog(page, note);
+  const entry = commentEntry(dialog, content);
+  await entry.waitFor({ state: 'visible', timeout: 10_000 });
   const deleted = waitForTrpcMutation(page, 'comments.delete');
-  await dialog.getByRole('button', { name: '删除', exact: true }).click();
+  await entry.getByRole('button', { name: '删除', exact: true }).click();
   const response = await deleted;
   assert(response.ok(), 'Delete annotation request failed.', { status: response.status() });
-  await dialog.getByText(content, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
+  await entry.waitFor({ state: 'hidden', timeout: 10_000 });
   await page.keyboard.press('Escape');
 }
 
@@ -809,13 +855,14 @@ try {
   await editNote(page, todo, updatedTodo, undefined, 'todo');
   await verifyTodoCompletion(page, updatedTodo);
   await verifyCardStateActions(page, updatedNote, stateActionBlinkora);
-  await verifyComment(page, updatedNote, comment);
+  const commentTree = await verifyCommentTree(page, updatedNote, comment);
   await verifyAttachmentFilter(page, updatedNote);
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
   await moveCardToDefaultWorkspace(page, updatedNote);
   await switchWorkspace(page, workspace, '默认工作区');
-  await verifyMovedCardData(page, updatedNote, comment);
-  await deleteComment(page, updatedNote, comment);
+  await verifyMovedCardData(page, updatedNote, [commentTree.root, commentTree.reply]);
+  await deleteComment(page, updatedNote, commentTree.reply);
+  await deleteComment(page, updatedNote, commentTree.root);
   await verifyGlobalResourceSearch(page, attachmentName);
   await verifyResourceFolders(page, {
     attachmentName,
@@ -837,7 +884,7 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation create/delete, attachment filter/reset, pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment filter/reset, pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();

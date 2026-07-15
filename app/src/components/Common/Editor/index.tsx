@@ -111,6 +111,9 @@ const Editor = observer(({ content, onChange, onSend, isSendLoading, originFiles
   }
 
   useEditorInit(store, onChange, onSend, mode, originReference, initalContent, initialNoteType);
+  useEffect(() => {
+    store.setCallbacks(onChange, onSend);
+  }, [onChange, onSend, store]);
   useEditorEvents(store);
   useEditorFiles(store, blinkora, originFiles);
   useEditorHeight(onHeightChange, blinkora, content, store);

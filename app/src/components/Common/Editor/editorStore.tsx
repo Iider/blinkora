@@ -436,6 +436,14 @@ export class EditorStore {
     }
   }
 
+  setCallbacks = (
+    onChange: ((markdown: string) => void) | undefined,
+    onSend: (args: OnSendContentType) => Promise<any>,
+  ) => {
+    this.onChange = onChange ?? null;
+    this.onSend = onSend;
+  }
+
   isShowEditorToolbar(isPc: boolean) {
     const blinkora = RootStore.Get(BlinkoraStore)
     let showToolbar = true
