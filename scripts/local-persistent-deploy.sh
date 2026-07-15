@@ -97,6 +97,26 @@ set_env_value() {
   mv "$temporary" "$ENV_FILE"
 }
 
+remove_legacy_database_env() {
+  local legacy_pattern
+  local temporary
+  local removed=false
+  legacy_pattern='^[[:space:]]*(DATABASE_URL|PGHOST|PGPORT|PGUSER|PGPASSWORD|PGDATABASE|POSTGRES[A-Z0-9_]*)='
+  temporary="$(mktemp "$APP_HOME/.blinkora.env.XXXXXX")"
+  if grep -Eq "$legacy_pattern" "$ENV_FILE"; then
+    removed=true
+  fi
+  awk -v legacy_pattern="$legacy_pattern" '
+    $0 ~ legacy_pattern { next }
+    { print }
+  ' "$ENV_FILE" > "$temporary"
+  if [[ "$removed" == true ]]; then
+    echo "removed deprecated PostgreSQL settings from $ENV_FILE"
+  fi
+  chmod 600 "$temporary"
+  mv "$temporary" "$ENV_FILE"
+}
+
 sync_runtime_paths() {
   set_env_value PUBLIC_PATH "$RELEASE_DIR/public"
   set_env_value SCHEMA_PATH "$RELEASE_DIR/db/schema.sqlite.sql"
@@ -120,6 +140,7 @@ EOF
     chmod 600 "$ENV_FILE"
     echo "created $ENV_FILE"
   fi
+  remove_legacy_database_env
   sync_runtime_paths
 }
 
