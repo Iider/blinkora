@@ -607,11 +607,50 @@ async function deleteFolder(page, folderName) {
   await page.getByText(folderName, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
-async function verifyResourceFolders(page, rootFolder, renamedRootFolder, nestedFolder, disposableFolder) {
+async function cutResource(page, resourceName) {
+  await openResourceMenu(page, resourceName);
+  const cut = page.locator('[data-key="cut"]').last();
+  await cut.waitFor({ state: 'visible', timeout: 10_000 });
+  await cut.click();
+}
+
+async function pasteResourceIntoFolder(page, folderName) {
+  await openResourceMenu(page, folderName);
+  const paste = page.locator('[data-key="paste"]').last();
+  await paste.waitFor({ state: 'visible', timeout: 10_000 });
+  const moved = waitForTrpcMutation(page, 'attachments.move');
+  await paste.click();
+  const response = await moved;
+  assert(response.ok(), 'Move resource into folder request failed.', { status: response.status() });
+}
+
+async function moveResourceToParent(page, resourceName) {
+  await openResourceMenu(page, resourceName);
+  const moveToParent = page.locator('[data-key="moveToParent"]').last();
+  await moveToParent.waitFor({ state: 'visible', timeout: 10_000 });
+  const moved = waitForTrpcMutation(page, 'attachments.move');
+  await moveToParent.click();
+  const response = await moved;
+  assert(response.ok(), 'Move resource to parent request failed.', { status: response.status() });
+}
+
+async function verifyResourceFolders(page, {
+  attachmentName,
+  rootFolder,
+  renamedRootFolder,
+  nestedFolder,
+  disposableFolder,
+  siblingFolder,
+  siblingFolderWithPrefix,
+}) {
   await page.goto(new URL('/resources', base).toString(), { waitUntil: 'networkidle' });
   await page.getByRole('button', { name: '新建文件夹', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   await createFolder(page, rootFolder);
   await renameFolder(page, rootFolder, renamedRootFolder);
+
+  await cutResource(page, attachmentName);
+  await pasteResourceIntoFolder(page, renamedRootFolder);
+  await page.getByText(attachmentName, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
 
   await page.getByText(renamedRootFolder, { exact: true }).click();
   await page.waitForFunction(
@@ -620,10 +659,18 @@ async function verifyResourceFolders(page, rootFolder, renamedRootFolder, nested
     { timeout: 10_000 },
   );
   await page.getByText('根目录', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await page.getByText(attachmentName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await moveResourceToParent(page, attachmentName);
+  await page.getByText(attachmentName, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
   await createFolder(page, nestedFolder);
 
   await page.getByText('根目录', { exact: true }).click();
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('folder'), undefined, { timeout: 10_000 });
+  await page.getByText(attachmentName, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await createFolder(page, siblingFolder);
+  await createFolder(page, siblingFolderWithPrefix);
+  await deleteFolder(page, siblingFolder);
+  await page.getByText(siblingFolderWithPrefix, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   await createFolder(page, disposableFolder);
   await deleteFolder(page, disposableFolder);
 }
@@ -675,6 +722,8 @@ try {
   const renamedRootFolder = `browser UI folder renamed ${stamp}`;
   const nestedFolder = `browser UI nested folder ${stamp}`;
   const disposableFolder = `browser UI disposable folder ${stamp}`;
+  const siblingFolder = `browser UI sibling folder ${stamp}`;
+  const siblingFolderWithPrefix = `${siblingFolder} preserved`;
   const comment = `browser UI comment ${stamp}`;
   const attachmentName = `browser-ui-attachment-${stamp}.txt`;
 
@@ -706,11 +755,19 @@ try {
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyMovedCardData(page, updatedNote, comment);
   await deleteComment(page, updatedNote, comment);
-  await verifyResourceFolders(page, rootFolder, renamedRootFolder, nestedFolder, disposableFolder);
+  await verifyResourceFolders(page, {
+    attachmentName,
+    rootFolder,
+    renamedRootFolder,
+    nestedFolder,
+    disposableFolder,
+    siblingFolder,
+    siblingFolderWithPrefix,
+  });
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation create/delete, attachment filter/reset, pagination page-two reload/out-of-range reset, global search, resource folder rename/nesting/delete; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, annotation create/delete, attachment filter/reset, pagination page-two reload/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();

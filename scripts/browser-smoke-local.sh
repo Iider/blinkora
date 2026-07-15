@@ -155,6 +155,10 @@ SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name 
   echo "error: browser smoke did not persist its renamed root and nested resource folders" >&2
   exit 1
 }
+[[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM attachments WHERE name = '.folder' AND \"perfixPath\" LIKE 'browser UI sibling folder % preserved';")" == "1" ]] || {
+  echo "error: browser smoke deleted the protected same-prefix sibling folder" >&2
+  exit 1
+}
 [[ "$(sqlite3 "$DB_PATH" 'SELECT count(*) FROM notes WHERE "isTop"=1;')" == "1" ]] || {
   echo "error: browser smoke did not persist the pinned Note" >&2
   exit 1
