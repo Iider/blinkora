@@ -498,6 +498,23 @@ async function verifyPaginationAfterDeletion(page, {
   await noteCard(page, deletedContent).waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
+async function archiveCards(page, contents) {
+  await page.goto(listUrl().toString(), { waitUntil: 'networkidle' });
+  for (const content of contents) {
+    await invokeCardMenuAction(page, content, 'ArchivedItem');
+    await noteCard(page, content).waitFor({ state: 'hidden', timeout: 10_000 });
+  }
+}
+
+async function restoreArchivedCards(page, contents) {
+  await page.goto(listUrl('archived').toString(), { waitUntil: 'networkidle' });
+  for (const content of contents) {
+    const card = noteCard(page, content);
+    await invokeCardMenuAction(page, content, 'ArchivedItem');
+    await card.waitFor({ state: 'hidden', timeout: 10_000 });
+  }
+}
+
 function noteCard(page, content) {
   return page.locator('.blinkora-flip-card').filter({ hasText: content });
 }
@@ -525,7 +542,22 @@ async function visibleElement(page, locator, description) {
 }
 
 async function openCardMenu(page, content) {
-  const card = noteCard(page, content);
+  let card = noteCard(page, content);
+  if (await card.count() === 0) {
+    const currentUrl = new URL(page.url());
+    for (const pageNumber of [undefined, 2]) {
+      const candidateUrl = new URL(currentUrl);
+      if (pageNumber) {
+        candidateUrl.searchParams.set('page', String(pageNumber));
+      } else {
+        candidateUrl.searchParams.delete('page');
+      }
+      if (candidateUrl.toString() === page.url()) continue;
+      await page.goto(candidateUrl.toString(), { waitUntil: 'networkidle' });
+      card = noteCard(page, content);
+      if (await card.count()) break;
+    }
+  }
   await card.waitFor({ state: 'visible', timeout: 10_000 });
   await card.hover();
   await card.getByRole('button', { name: '更多信息', exact: true }).click();
@@ -1030,11 +1062,28 @@ try {
     deletedContent: allPaginationPages.secondPageContents[0],
     expectedRemainingCardCount: 10,
   });
+  const blinkoraPaginationContents = [updatedBlinkora, ...paginationBlinkoras];
+  await archiveCards(page, blinkoraPaginationContents);
+  const archivedPaginationPages = await verifyPagination(page, {
+    path: 'archived',
+    fixtureName: 'Archived Blinkora',
+    paginationContents: blinkoraPaginationContents,
+  });
+  await verifyPaginationAfterDeletion(page, {
+    path: 'archived',
+    fixtureName: 'Archived Blinkora',
+    deletedContent: archivedPaginationPages.secondPageContents[0],
+    remainingContent: archivedPaginationPages.secondPageContents[1],
+  });
+  await restoreArchivedCards(
+    page,
+    blinkoraPaginationContents.filter(content => content !== archivedPaginationPages.secondPageContents[0]),
+  );
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all-list pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all/archive pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
