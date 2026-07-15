@@ -209,7 +209,9 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
 
   loadingLock = true;
   private requestVersion = 0;
-  private pendingResetArgs?: Parameters<T>;
+  private pendingRequest?:
+    | { kind: 'reset'; args: Parameters<T> }
+    | { kind: 'page'; page: number; args: Parameters<T> };
 
   toJSON() {
     return {
@@ -324,11 +326,15 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
       }
     } finally {
       this.loading.setValue(false);
-      const pendingResetArgs = this.pendingResetArgs;
-      this.pendingResetArgs = undefined;
-      if (pendingResetArgs) {
+      const pendingRequest = this.pendingRequest;
+      this.pendingRequest = undefined;
+      if (pendingRequest) {
         queueMicrotask(() => {
-          void this.resetAndCall(...pendingResetArgs);
+          if (pendingRequest.kind === 'reset') {
+            void this.resetAndCall(...pendingRequest.args);
+          } else {
+            void this.setPageAndCall(pendingRequest.page, ...pendingRequest.args);
+          }
         });
       }
     }
@@ -341,25 +347,32 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
     if (this.loading.value) {
       // A workspace switch can supersede a still-running list request.
       this.requestVersion++;
-      this.pendingResetArgs = args;
+      this.pendingRequest = { kind: 'reset', args };
       return;
     }
     //@ts-ignore
     return await this.call(...args)
   }
   async setPageAndCall(page: number, ...args: Parameters<T>): Promise<Awaited<U> | undefined> {
-    if (this.loading.value) return
     const nextPage = Math.max(1, Math.min(Number(page) || 1, this.totalPages || Number(page) || 1));
     this.isLoadAll = false
     this.page = nextPage
+    if (this.loading.value) {
+      // Navigation can race a previous query (for example, an out-of-range
+      // redirect followed by selecting page two). Keep the newest page rather
+      // than leaving the URL and rendered cards out of sync.
+      this.requestVersion++;
+      this.pendingRequest = { kind: 'page', page: nextPage, args };
+      return;
+    }
     //@ts-ignore
     return await this.call(...args)
   }
   async callNextPage(...args: Parameters<T>): Promise<Awaited<U> | undefined> {
-    if (this.loading.value) return
     if (this.isPaginationMode) {
       return this.setPageAndCall(this.page + 1, ...args)
     }
+    if (this.loading.value) return
     this.page++
     //@ts-ignore
     return await this.call(...args)

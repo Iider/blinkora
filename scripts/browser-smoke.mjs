@@ -410,7 +410,19 @@ async function configurePagination(page) {
   await page.waitForFunction(() => localStorage.getItem('pageSize') === '10', undefined, { timeout: 10_000 });
 }
 
-async function verifyPagination(page, { path, fixtureName, paginationContents }) {
+async function renderedFixtureContents(page, paginationContents) {
+  const cardTexts = await page.locator('.blinkora-flip-card').allTextContents();
+  return cardTexts
+    .map(cardText => paginationContents.find(content => cardText.includes(content)))
+    .filter(content => content !== undefined);
+}
+
+async function verifyPagination(page, {
+  path,
+  fixtureName,
+  paginationContents,
+  expectedSecondPageCardCount = 2,
+}) {
   await page.goto(listUrl(path).toString(), { waitUntil: 'networkidle' });
   const pagination = page.locator('[data-note-pagination="true"]');
   await pagination.waitFor({ state: 'visible', timeout: 10_000 });
@@ -424,30 +436,34 @@ async function verifyPagination(page, { path, fixtureName, paginationContents })
   });
   await pageTwo.click();
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
-  await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 2, undefined, { timeout: 10_000 });
-  const secondPageContents = [];
-  for (const content of paginationContents) {
-    if (await noteCard(page, content).count()) {
-      secondPageContents.push(content);
-    }
-  }
-  assert(secondPageContents.length === 2,
-    `Pagination page two did not contain exactly two known ${fixtureName} fixtures.`, { secondPageContents });
+  await page.waitForFunction(
+    (expectedCount) => document.querySelectorAll('.blinkora-flip-card').length === expectedCount,
+    expectedSecondPageCardCount,
+    { timeout: 10_000 },
+  );
+  const secondPageContents = await renderedFixtureContents(page, paginationContents);
+  assert(secondPageContents.length === expectedSecondPageCardCount,
+    `Pagination page two did not contain exactly ${expectedSecondPageCardCount} known ${fixtureName} fixtures.`, { secondPageContents });
 
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
-  await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 2, undefined, { timeout: 10_000 });
+  await page.waitForFunction(
+    (expectedCount) => document.querySelectorAll('.blinkora-flip-card').length === expectedCount,
+    expectedSecondPageCardCount,
+    { timeout: 10_000 },
+  );
+  const reloadedSecondPageContents = await renderedFixtureContents(page, paginationContents);
+  assert(JSON.stringify(reloadedSecondPageContents) === JSON.stringify(secondPageContents),
+    `Pagination page two changed order after reloading ${fixtureName}.`, {
+      beforeReload: secondPageContents,
+      afterReload: reloadedSecondPageContents,
+    });
 
   await page.goto(listUrl(path, 999).toString(), { waitUntil: 'networkidle' });
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('page'), undefined, { timeout: 10_000 });
   await page.waitForFunction(() => document.querySelectorAll('.blinkora-flip-card').length === 10, undefined, { timeout: 10_000 });
 
-  const currentFirstPageContents = [];
-  for (const content of paginationContents) {
-    if (await noteCard(page, content).count()) {
-      currentFirstPageContents.push(content);
-    }
-  }
+  const currentFirstPageContents = await renderedFixtureContents(page, paginationContents);
   assert(currentFirstPageContents.length === 10,
     `Pagination page one did not contain exactly ten known ${fixtureName} fixtures after out-of-range reset.`, { currentFirstPageContents });
   return { firstPageContents: currentFirstPageContents, secondPageContents };
@@ -458,6 +474,7 @@ async function verifyPaginationAfterDeletion(page, {
   fixtureName,
   deletedContent,
   remainingContent,
+  expectedRemainingCardCount = 1,
 }) {
   await page.goto(listUrl(path, 2).toString(), { waitUntil: 'networkidle' });
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
@@ -470,9 +487,11 @@ async function verifyPaginationAfterDeletion(page, {
   assert(response.ok(), `Delete second-page ${fixtureName} request failed.`, { status: response.status() });
   await deletedCard.waitFor({ state: 'hidden', timeout: 10_000 });
   await page.waitForFunction(() => new URLSearchParams(window.location.search).get('page') === '2', undefined, { timeout: 10_000 });
-  await noteCard(page, remainingContent).waitFor({ state: 'visible', timeout: 10_000 });
-  assert(await page.locator('.blinkora-flip-card').count() === 1,
-    `Deleting a second-page ${fixtureName} did not keep the remaining card on page two.`);
+  if (remainingContent) {
+    await noteCard(page, remainingContent).waitFor({ state: 'visible', timeout: 10_000 });
+  }
+  assert(await page.locator('.blinkora-flip-card').count() === expectedRemainingCardCount,
+    `Deleting a second-page ${fixtureName} did not keep the expected card count on page two.`);
 
   await page.goto(listUrl('trash').toString(), { waitUntil: 'networkidle' });
   await invokeCardMenuAction(page, deletedContent, 'ArchivedItem');
@@ -991,11 +1010,31 @@ try {
     deletedContent: todoPaginationPages.secondPageContents[0],
     remainingContent: todoPaginationPages.secondPageContents[1],
   });
+  const allPaginationPages = await verifyPagination(page, {
+    path: 'all',
+    fixtureName: 'all-list',
+    paginationContents: [
+      updatedBlinkora,
+      ...paginationBlinkoras,
+      ...paginationNotes,
+      updatedTodo,
+      ...paginationTodos,
+    ],
+    expectedSecondPageCardCount: 10,
+  });
+  // Deleting a note changes its timestamp, which can legitimately reshuffle
+  // the global list. Check this snapshot after all type-specific mutations.
+  await verifyPaginationAfterDeletion(page, {
+    path: 'all',
+    fixtureName: 'all-list',
+    deletedContent: allPaginationPages.secondPageContents[0],
+    expectedRemainingCardCount: 10,
+  });
   await switchWorkspace(page, workspace, '默认工作区');
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, attachment/link filters with reset and reload retention, Blinkora/Note/Todo/all-list pagination page-two reload/delete retention/out-of-range reset, global search, resource folder rename/nesting/move/sibling-delete protection; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
