@@ -506,7 +506,11 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         .await?;
         let database_result: anyhow::Result<i32> = async {
             let mut tx = ctx.state.pool().begin().await?;
-            let (note_id, synced_content) = if let Some(id) = id {
+            let before_attachment_paths = match id {
+                Some(id) => note_attachment_paths_tx(&mut tx, id).await?,
+                None => HashSet::new(),
+            };
+            let (note_id, synced_content, mut operation_log) = if let Some(id) = id {
                 let old = note_snapshot_tx(&mut tx, id, user.id, ws).await?;
                 if let Some(old) = old {
                     let before_tags = note_tag_ids_tx(&mut tx, id).await?;
@@ -600,23 +604,17 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
 
                     let action = action_for_update(&changed_fields, &details);
                     let title = note_title(&next_content, id);
-                    insert_note_log_if_enabled_tx(
-                        &ctx,
-                        &mut tx,
-                        user,
-                        OperationLogDraft {
-                            action,
-                            note_id: id,
-                            note_type: next_note_type,
-                            previous_note_type: Some(old.note_type),
-                            note_title: title.clone(),
-                            changed_fields,
-                            summary: format!("Updated note: {title}"),
-                            details: Value::Object(details),
-                        },
-                    )
-                    .await?;
-                    (id, next_content)
+                    let operation_log = OperationLogDraft {
+                        action,
+                        note_id: id,
+                        note_type: next_note_type,
+                        previous_note_type: Some(old.note_type),
+                        note_title: title.clone(),
+                        changed_fields,
+                        summary: format!("Updated note: {title}"),
+                        details: Value::Object(details),
+                    };
+                    (id, next_content, operation_log)
                 } else {
                     bail!("Note not found");
                 }
@@ -675,23 +673,17 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                     details.insert("references".to_string(), ids_diff_detail(&[], &after_references));
                 }
                 let title = note_title(&content, note_id);
-                insert_note_log_if_enabled_tx(
-                    &ctx,
-                    &mut tx,
-                    user,
-                    OperationLogDraft {
-                        action: "create".to_string(),
-                        note_id,
-                        note_type,
-                        previous_note_type: None,
-                        note_title: title.clone(),
-                        changed_fields,
-                        summary: format!("Created note: {title}"),
-                        details: Value::Object(details),
-                    },
-                )
-                .await?;
-                (note_id, content)
+                let operation_log = OperationLogDraft {
+                    action: "create".to_string(),
+                    note_id,
+                    note_type,
+                    previous_note_type: None,
+                    note_title: title.clone(),
+                    changed_fields,
+                    summary: format!("Created note: {title}"),
+                    details: Value::Object(details),
+                };
+                (note_id, content, operation_log)
             };
             sync_attachments(
                 &mut tx,
@@ -721,6 +713,20 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
                 .execute(&mut *tx)
                 .await?;
             }
+            let after_attachment_paths = note_attachment_paths_tx(&mut tx, note_id).await?;
+            if before_attachment_paths != after_attachment_paths {
+                push_changed_field(&mut operation_log.changed_fields, "attachments");
+                if let Value::Object(details) = &mut operation_log.details {
+                    details.insert(
+                        "attachments".to_string(),
+                        json!({
+                            "beforeCount": before_attachment_paths.len(),
+                            "afterCount": after_attachment_paths.len()
+                        }),
+                    );
+                }
+            }
+            insert_note_log_if_enabled_tx(&ctx, &mut tx, user, operation_log).await?;
             tx.commit().await?;
             Ok(note_id)
         }
@@ -1288,6 +1294,17 @@ async fn note_snapshot_tx(
         is_top: row.get::<bool, _>("isTop"),
         is_reviewed: row.get::<bool, _>("isReviewed"),
     }))
+}
+
+async fn note_attachment_paths_tx(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    note_id: i32,
+) -> anyhow::Result<HashSet<String>> {
+    let paths = sqlx::query_scalar(r#"SELECT path FROM attachments WHERE "noteId"=$1"#)
+        .bind(note_id)
+        .fetch_all(&mut **tx)
+        .await?;
+    Ok(paths.into_iter().collect())
 }
 
 async fn note_tag_ids_tx(
@@ -2293,8 +2310,8 @@ mod tests {
     async fn note_update_deletes_attachment_with_history_in_one_transaction() {
         let fixture = HandlerTestFixture::new("note-attachment-delete").await;
         let note_id: i32 = sqlx::query_scalar(
-            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
-               VALUES ('before', blinkora_now(), $1, $2) RETURNING id"#,
+            r#"INSERT INTO notes (content, type, "updatedAt", "accountId", "workspaceId")
+               VALUES ('before', 1, blinkora_now(), $1, $2) RETURNING id"#,
         )
         .bind(fixture.account_id)
         .bind(fixture.workspace_id)
@@ -2323,7 +2340,6 @@ mod tests {
             fixture.ctx.clone(),
             json!({
                 "id": note_id,
-                "content": format!("after {api_path}"),
                 "attachments": [],
                 "deletedAttachmentPaths": [api_path]
             }),
@@ -2331,10 +2347,7 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(
-            updated.pointer("/content"),
-            Some(&json!(format!("after {api_path}")))
-        );
+        assert_eq!(updated.pointer("/content"), Some(&json!("before")));
         assert_eq!(updated.pointer("/attachments"), Some(&json!([])));
         assert!(!tokio::fs::try_exists(&file_path).await.unwrap());
         assert_eq!(
@@ -2355,6 +2368,13 @@ mod tests {
             .unwrap(),
             1
         );
+        let changed_fields: Value =
+            sqlx::query_scalar(r#"SELECT "changedFields" FROM "operationLog" WHERE "noteId"=$1"#)
+                .bind(note_id)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap();
+        assert_eq!(changed_fields, json!(["attachments"]));
         fixture.cleanup().await;
     }
 
@@ -2430,8 +2450,8 @@ mod tests {
     async fn failed_note_update_restores_staged_attachment_and_database_state() {
         let fixture = HandlerTestFixture::new("note-attachment-rollback").await;
         let note_id: i32 = sqlx::query_scalar(
-            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
-               VALUES ('before', blinkora_now(), $1, $2) RETURNING id"#,
+            r#"INSERT INTO notes (content, type, "updatedAt", "accountId", "workspaceId")
+               VALUES ('before', 1, blinkora_now(), $1, $2) RETURNING id"#,
         )
         .bind(fixture.account_id)
         .bind(fixture.workspace_id)
@@ -2467,7 +2487,6 @@ mod tests {
             fixture.ctx.clone(),
             json!({
                 "id": note_id,
-                "content": "after",
                 "attachments": [],
                 "deletedAttachmentPaths": [api_path]
             }),
@@ -2498,6 +2517,16 @@ mod tests {
                 .fetch_one(&fixture.pool)
                 .await
                 .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                r#"SELECT COUNT(*) FROM "operationLog" WHERE "noteId"=$1"#,
+            )
+            .bind(note_id)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
             0
         );
         fixture.cleanup().await;
