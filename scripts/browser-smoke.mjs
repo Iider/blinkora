@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+import { join } from 'node:path';
 import { chromium } from 'playwright';
 
 const base = new URL(process.env.BLINKORA_BASE_URL || 'http://127.0.0.1:6676');
 const browserExecutable = process.env.BLINKORA_BROWSER_EXECUTABLE
   || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`;
-const user = `browser_smoke_${stamp}`;
-const password = 'BrowserSmoke!local';
+const user = process.env.BLINKORA_BROWSER_SMOKE_USER || `browser_smoke_${stamp}`;
+const password = process.env.BLINKORA_BROWSER_SMOKE_PASSWORD || 'BrowserSmoke!local';
 const scenario = process.env.BLINKORA_BROWSER_SMOKE_SCENARIO?.trim() || 'full';
+const m1ArtifactsDir = process.env.BLINKORA_M1_REVIEW_ARTIFACTS_DIR?.trim() || '';
 const FONT_FIXTURE_PATH = '/System/Library/Fonts/Symbol.ttf';
 const NOTE_TYPE_LABELS = ['闪念', '笔记', '待办'];
 
@@ -33,6 +35,15 @@ function assertJsonEqual(actual, expected, message) {
     message,
     { actual, expected },
   );
+}
+
+async function captureM1Artifact(page, name, target = page) {
+  if (!m1ArtifactsDir) return;
+  mkdirSync(m1ArtifactsDir, { recursive: true, mode: 0o700 });
+  await target.screenshot({
+    path: join(m1ArtifactsDir, name),
+    animations: 'disabled',
+  });
 }
 
 function requireIsolatedTarget() {
@@ -62,6 +73,7 @@ function createDiagnostics(page, label) {
   page.on('response', response => {
     const responseUrl = new URL(response.url());
     if (responseUrl.origin === base.origin && response.status() >= 400) {
+      responseUrl.searchParams.delete('token');
       failures.push({
         label,
         kind: 'http',
@@ -310,9 +322,9 @@ async function editNote(page, originalContent, updatedContent, beforeSave, path 
   if (path === 'notes') {
     await card.click({ position: { x: 200, y: 80 } });
     await page.waitForTimeout(250);
-    const fullscreenEdit = page.getByRole('button', { name: '编辑', exact: true });
-    if (await fullscreenEdit.count()) {
-      await fullscreenEdit.click();
+    const fullscreen = page.locator('div.fixed.inset-0').filter({ hasText: originalContent }).last();
+    if (await fullscreen.isVisible()) {
+      await fullscreen.getByRole('button', { name: '编辑', exact: true }).click();
     } else {
       await card.dblclick({ position: { x: 200, y: 80 } });
     }
@@ -323,11 +335,17 @@ async function editNote(page, originalContent, updatedContent, beforeSave, path 
     await edit.click();
   }
 
-  const editEditor = page.locator('#vditor-edit .vditor-ir [contenteditable="true"]');
-  await editEditor.waitFor({ state: 'visible', timeout: 10_000 });
+  const editEditor = await visibleElement(
+    page,
+    page.locator('#vditor-edit [contenteditable="true"]'),
+    'Edit Note content area',
+  );
   await editEditor.click();
   await page.keyboard.press('End');
-  await page.keyboard.insertText(updatedContent.slice(originalContent.length));
+  const appendedContent = updatedContent.slice(originalContent.length);
+  if (appendedContent) {
+    await page.keyboard.insertText(appendedContent);
+  }
   await beforeSave?.();
   const response = await saveEditedNote(page);
   await noteCard(page, updatedContent).waitFor({ state: 'visible', timeout: 10_000 });
@@ -337,9 +355,12 @@ async function editNote(page, originalContent, updatedContent, beforeSave, path 
 async function attachFileToEditedNote(page, fileName, {
   mimeType = 'text/plain',
   buffer = Buffer.from(`temporary browser smoke attachment ${stamp}`),
+  previewSelector = '',
 } = {}) {
   const editorRoot = page.locator('#vditor-edit').locator('xpath=ancestor::*[.//input[@type="file"]][1]');
   const fileInput = editorRoot.locator('input[type="file"]');
+  const previews = previewSelector ? editorRoot.locator(`.attachment-container ${previewSelector}`) : null;
+  const previewCountBeforeUpload = previews ? await previews.count() : 0;
   await fileInput.waitFor({ state: 'attached', timeout: 10_000 });
   const uploaded = page.waitForResponse(
     response => response.request().method() === 'POST' && response.url().includes('/api/file/upload'),
@@ -353,7 +374,11 @@ async function attachFileToEditedNote(page, fileName, {
   const response = await uploaded;
   assert(response.ok(), 'Upload attachment request failed.', { status: response.status() });
   const uploadedFile = await response.json();
-  await page.getByText(fileName, { exact: true }).last().waitFor({ state: 'visible', timeout: 10_000 });
+  if (previews) {
+    await previews.nth(previewCountBeforeUpload).waitFor({ state: 'visible', timeout: 10_000 });
+  } else {
+    await page.getByText(fileName, { exact: true }).last().waitFor({ state: 'visible', timeout: 10_000 });
+  }
   return uploadedFile;
 }
 
@@ -955,9 +980,25 @@ async function createFontFixture(page) {
   return { id: font.id, name, displayName };
 }
 
+async function openPreferenceSettings(page) {
+  const url = new URL('/settings', base);
+  url.searchParams.set('section', 'prefer');
+  await page.goto(url.toString(), { waitUntil: 'networkidle' });
+  const marker = page.getByText('卡片加载方式', { exact: true });
+  try {
+    await marker.waitFor({ state: 'visible', timeout: 15_000 });
+  } catch {
+    fail('Preference settings did not render from its section URL.', {
+      url: page.url(),
+      buttons: await page.getByRole('button').allTextContents(),
+      body: (await page.locator('body').innerText()).slice(0, 1_500),
+      diagnostics: page.__blinkoraDiagnostics,
+    });
+  }
+}
+
 async function verifyFontSelection(page, font) {
-  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: '偏好', exact: true }).click();
+  await openPreferenceSettings(page);
   const fontButton = page.locator('[data-font-switcher-ready="true"]');
   await fontButton.waitFor({ state: 'visible', timeout: 10_000 });
 
@@ -969,7 +1010,7 @@ async function verifyFontSelection(page, font) {
   await page.waitForFunction(name => document.body.style.fontFamily.includes(name), font.name, { timeout: 10_000 });
 
   await page.reload({ waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: '偏好', exact: true }).click();
+  await page.getByText('卡片加载方式', { exact: true }).waitFor({ state: 'visible', timeout: 15_000 });
   await fontButton.waitFor({ state: 'visible', timeout: 10_000 });
   await page.waitForFunction(({ selector, displayName }) => (
     document.querySelector(selector)?.textContent?.includes(displayName)
@@ -1033,8 +1074,7 @@ async function createPaginationFixtures(page, {
 }
 
 async function configurePagination(page) {
-  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: '偏好', exact: true }).click();
+  await openPreferenceSettings(page);
 
   const loadModeItem = page.getByText('卡片加载方式', { exact: true }).locator('xpath=../../..');
   await loadModeItem.getByRole('button').click();
@@ -1350,9 +1390,33 @@ async function restoreRecycledCards(page, contents) {
 }
 
 async function verifyWorkspaceTokenGuide(page) {
-  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
+  const url = new URL('/settings', base);
+  url.searchParams.set('section', 'basic');
+  await page.goto(url.toString(), { waitUntil: 'networkidle' });
   const refreshToken = page.getByRole('button', { name: '刷新当前工作区令牌', exact: true });
-  await refreshToken.waitFor({ state: 'visible', timeout: 10_000 });
+  const basicSection = page.locator('[data-settings-section="basic"]');
+  try {
+    await basicSection.waitFor({ state: 'visible', timeout: 10_000 });
+  } catch {
+    fail('Basic settings did not render from its section URL.', {
+      url: page.url(),
+      body: (await page.locator('body').innerText()).slice(0, 1_500),
+      diagnostics: page.__blinkoraDiagnostics,
+    });
+  }
+  if (await basicSection.getByText('工作区令牌', { exact: true }).count() === 0) {
+    await basicSection.getByRole('button').first().click();
+  }
+  try {
+    await refreshToken.waitFor({ state: 'visible', timeout: 10_000 });
+  } catch {
+    fail('Workspace Agent token setting did not render.', {
+      url: page.url(),
+      sectionText: (await basicSection.innerText()).slice(0, 1_000),
+      buttons: await page.getByRole('button').allTextContents(),
+      diagnostics: page.__blinkoraDiagnostics,
+    });
+  }
   const created = waitForTrpcMutation(page, 'agentTokens.create');
   await refreshToken.click();
   const response = await created;
@@ -1366,8 +1430,9 @@ async function verifyWorkspaceTokenGuide(page) {
 }
 
 async function verifyStorageSettings(page) {
-  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: '存储', exact: true }).click();
+  const url = new URL('/settings', base);
+  url.searchParams.set('section', 'storage');
+  await page.goto(url.toString(), { waitUntil: 'networkidle' });
   const localStorage = page.getByRole('button', { name: '本地文件系统', exact: true });
   await localStorage.waitFor({ state: 'visible', timeout: 10_000 });
   await localStorage.click();
@@ -1382,13 +1447,13 @@ async function verifyStorageSettings(page) {
   assert(await validate.isDisabled(), 'Empty S3 configuration unexpectedly enabled validation.');
 
   await page.reload({ waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: '存储', exact: true }).click();
   await page.getByRole('button', { name: '本地文件系统', exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
 }
 
 async function verifyBackupExport(page) {
-  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: '备份与恢复', exact: true }).click();
+  const url = new URL('/settings', base);
+  url.searchParams.set('section', 'export');
+  await page.goto(url.toString(), { waitUntil: 'networkidle' });
   const exported = waitForTrpcMutation(page, 'task.exportMarkdown');
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: '导出', exact: true }).click();
@@ -1400,8 +1465,9 @@ async function verifyBackupExport(page) {
 }
 
 async function verifyFullJsonBackupExport(page) {
-  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
-  await page.getByRole('button', { name: '备份与恢复', exact: true }).click();
+  const url = new URL('/settings', base);
+  url.searchParams.set('section', 'export');
+  await page.goto(url.toString(), { waitUntil: 'networkidle' });
   await selectSelectOption(page, '[data-backup-export-scope-trigger="true"]', '全量备份导出');
   await selectSelectOption(page, '[data-backup-export-format-trigger="true"]', 'JSON 备份包（.zip）');
 
@@ -1468,11 +1534,10 @@ async function verifyFullJsonBackupImport(page, archive) {
 }
 
 async function openOperationLogSettings(page, content) {
-  await page.goto(new URL('/settings', base).toString(), { waitUntil: 'networkidle' });
-  const initialLoad = waitForTrpcQuery(page, 'operationLogs.list');
-  await page.getByRole('button', { name: '操作日志', exact: true }).click();
-  const initialResponse = await initialLoad;
-  assert(initialResponse.ok(), 'Operation log initial list request failed.', { status: initialResponse.status() });
+  const url = new URL('/settings', base);
+  url.searchParams.set('section', 'operationLog');
+  await page.goto(url.toString(), { waitUntil: 'networkidle' });
+  await page.locator('[data-operation-log-field-trigger="true"]').waitFor({ state: 'visible', timeout: 10_000 });
   const contentPrefix = content.slice(0, 48);
   await page.getByText(contentPrefix, { exact: false }).first().waitFor({ state: 'visible', timeout: 10_000 });
 }
@@ -2180,6 +2245,349 @@ async function verifyResourceFolders(page, {
   await deleteSelectedResources(page, disposableAttachmentNames);
 }
 
+function createSyntheticWav() {
+  const sampleRate = 8_000;
+  const sampleCount = Math.floor(sampleRate / 4);
+  const dataLength = sampleCount * 2;
+  const wav = Buffer.alloc(44 + dataLength);
+  wav.write('RIFF', 0);
+  wav.writeUInt32LE(36 + dataLength, 4);
+  wav.write('WAVE', 8);
+  wav.write('fmt ', 12);
+  wav.writeUInt32LE(16, 16);
+  wav.writeUInt16LE(1, 20);
+  wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(sampleRate, 24);
+  wav.writeUInt32LE(sampleRate * 2, 28);
+  wav.writeUInt16LE(2, 32);
+  wav.writeUInt16LE(16, 34);
+  wav.write('data', 36);
+  wav.writeUInt32LE(dataLength, 40);
+  for (let index = 0; index < sampleCount; index += 1) {
+    const sample = Math.round(Math.sin((2 * Math.PI * 440 * index) / sampleRate) * 4_000);
+    wav.writeInt16LE(sample, 44 + index * 2);
+  }
+  return wav;
+}
+
+async function createSyntheticWebm(page) {
+  const bytes = await page.evaluate(async () => {
+    if (typeof MediaRecorder === 'undefined') return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = 160;
+    canvas.height = 90;
+    const drawing = canvas.getContext('2d');
+    const stream = canvas.captureStream?.(12);
+    if (!drawing || !stream) return null;
+
+    const mimeType = ['video/webm;codecs=vp8', 'video/webm']
+      .find(candidate => MediaRecorder.isTypeSupported(candidate));
+    if (!mimeType) return null;
+
+    const chunks = [];
+    const recorder = new MediaRecorder(stream, { mimeType });
+    recorder.addEventListener('dataavailable', event => {
+      if (event.data.size > 0) chunks.push(event.data);
+    });
+    const stopped = new Promise(resolve => recorder.addEventListener('stop', resolve, { once: true }));
+    recorder.start(50);
+    for (let frame = 0; frame < 6; frame += 1) {
+      drawing.fillStyle = frame % 2 === 0 ? '#2563eb' : '#14b8a6';
+      drawing.fillRect(0, 0, canvas.width, canvas.height);
+      drawing.fillStyle = '#ffffff';
+      drawing.font = '20px sans-serif';
+      drawing.fillText(`M1 ${frame + 1}`, 45, 52);
+      await new Promise(resolve => setTimeout(resolve, 80));
+    }
+    recorder.stop();
+    await stopped;
+    stream.getTracks().forEach(track => track.stop());
+    const blob = new Blob(chunks, { type: mimeType });
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  });
+  assert(Array.isArray(bytes) && bytes.length > 100,
+    'Chrome could not create the isolated synthetic video fixture.');
+  return Buffer.from(bytes);
+}
+
+async function waitForMediaMetadata(media, description) {
+  await media.waitFor({ state: 'visible', timeout: 10_000 });
+  await media.evaluate(element => new Promise((resolve, reject) => {
+    if (!(element instanceof HTMLMediaElement)) {
+      reject(new Error('target is not media'));
+      return;
+    }
+    if (element.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      resolve(undefined);
+      return;
+    }
+    const timer = window.setTimeout(() => reject(new Error('metadata timeout')), 10_000);
+    element.addEventListener('loadedmetadata', () => {
+      window.clearTimeout(timer);
+      resolve(undefined);
+    }, { once: true });
+    element.addEventListener('error', () => {
+      window.clearTimeout(timer);
+      reject(new Error(element.error?.message || 'media error'));
+    }, { once: true });
+    element.load();
+  })).catch(async error => {
+    const details = await media.evaluate(async element => {
+      const source = element.querySelector('source');
+      const sourceUrl = source?.src || element.currentSrc || element.src;
+      const parsedUrl = sourceUrl ? new URL(sourceUrl, window.location.href) : null;
+      let resource = null;
+      if (sourceUrl) {
+        try {
+          const response = await fetch(sourceUrl, { headers: { Range: 'bytes=0-99' } });
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          resource = {
+            status: response.status,
+            contentType: response.headers.get('content-type'),
+            contentLength: response.headers.get('content-length'),
+            contentRange: response.headers.get('content-range'),
+            byteLength: bytes.length,
+            firstBytes: Array.from(bytes.slice(0, 16)),
+          };
+        } catch (fetchError) {
+          resource = { error: fetchError instanceof Error ? fetchError.message : String(fetchError) };
+        }
+      }
+      return {
+        tagName: element.tagName,
+        readyState: element.readyState,
+        networkState: element.networkState,
+        mediaError: element.error ? { code: element.error.code, message: element.error.message } : null,
+        sourcePath: parsedUrl?.pathname ?? null,
+        sourceQueryKeys: parsedUrl ? [...parsedUrl.searchParams.keys()] : [],
+        wavSupport: element.canPlayType?.('audio/wav') ?? '',
+        webmSupport: element.canPlayType?.('video/webm') ?? '',
+        resource,
+      };
+    });
+    fail(`${description} did not load metadata.`, {
+      error: error instanceof Error ? error.message : String(error),
+      ...details,
+    });
+  });
+}
+
+async function selectTheme(page, label, expectedClass) {
+  const avatarTrigger = page.getByText(user, { exact: true }).first();
+  await avatarTrigger.waitFor({ state: 'visible', timeout: 10_000 });
+  await avatarTrigger.click();
+  const option = page.getByText(label, { exact: true }).last();
+  await option.waitFor({ state: 'visible', timeout: 10_000 });
+  const updated = waitForTrpcMutation(page, 'config.update');
+  await option.click();
+  const response = await updated;
+  assert(response.ok(), `Switching to ${label} failed.`, { status: response.status() });
+  await option.waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.waitForFunction(theme => document.documentElement.classList.contains(theme), expectedClass, {
+    timeout: 10_000,
+  });
+}
+
+async function openFullscreenCard(page, content) {
+  const card = noteCard(page, content);
+  await card.waitFor({ state: 'visible', timeout: 10_000 });
+  await card.click({ position: { x: 200, y: 80 } });
+  const overlay = page.locator('div.fixed.inset-0').filter({ hasText: content }).last();
+  await overlay.waitFor({ state: 'visible', timeout: 10_000 });
+  return overlay;
+}
+
+async function verifyM1MobileReview(browser, workspace, content, diagnostics) {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+    locale: 'zh-CN',
+  });
+  const page = await context.newPage();
+  const mobileDiagnostics = createDiagnostics(page, 'm1-mobile');
+  await page.goto(new URL('/signin', base).toString(), { waitUntil: 'networkidle' });
+  await page.locator('input[type="text"]').fill(user);
+  await page.locator('input[name="password"]').fill(password);
+  await Promise.all([
+    page.waitForURL(new URL('/', base).toString(), { timeout: 10_000 }),
+    page.locator('form button').filter({ hasText: '登录' }).click(),
+  ]);
+  await page.waitForLoadState('networkidle');
+  await page.waitForFunction(() => document.body.innerText.includes('待办'), undefined, {
+    timeout: 10_000,
+  });
+  const workspaces = await runTrpcFixtureMutation(page, 'workspaces.list', {});
+  assert(Array.isArray(workspaces), 'M1 mobile review received an invalid Workspace list.');
+  const targetWorkspace = workspaces.find(item => item.name === workspace);
+  assert(Number.isInteger(targetWorkspace?.id), 'M1 mobile review could not resolve its isolated Workspace.', {
+    workspace,
+  });
+  await page.evaluate(workspaceId => {
+    window.localStorage.setItem('blinkoraCurrentWorkspaceId', JSON.stringify(workspaceId));
+  }, targetWorkspace.id);
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
+    'M1 mobile Note list introduced horizontal overflow.');
+  await captureM1Artifact(page, '08-mobile-list.png');
+
+  const overlay = await openFullscreenCard(page, content);
+  await captureM1Artifact(page, '09-mobile-fullscreen.png');
+  await page.goBack();
+  await overlay.waitFor({ state: 'hidden', timeout: 10_000 });
+  diagnostics.push(...mobileDiagnostics);
+  await context.close();
+}
+
+async function verifyM1VisualReview(page, browser, diagnostics) {
+  const workspace = `M1 visual workspace ${stamp}`;
+  const longMarker = `M1 长文排版 ${stamp}`;
+  const longContent = `# ${longMarker}\n\n普通正文不应被意外加粗，并保留 **重点**。\n\n## 二级标题\n\n- 第一项\n- 第二项\n\n> 引用内容\n\n\`inline code\`\n\n收尾段落用于检查全屏滚动和摘要。`;
+  const shortContent = `M1 短卡片 ${stamp}`;
+  const referenceA = `M1 多引用 A ${stamp}`;
+  const referenceB = `M1 多引用 B ${stamp}`;
+  const referenceC = `M1 多引用 C ${stamp}`;
+  const mediaContent = `M1 音视频 ${stamp}`;
+
+  await registerAndSignIn(page);
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: base.origin,
+  });
+  await createAndSelectWorkspace(page, workspace);
+  const longNote = await createNote(page, '笔记', longContent, 'path=notes', longMarker);
+  const otherNotes = [
+    await createNote(page, '笔记', shortContent, 'path=notes'),
+    await createNote(page, '笔记', referenceA, 'path=notes'),
+    await createNote(page, '笔记', referenceB, 'path=notes'),
+    await createNote(page, '笔记', referenceC, 'path=notes'),
+    await createNote(page, '笔记', mediaContent, 'path=notes'),
+  ];
+
+  for (const note of otherNotes) {
+    await runTrpcFixtureMutation(page, 'notes.reviewNote', { id: note.id });
+  }
+  await page.goto(new URL('/review', base).toString(), { waitUntil: 'networkidle' });
+  await page.getByText(longMarker, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  const reviewParagraph = page.locator('.blinkora-review-card-markdown .markdown-body p').first();
+  await reviewParagraph.waitFor({ state: 'visible', timeout: 10_000 });
+  const reviewFontWeight = Number.parseInt(await reviewParagraph.evaluate(element => getComputedStyle(element).fontWeight), 10);
+  assert(reviewFontWeight < 600, 'Daily review ordinary paragraph was rendered as bold text.', {
+    fontWeight: reviewFontWeight,
+  });
+  await captureM1Artifact(page, '00-daily-review.png');
+  assert(longNote.id > 0, 'M1 daily review fixture omitted its stable note id.');
+
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  await captureM1Artifact(page, '01-light-list.png');
+  await page.mouse.wheel(0, 500);
+  await page.waitForFunction(() => document.documentElement.classList.contains('scrollbar-active'), undefined, {
+    timeout: 5_000,
+  });
+  await page.waitForFunction(() => !document.documentElement.classList.contains('scrollbar-active'), undefined, {
+    timeout: 3_000,
+  });
+
+  const shortCard = noteCard(page, shortContent);
+  const shortCardMarker = `m1-short-card-${stamp}`;
+  await shortCard.evaluate((element, marker) => {
+    element.setAttribute('data-browser-smoke-card', marker);
+  }, shortCardMarker);
+  const stableShortCard = page.locator(`[data-browser-smoke-card="${shortCardMarker}"]`);
+  await flipCard(page, stableShortCard);
+  await stableShortCard.locator('[title="翻回正面"]').waitFor({ state: 'visible', timeout: 10_000 });
+  await captureM1Artifact(page, '02-card-back.png', stableShortCard);
+  await flipCard(page, stableShortCard);
+  await stableShortCard.getByText(shortContent, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+
+  await openCardMenu(page, shortContent);
+  const multiSelect = page.locator('[data-key="MutiSelectItem"]').last();
+  await multiSelect.waitFor({ state: 'visible', timeout: 10_000 });
+  await multiSelect.click();
+  const longCard = noteCard(page, longMarker);
+  await longCard.click({ position: { x: 300, y: 20 } });
+  await page.waitForTimeout(350);
+  assert((await longCard.locator('.blinkora-flip-face').getAttribute('class'))?.includes('ring-2'),
+    'Clicking the card header in multi-select mode did not select the card.');
+  assert(await longCard.locator('[title="翻回正面"]').count() === 0,
+    'Clicking the card header in multi-select mode unexpectedly flipped it.');
+  await captureM1Artifact(page, '03-multi-select.png');
+  await page.getByRole('button', { name: '关闭', exact: true }).last().click();
+
+  const fullscreen = await openFullscreenCard(page, longMarker);
+  await captureM1Artifact(page, '04-fullscreen-preview.png');
+  await fullscreen.getByRole('button', { name: '复制', exact: true }).click();
+  await page.getByText('已复制', { exact: true }).last().waitFor({ state: 'visible', timeout: 10_000 });
+  const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+  assert(clipboard.includes(longMarker), 'Fullscreen copy action omitted the Note content.');
+
+  await fullscreen.getByRole('button', { name: '添加评论', exact: true }).click();
+  const commentDialog = page.getByRole('dialog').filter({ hasText: '暂无评论' }).last();
+  await commentDialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await page.waitForTimeout(800);
+  await captureM1Artifact(page, '05-fullscreen-comment.png');
+  await commentDialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await commentDialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  await fullscreen.getByRole('button', { name: '编辑', exact: true }).click();
+  await page.locator('#vditor-edit').waitFor({ state: 'visible', timeout: 10_000 });
+  await fullscreen.getByRole('button', { name: '预览', exact: true }).click();
+  await page.locator('#vditor-edit').waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.keyboard.press('Escape');
+  await fullscreen.waitFor({ state: 'hidden', timeout: 10_000 });
+
+  await editNote(page, referenceA, referenceA, async () => {
+    await addReferenceToEditedNote(page, referenceB);
+    await addReferenceToEditedNote(page, referenceC);
+  });
+  await editNote(page, referenceB, referenceB, async () => {
+    await addReferenceToEditedNote(page, referenceA);
+  });
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  const referenceOverlay = await openFullscreenCard(page, referenceA);
+  const referenceCards = referenceOverlay.locator('.blinkora-reference');
+  assert(await referenceCards.count() === 2,
+    'The multi-reference fixture did not render exactly two distinct references.');
+  const mutualReferenceIcon = referenceCards.locator('svg:has(path[fill="currentColor"])');
+  assert(await mutualReferenceIcon.count() === 1,
+    'The reciprocal pair did not render exactly one mutual-reference icon.');
+  await captureM1Artifact(page, '06-multiple-references.png');
+  await page.keyboard.press('Escape');
+  await referenceOverlay.waitFor({ state: 'hidden', timeout: 10_000 });
+
+  const videoBytes = await createSyntheticWebm(page);
+  await editNote(page, mediaContent, mediaContent, async () => {
+    await attachFileToEditedNote(page, `m1-audio-${stamp}.wav`, {
+      mimeType: 'audio/wav',
+      buffer: createSyntheticWav(),
+      previewSelector: 'audio',
+    });
+    await attachFileToEditedNote(page, `m1-video-${stamp}.webm`, {
+      mimeType: 'video/webm',
+      buffer: videoBytes,
+      previewSelector: 'video',
+    });
+  });
+  const mediaCard = noteCard(page, mediaContent);
+  await waitForMediaMetadata(mediaCard.locator('audio').first(), 'Synthetic audio preview');
+  await waitForMediaMetadata(mediaCard.locator('video').first(), 'Synthetic video preview');
+  await captureM1Artifact(page, '07-audio-video.png');
+
+  await selectTheme(page, '深色模式', 'dark');
+  await captureM1Artifact(page, '10-dark-theme.png');
+  await selectTheme(page, '浅色模式', 'light');
+
+  await verifyM1MobileReview(browser, workspace, longMarker, diagnostics);
+  await page.goto(new URL('/review', base).toString(), { waitUntil: 'networkidle' });
+  await page.getByText(longMarker, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  const reviewed = waitForTrpcMutation(page, 'notes.reviewNote');
+  await page.getByRole('button', { name: '已回顾', exact: true }).click();
+  const reviewedResponse = await reviewed;
+  assert(reviewedResponse.ok(), 'M1 daily review request failed.', { status: reviewedResponse.status() });
+  await page.getByText(longMarker, { exact: true }).waitFor({ state: 'hidden', timeout: 10_000 });
+  assert(diagnostics.length === 0,
+    'M1 focused browser review observed console, page, or local HTTP errors.', diagnostics);
+}
+
 async function verifyMobile(browser, diagnostics) {
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
@@ -2187,7 +2595,7 @@ async function verifyMobile(browser, diagnostics) {
     hasTouch: true,
   });
   const page = await context.newPage();
-  diagnostics.push(...createDiagnostics(page, 'mobile'));
+  const mobileDiagnostics = createDiagnostics(page, 'mobile');
 
   await page.goto(new URL('/signin', base).toString(), { waitUntil: 'networkidle' });
   await page.locator('input[type="text"]').fill(user);
@@ -2203,6 +2611,7 @@ async function verifyMobile(browser, diagnostics) {
   await page.goto(new URL('/resources', base).toString(), { waitUntil: 'networkidle' });
   assert(await page.locator('#root').evaluate(element => element.getBoundingClientRect().height > 0),
     'Mobile resources route rendered a blank root.');
+  diagnostics.push(...mobileDiagnostics);
   await context.close();
 }
 
@@ -2225,6 +2634,21 @@ try {
     assert(diagnostics.length === 0,
       'Focused attachment transaction smoke reported an error response or console error.', diagnostics);
     console.log('focused browser smoke passed: transactional editor attachment deletion');
+  } else if (scenario === 'settings-review') {
+    await registerAndSignIn(page);
+    await createAndSelectWorkspace(page, `settings review workspace ${stamp}`);
+    const fontFixture = await createFontFixture(page);
+    await verifyFontSelection(page, fontFixture);
+    const deletedFont = await runTrpcFixtureMutation(page, 'fonts.delete', { id: fontFixture.id });
+    assert(deletedFont?.success === true, 'Deleting focused settings-review font fixture failed.');
+    await verifyWorkspaceTokenGuide(page);
+    await verifyStorageSettings(page);
+    assert(diagnostics.length === 0,
+      'Focused settings review reported an error response or console error.', diagnostics);
+    console.log('focused browser smoke passed: settings sections, local font, Workspace Agent token, and S3 form protection');
+  } else if (scenario === 'm1-review') {
+    await verifyM1VisualReview(page, browser, diagnostics);
+    console.log(`focused M1 browser review passed${m1ArtifactsDir ? `; artifacts: ${m1ArtifactsDir}` : ''}`);
   } else {
   const blinkora = `browser UI blinkora ${stamp}`;
   const tagParent = `browser_smoke_tag_${stamp.replace(/[^a-zA-Z0-9]/g, '')}`;

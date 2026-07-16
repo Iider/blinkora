@@ -1018,7 +1018,8 @@ assert(
 );
 
 const formData = new FormData();
-formData.append('file', new Blob([`hello rust upload ${stamp}`], { type: 'text/plain' }), `rust-smoke-${stamp}.txt`);
+const uploadContent = `hello rust upload ${stamp}`;
+formData.append('file', new Blob([uploadContent], { type: 'text/plain' }), `rust-smoke-${stamp}.txt`);
 const upload = await fetch(base + '/api/file/upload', {
   method: 'POST',
   headers: { Authorization: `Bearer ${token}`, 'x-workspace-id': String(workspaceId) },
@@ -1068,6 +1069,24 @@ assert(fileGet.response.status === 200 && fileGet.text.includes(String(stamp)), 
   status: fileGet.response.status,
   text: fileGet.text,
 });
+
+const browserFileGet = await request(
+  `${uploadJson.path}?token=${encodeURIComponent(token)}&workspaceId=${workspaceId}`,
+  { headers: { Range: 'bytes=0-4' } },
+);
+assert(
+  browserFileGet.response.status === 206
+    && browserFileGet.text === uploadContent.slice(0, 5)
+    && browserFileGet.response.headers.get('accept-ranges') === 'bytes'
+    && browserFileGet.response.headers.get('content-range') === `bytes 0-4/${uploadContent.length}`,
+  'workspace-scoped browser file range get',
+  {
+    status: browserFileGet.response.status,
+    text: browserFileGet.text,
+    acceptRanges: browserFileGet.response.headers.get('accept-ranges'),
+    contentRange: browserFileGet.response.headers.get('content-range'),
+  },
+);
 
 const orphanContent = `hello rust orphan resource ${stamp}`;
 const orphanFormData = new FormData();

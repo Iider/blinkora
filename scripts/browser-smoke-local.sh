@@ -12,6 +12,9 @@ fi
 PORT="${BLINKORA_BROWSER_SMOKE_PORT:-16683}"
 LABEL="com.blinkora.browser-smoke-${RANDOM}"
 SERVER_PID=""
+SMOKE_STAMP="$(date +%s)-$RANDOM"
+SMOKE_USER="${BLINKORA_BROWSER_SMOKE_USER:-browser_smoke_$SMOKE_STAMP}"
+SMOKE_PASSWORD="${BLINKORA_BROWSER_SMOKE_PASSWORD:-BrowserSmoke!local}"
 
 cleanup() {
   local status=$?
@@ -79,6 +82,8 @@ fi
 
 BLINKORA_BASE_URL="http://127.0.0.1:$PORT" \
 BLINKORA_BROWSER_SMOKE_ISOLATED=1 \
+BLINKORA_BROWSER_SMOKE_USER="$SMOKE_USER" \
+BLINKORA_BROWSER_SMOKE_PASSWORD="$SMOKE_PASSWORD" \
 bun run smoke:browser
 
 [[ "$(sqlite3 "$DB_PATH" 'PRAGMA integrity_check;')" == "ok" ]] || {
@@ -246,5 +251,47 @@ SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name 
 }
 # operationLog.noteId is an audit snapshot, intentionally not a foreign key:
 # deletion logs retain the original note id after the note itself is removed.
+
+if [[ "${BLINKORA_BROWSER_SMOKE_RUN_API:-0}" == "1" ]]; then
+  UPLOAD_BY_URL_PORT=$((PORT + 1))
+  if lsof -nP -iTCP:"$UPLOAD_BY_URL_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "error: browser API smoke upload-by-URL port $UPLOAD_BY_URL_PORT is already in use" >&2
+    exit 1
+  fi
+  BLINKORA_BASE_URL="http://127.0.0.1:$PORT" \
+  BLINKORA_SMOKE_USER="$SMOKE_USER" \
+  BLINKORA_SMOKE_PASSWORD="$SMOKE_PASSWORD" \
+  BLINKORA_UPLOAD_BY_URL_HOST=127.0.0.1 \
+  BLINKORA_UPLOAD_BY_URL_PORT="$UPLOAD_BY_URL_PORT" \
+  bun run smoke:rust
+
+  LOGIN_RESPONSE="$APP_HOME/agent-login.json"
+  curl --fail --silent --show-error \
+    --header 'content-type: application/json' \
+    --data "{\"name\":\"$SMOKE_USER\",\"password\":\"$SMOKE_PASSWORD\"}" \
+    --output "$LOGIN_RESPONSE" \
+    "http://127.0.0.1:$PORT/api/auth/login"
+  ACCOUNT_TOKEN="$(node -e '
+    const fs = require("node:fs");
+    const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (typeof payload.token !== "string" || payload.token.length === 0) process.exit(1);
+    process.stdout.write(payload.token);
+  ' "$LOGIN_RESPONSE")"
+  rm -f "$LOGIN_RESPONSE"
+
+  BLINKORA_BASE_URL="http://127.0.0.1:$PORT" \
+  BLINKORA_ACCOUNT_TOKEN="$ACCOUNT_TOKEN" \
+  bun run smoke:agent
+  unset ACCOUNT_TOKEN
+
+  [[ "$(sqlite3 "$DB_PATH" 'PRAGMA integrity_check;')" == "ok" ]] || {
+    echo "error: SQLite integrity_check failed after API and Agent smoke" >&2
+    exit 1
+  }
+  [[ -z "$(sqlite3 "$DB_PATH" 'PRAGMA foreign_key_check;')" ]] || {
+    echo "error: SQLite foreign_key_check reported rows after API and Agent smoke" >&2
+    exit 1
+  }
+fi
 
 echo "browser smoke local harness passed; temporary native service and SQLite data will now be removed"
