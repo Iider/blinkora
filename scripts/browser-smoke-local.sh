@@ -90,6 +90,18 @@ EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE type = 1 AND co
   echo "error: browser smoke could not find the edited Note" >&2
   exit 1
 }
+[[ "$(sqlite3 "$DB_PATH" "SELECT type FROM notes WHERE id=$EDITED_NOTE_ID;")" == "1" ]] || {
+  echo "error: browser smoke did not finish the Note type-conversion round trip" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "SELECT json_extract(metadata, '$.properties.browser_boolean') FROM notes WHERE id=$EDITED_NOTE_ID;")" == "1" \
+  && "$(sqlite3 "$DB_PATH" "SELECT json_array_length(metadata, '$.properties.browser_list') FROM notes WHERE id=$EDITED_NOTE_ID;")" == "3" \
+  && "$(sqlite3 "$DB_PATH" "SELECT json_type(metadata, '$.properties.browser_null') FROM notes WHERE id=$EDITED_NOTE_ID;")" == "null" \
+  && "$(sqlite3 "$DB_PATH" "SELECT json_extract(metadata, '$.properties.browser_number') FROM notes WHERE id=$EDITED_NOTE_ID;")" == "42.5" \
+  && "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM notes WHERE id=$EDITED_NOTE_ID AND json_extract(metadata, '$.properties.browser_string') LIKE 'property value %';")" == "1" ]] || {
+  echo "error: browser smoke did not preserve typed custom Note properties" >&2
+  exit 1
+}
 EDITED_BLINKORA_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE content LIKE 'browser UI blinkora %' AND content LIKE '%edited%' LIMIT 1;")"
 EDITED_BLINKORA_HISTORY_COUNT="0"
 if [[ -n "$EDITED_BLINKORA_ID" ]]; then
@@ -151,8 +163,28 @@ SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name 
   echo "error: browser smoke did not persist all three edited note contents" >&2
   exit 1
 }
+[[ "$(sqlite3 "$DB_PATH" "
+  SELECT count(*)
+  FROM notes
+  WHERE content LIKE 'browser UI pagination note %'
+    AND \"workspaceId\"=(SELECT id FROM workspaces WHERE \"isDefault\"=1 LIMIT 1);
+")" -ge 2 ]] || {
+  echo "error: browser smoke did not persist both Notes from its multi-select Workspace move" >&2
+  exit 1
+}
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM workspaces WHERE name LIKE 'browser UI workspace %';")" == "1" ]] || {
   echo "error: browser smoke did not persist its selected Workspace" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "
+  SELECT
+    (SELECT count(*) FROM workspaces WHERE name LIKE 'browser disposable workspace %')
+    + (SELECT count(*) FROM notes WHERE content LIKE 'browser disposable cascade note %')
+    + (SELECT count(*) FROM comments WHERE content LIKE 'browser disposable cascade comment %')
+    + (SELECT count(*) FROM attachments WHERE name LIKE 'browser-disposable-workspace-%')
+    + (SELECT count(*) FROM \"agentAccessTokens\" WHERE name LIKE 'browser disposable token %');
+")" == "0" ]] || {
+  echo "error: browser smoke left data behind after deleting its disposable Workspace" >&2
   exit 1
 }
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM attachments WHERE name = '.folder' AND \"perfixPath\" LIKE 'browser UI folder renamed %';")" == "2" ]] || {

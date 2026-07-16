@@ -2,6 +2,7 @@
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { chromium } from 'playwright';
 
 const base = new URL(process.env.BLINKORA_BASE_URL || 'http://127.0.0.1:6676');
@@ -23,6 +24,14 @@ function fail(message, details) {
 
 function assert(condition, message, details) {
   if (!condition) fail(message, details);
+}
+
+function assertJsonEqual(actual, expected, message) {
+  assert(
+    isDeepStrictEqual(actual, expected),
+    message,
+    { actual, expected },
+  );
 }
 
 function requireIsolatedTarget() {
@@ -161,6 +170,8 @@ async function registerAndSignIn(page) {
 }
 
 async function createAndSelectWorkspace(page, name) {
+  await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
+  await waitForApp(page);
   const currentWorkspace = page.locator('button').filter({ hasText: '默认工作区' }).first();
   await currentWorkspace.waitFor({ state: 'visible', timeout: 10_000 });
   await currentWorkspace.click();
@@ -183,6 +194,11 @@ async function createAndSelectWorkspace(page, name) {
   await createDialog.getByRole('button', { name: '创建', exact: true }).click();
   const response = await created;
   assert(response.ok(), 'Create workspace request failed.', { status: response.status() });
+  const createdWorkspace = await trpcResponseJson(response, 'workspaces.create');
+  assert(Number.isInteger(createdWorkspace?.id), 'Create workspace response omitted its stable id.', {
+    workspace: name,
+    returnedId: createdWorkspace?.id,
+  });
   await createDialog.waitFor({ state: 'hidden', timeout: 10_000 });
 
   const workspaceRadio = manageDialog.locator(`input[type="radio"][aria-label="切换工作区: ${name}"]`);
@@ -198,6 +214,7 @@ async function createAndSelectWorkspace(page, name) {
   await page.reload({ waitUntil: 'networkidle' });
   await waitForApp(page);
   await page.locator('button').filter({ hasText: name }).first().waitFor({ state: 'visible', timeout: 10_000 });
+  return createdWorkspace;
 }
 
 async function createNote(page, targetType, content, expectedPath, visibleContent = content) {
@@ -309,7 +326,10 @@ async function editNote(page, originalContent, updatedContent, beforeSave, path 
   await noteCard(page, updatedContent).waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-async function attachFileToEditedNote(page, fileName) {
+async function attachFileToEditedNote(page, fileName, {
+  mimeType = 'text/plain',
+  buffer = Buffer.from(`temporary browser smoke attachment ${stamp}`),
+} = {}) {
   const editorRoot = page.locator('#vditor-edit').locator('xpath=ancestor::*[.//input[@type="file"]][1]');
   const fileInput = editorRoot.locator('input[type="file"]');
   await fileInput.waitFor({ state: 'attached', timeout: 10_000 });
@@ -319,8 +339,8 @@ async function attachFileToEditedNote(page, fileName) {
   );
   await fileInput.setInputFiles({
     name: fileName,
-    mimeType: 'text/plain',
-    buffer: Buffer.from(`temporary browser smoke attachment ${stamp}`),
+    mimeType,
+    buffer,
   });
   const response = await uploaded;
   assert(response.ok(), 'Upload attachment request failed.', { status: response.status() });
@@ -349,6 +369,130 @@ async function saveEditedNote(page) {
   await sendButtons.last().click();
   const response = await saved;
   assert(response.ok(), 'Save edited note request failed.', { status: response.status() });
+}
+
+async function verifyNoteProperties(page, content, noteId, {
+  expectedAttachmentNames,
+  expectedReferenceId,
+}) {
+  const properties = {
+    browser_boolean: true,
+    browser_list: ['alpha', '中文', '🙂'],
+    browser_null: null,
+    browser_number: 42.5,
+    browser_string: `property value ${stamp}`,
+  };
+  const serializedValues = {
+    browser_boolean: 'true',
+    browser_list: JSON.stringify(properties.browser_list),
+    browser_null: 'null',
+    browser_number: String(properties.browser_number),
+    browser_string: properties.browser_string,
+  };
+
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  const card = noteCard(page, content);
+  await card.waitFor({ state: 'visible', timeout: 10_000 });
+  await card.click({ position: { x: 200, y: 80 } });
+
+  const editProperties = page.getByRole('button', { name: '编辑属性', exact: true });
+  await editProperties.waitFor({ state: 'visible', timeout: 10_000 });
+  await editProperties.click();
+
+  for (const [index, [key, value]] of Object.entries(serializedValues).entries()) {
+    const keyInputs = page.getByRole('textbox', { name: '属性', exact: true });
+    const valueInputs = page.getByRole('textbox', { name: '内容', exact: true });
+    await keyInputs.nth(index).fill(key);
+    await valueInputs.nth(index).fill(value);
+  }
+
+  const saved = waitForTrpcMutation(page, 'notes.upsert');
+  await page.getByRole('button', { name: '保存属性', exact: true }).click();
+  const response = await saved;
+  assert(response.ok(), 'Save Note properties request failed.', { status: response.status() });
+  const requestInput = trpcRequestJsonInput(response, 'notes.upsert');
+  assert(requestInput?.id === noteId, 'Save Note properties targeted an unexpected Note.', requestInput);
+  assertJsonEqual(Object.keys(requestInput).sort(), ['id', 'metadata'],
+    'Metadata-only Note update submitted unrelated replacement fields.');
+  assertJsonEqual(requestInput?.metadata?.properties, properties,
+    'Save Note properties changed a property value or JSON type.');
+
+  const returnedNote = await trpcResponseJson(response, 'notes.upsert');
+  assert(returnedNote?.id === noteId, 'Save Note properties returned an unexpected Note.', returnedNote);
+  assertJsonEqual(returnedNote?.metadata?.properties, properties,
+    'Save Note properties response changed a property value or JSON type.');
+  assertJsonEqual(
+    returnedNote?.attachments?.map(attachment => attachment.name).sort(),
+    [...expectedAttachmentNames].sort(),
+    'Metadata-only Note update changed its attachments.',
+  );
+  assert(
+    returnedNote?.references?.some(reference => reference.toNoteId === expectedReferenceId),
+    'Metadata-only Note update removed its outgoing reference.',
+    returnedNote?.references,
+  );
+
+  for (const key of Object.keys(properties)) {
+    await page.getByText(key, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  }
+  await page.keyboard.press('Escape');
+  await editProperties.waitFor({ state: 'hidden', timeout: 10_000 });
+  return { note: returnedNote, properties };
+}
+
+async function verifyNoteTypeConversions(page, visibleContent, expectedNote, expectedProperties) {
+  const conversions = [
+    { targetType: 0, path: '', label: 'Blinkora' },
+    { targetType: 2, path: 'todo', label: 'Todo' },
+    { targetType: 1, path: 'notes', label: 'Note' },
+  ];
+
+  for (const conversion of conversions) {
+    await openCardMenu(page, visibleContent);
+    const action = page.locator(`[data-key="ConvertItem-${conversion.targetType}"]`).last();
+    await action.waitFor({ state: 'visible', timeout: 10_000 });
+    const converted = waitForTrpcMutation(page, 'notes.upsert');
+    await action.click();
+    const response = await converted;
+    assert(response.ok(), `Convert Note to ${conversion.label} request failed.`, {
+      status: response.status(),
+    });
+
+    const requestInput = trpcRequestJsonInput(response, 'notes.upsert');
+    assert(
+      requestInput?.id === expectedNote.id && requestInput?.type === conversion.targetType,
+      `Convert Note to ${conversion.label} submitted an unexpected payload.`,
+      requestInput,
+    );
+    assert(
+      !['attachments', 'content', 'metadata', 'references'].some(key => Object.hasOwn(requestInput, key)),
+      `Convert Note to ${conversion.label} unexpectedly submitted unrelated replacement fields.`,
+      requestInput,
+    );
+    const returnedNote = await trpcResponseJson(response, 'notes.upsert');
+    assert(
+      returnedNote?.id === expectedNote.id
+        && returnedNote?.type === conversion.targetType
+        && returnedNote?.content === expectedNote.content,
+      `Convert Note to ${conversion.label} changed its identity or content.`,
+      returnedNote,
+    );
+    assertJsonEqual(returnedNote?.metadata?.properties, expectedProperties,
+      `Convert Note to ${conversion.label} changed its custom properties.`);
+    assertJsonEqual(
+      returnedNote?.attachments?.map(attachment => attachment.id).sort((left, right) => left - right),
+      expectedNote.attachments.map(attachment => attachment.id).sort((left, right) => left - right),
+      `Convert Note to ${conversion.label} changed its attachments.`,
+    );
+    assertJsonEqual(
+      returnedNote?.references?.map(reference => reference.toNoteId).sort((left, right) => left - right),
+      expectedNote.references.map(reference => reference.toNoteId).sort((left, right) => left - right),
+      `Convert Note to ${conversion.label} changed its references.`,
+    );
+
+    await page.goto(listUrl(conversion.path).toString(), { waitUntil: 'networkidle' });
+    await noteCard(page, visibleContent).waitFor({ state: 'visible', timeout: 10_000 });
+  }
 }
 
 async function verifyGlobalSearch(page, content) {
@@ -487,6 +631,52 @@ async function verifyWithoutTagFilter(page, content) {
   await openNoteFilters(page);
   await page.getByRole('button', { name: '重置', exact: true }).click();
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('withoutTag'), undefined, { timeout: 10_000 });
+}
+
+async function verifyTaggedAttachmentFilter(page, tagName, content) {
+  await page.goto(new URL('/?path=all', base).toString(), { waitUntil: 'networkidle' });
+  const apply = await openNoteFilters(page);
+  await page.locator('[data-filter-tag-status-trigger="true"]').click();
+  await page.getByRole('option', { name: '包含标签', exact: true }).click();
+
+  const tagSelector = page.getByPlaceholder('选择标签');
+  await tagSelector.waitFor({ state: 'visible', timeout: 10_000 });
+  await tagSelector.fill(tagName);
+  const tagOption = page.getByRole('option', { name: tagName, exact: true });
+  await tagOption.waitFor({ state: 'visible', timeout: 10_000 });
+  await tagOption.click();
+  await page.getByRole('radio', { name: '包含文件', exact: true }).click();
+
+  const filtered = waitForTrpcQuery(page, 'notes.list');
+  await apply.click();
+  const response = await filtered;
+  assert(response.ok(), 'Combined tag and attachment filter request failed.', { status: response.status() });
+  const requestInput = trpcRequestJsonInput(response, 'notes.list');
+  assert(Number.isInteger(requestInput?.tagId) && requestInput?.withFile === true,
+    'Combined tag and attachment filter omitted one of its conditions.', requestInput);
+  await page.waitForFunction(() => {
+    const params = new URLSearchParams(window.location.search);
+    return !!params.get('tagId') && params.get('withFile') === 'true';
+  }, undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Combined tag and attachment filter returned an unrelated card.');
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForFunction(() => {
+    const params = new URLSearchParams(window.location.search);
+    return !!params.get('tagId') && params.get('withFile') === 'true';
+  }, undefined, { timeout: 10_000 });
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await page.locator('.blinkora-flip-card').count() === 1,
+    'Combined tag and attachment filter changed after a reload.');
+
+  await openNoteFilters(page);
+  await page.getByRole('button', { name: '重置', exact: true }).click();
+  await page.waitForFunction(() => {
+    const params = new URLSearchParams(window.location.search);
+    return !params.has('tagId') && !params.has('withFile');
+  }, undefined, { timeout: 10_000 });
 }
 
 async function verifyDateRangeFilter(page, content, expectedNoteId) {
@@ -1207,6 +1397,165 @@ async function switchWorkspace(page, currentWorkspace, targetWorkspace) {
   await page.locator('button').filter({ hasText: targetWorkspace }).first().waitFor({ state: 'visible', timeout: 10_000 });
 }
 
+async function openWorkspaceManager(page, currentWorkspace) {
+  const current = page.locator('button').filter({ hasText: currentWorkspace }).first();
+  await current.waitFor({ state: 'visible', timeout: 10_000 });
+  await current.click();
+  const manageWorkspace = page.locator('[role="menuitemradio"]').filter({ hasText: '管理工作区' });
+  await manageWorkspace.waitFor({ state: 'visible', timeout: 10_000 });
+  await manageWorkspace.focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: '管理工作区' });
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  return dialog;
+}
+
+function workspaceRow(dialog, workspaceName) {
+  return dialog
+    .getByRole('radio', { name: `切换工作区: ${workspaceName}`, exact: true })
+    .locator('xpath=../..');
+}
+
+async function verifyWorkspaceLifecycle(page, {
+  workspaceName,
+  renamedWorkspaceName,
+  defaultWorkspaceName,
+  expectedDeletedAttachmentFiles,
+}) {
+  const dialog = await openWorkspaceManager(page, workspaceName);
+  const defaultDelete = dialog.getByRole('button', { name: '不能删除默认工作区', exact: true });
+  await defaultDelete.waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await defaultDelete.isDisabled(), 'Default Workspace delete protection was not disabled.');
+
+  let disposableRow = workspaceRow(dialog, workspaceName);
+  await disposableRow.waitFor({ state: 'visible', timeout: 10_000 });
+  await disposableRow.getByRole('button', { name: '重命名工作区', exact: true }).click();
+  const renameInput = disposableRow.getByRole('textbox', { name: '重命名工作区', exact: true });
+  await renameInput.fill(renamedWorkspaceName);
+  const renamed = waitForTrpcMutation(page, 'workspaces.update');
+  await disposableRow.getByRole('button', { name: '保存', exact: true }).click();
+  const renameResponse = await renamed;
+  assert(renameResponse.ok(), 'Rename disposable Workspace request failed.', {
+    status: renameResponse.status(),
+  });
+  const renameInputPayload = trpcRequestJsonInput(renameResponse, 'workspaces.update');
+  assert(renameInputPayload?.name === renamedWorkspaceName,
+    'Rename disposable Workspace submitted an unexpected name.', renameInputPayload);
+
+  disposableRow = workspaceRow(dialog, renamedWorkspaceName);
+  await disposableRow.waitFor({ state: 'visible', timeout: 10_000 });
+  const setDisposableDefault = waitForTrpcMutation(page, 'workspaces.setDefault');
+  await disposableRow.getByRole('button', { name: '设为默认', exact: true }).click();
+  const setDisposableDefaultResponse = await setDisposableDefault;
+  assert(setDisposableDefaultResponse.ok(), 'Set disposable Workspace as default failed.', {
+    status: setDisposableDefaultResponse.status(),
+  });
+  await disposableRow.getByText('默认', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  const protectedDisposableDelete = disposableRow.getByRole('button', {
+    name: '不能删除默认工作区',
+    exact: true,
+  });
+  assert(await protectedDisposableDelete.isDisabled(),
+    'New default Workspace unexpectedly allowed deletion.');
+
+  const originalDefaultRow = workspaceRow(dialog, defaultWorkspaceName);
+  const restoredDefault = waitForTrpcMutation(page, 'workspaces.setDefault');
+  await originalDefaultRow.getByRole('button', { name: '设为默认', exact: true }).click();
+  const restoredDefaultResponse = await restoredDefault;
+  assert(restoredDefaultResponse.ok(), 'Restore original default Workspace request failed.', {
+    status: restoredDefaultResponse.status(),
+  });
+  await originalDefaultRow.getByText('默认', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+
+  await disposableRow.getByRole('button', { name: '删除工作区', exact: true }).click();
+  const confirmDialog = page.getByRole('dialog', { name: '删除工作区' }).last();
+  await confirmDialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await confirmDialog.getByText(renamedWorkspaceName, { exact: false }).first()
+    .waitFor({ state: 'visible', timeout: 10_000 });
+  const deleted = waitForTrpcMutation(page, 'workspaces.delete');
+  await confirmDialog.getByRole('button', { name: '确认', exact: true }).click();
+  const deleteResponse = await deleted;
+  assert(deleteResponse.ok(), 'Delete disposable Workspace request failed.', {
+    status: deleteResponse.status(),
+  });
+  const deleteResult = await trpcResponseJson(deleteResponse, 'workspaces.delete');
+  assert(
+    deleteResult?.success === true
+      && deleteResult?.deletedAttachmentFiles === expectedDeletedAttachmentFiles,
+    'Delete disposable Workspace returned an unexpected cascade summary.',
+    deleteResult,
+  );
+  await confirmDialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  await disposableRow.waitFor({ state: 'hidden', timeout: 10_000 });
+  await dialog.getByRole('button', { name: '取消', exact: true }).click();
+  await dialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  await page.locator('button').filter({ hasText: defaultWorkspaceName }).first()
+    .waitFor({ state: 'visible', timeout: 10_000 });
+}
+
+async function verifyMultiSelectMove(page, {
+  currentWorkspace,
+  sourceWorkspace,
+  targetWorkspace,
+  targetWorkspaceIsDefault = false,
+  candidateContents,
+}) {
+  const workspaces = await runTrpcFixtureMutation(page, 'workspaces.list', {});
+  assert(Array.isArray(workspaces), 'Workspace list returned an invalid payload.', workspaces);
+  const targetWorkspaceRecord = workspaces.find(workspace => (
+    targetWorkspaceIsDefault ? workspace.isDefault === true : workspace.name === targetWorkspace
+  ));
+  assert(Number.isInteger(targetWorkspaceRecord?.id),
+    'Multi-select move could not resolve its target Workspace.', { targetWorkspace });
+
+  await switchWorkspace(page, currentWorkspace, sourceWorkspace);
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  await page.locator('.blinkora-flip-card').first().waitFor({ state: 'visible', timeout: 10_000 });
+  const visibleCandidates = await renderedFixtureContents(page, candidateContents);
+  assert(visibleCandidates.length >= 2,
+    'Multi-select move did not find two visible Note fixtures on the same page.', visibleCandidates);
+  const selectedContents = visibleCandidates.slice(0, 2);
+
+  await openCardMenu(page, selectedContents[0]);
+  const multiSelect = page.locator('[data-key="MutiSelectItem"]').last();
+  await multiSelect.waitFor({ state: 'visible', timeout: 10_000 });
+  await multiSelect.click();
+  const moveSelected = page.getByRole('button', { name: '移动到', exact: true });
+  await moveSelected.waitFor({ state: 'visible', timeout: 10_000 });
+  await noteCard(page, selectedContents[1]).click({ position: { x: 200, y: 80 } });
+  await moveSelected.click();
+
+  const moveDialog = page.getByRole('dialog').filter({ hasText: '移动卡片到工作区' }).last();
+  await moveDialog.waitFor({ state: 'visible', timeout: 10_000 });
+  const targetSelect = moveDialog.locator('[aria-label="选择目标工作区"]:visible').first();
+  await targetSelect.waitFor({ state: 'visible', timeout: 10_000 });
+
+  const moved = waitForTrpcMutation(page, 'notes.moveToWorkspace');
+  await moveDialog.getByRole('button', { name: '移动到工作区', exact: true }).click();
+  const response = await moved;
+  assert(response.ok(), 'Multi-select Workspace move request failed.', { status: response.status() });
+  const requestInput = trpcRequestJsonInput(response, 'notes.moveToWorkspace');
+  assert(
+    Array.isArray(requestInput?.ids)
+      && requestInput.ids.length === 2
+      && new Set(requestInput.ids).size === 2
+      && requestInput?.targetWorkspaceId === targetWorkspaceRecord.id,
+    'Multi-select Workspace move did not submit two distinct IDs and the expected target Workspace.',
+    requestInput,
+  );
+  await moveDialog.waitFor({ state: 'hidden', timeout: 10_000 });
+  for (const content of selectedContents) {
+    await noteCard(page, content).waitFor({ state: 'hidden', timeout: 10_000 });
+  }
+
+  await switchWorkspace(page, sourceWorkspace, targetWorkspace);
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  for (const content of selectedContents) {
+    await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  }
+  return { ids: requestInput.ids, contents: selectedContents };
+}
+
 async function verifyMovedCardData(page, note, comments) {
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
   await noteCard(page, note).waitFor({ state: 'visible', timeout: 10_000 });
@@ -1264,6 +1613,21 @@ async function openResourceMenu(page, resourceName) {
   const more = entry.getByRole('button', { name: '更多信息', exact: true });
   await more.waitFor({ state: 'visible', timeout: 10_000 });
   await more.click();
+}
+
+async function verifyResourceDownload(page, resourceName, expectedBody) {
+  await openResourceMenu(page, resourceName);
+  const downloadStarted = page.waitForEvent('download', { timeout: 15_000 });
+  const downloadAction = page.locator('[data-key="download"]').last();
+  await downloadAction.waitFor({ state: 'visible', timeout: 10_000 });
+  await downloadAction.click();
+  const download = await downloadStarted;
+  const failure = await download.failure();
+  assert(failure === null, 'Resource download failed in the browser.', { resourceName, failure });
+  const downloadPath = await download.path();
+  assert(downloadPath, 'Resource download did not create a readable temporary file.', { resourceName });
+  assert(readFileSync(downloadPath, 'utf8') === expectedBody,
+    'Resource download changed the attachment bytes.', { resourceName });
 }
 
 async function renameFolder(page, folderName, renamedFolderName) {
@@ -1403,6 +1767,11 @@ async function verifyResourceFolders(page, {
   await page.waitForFunction(() => !new URLSearchParams(window.location.search).has('folder'), undefined, { timeout: 10_000 });
   await resourceEntry(page, attachmentName).waitFor({ state: 'visible', timeout: 10_000 });
   await renameResource(page, attachmentName, renamedAttachmentName);
+  await verifyResourceDownload(
+    page,
+    renamedAttachmentName,
+    `temporary browser smoke attachment ${stamp}`,
+  );
   await createFolder(page, siblingFolder);
   await createFolder(page, siblingFolderWithPrefix);
   await deleteResource(page, siblingFolder);
@@ -1464,6 +1833,12 @@ try {
   const siblingFolder = `browser UI sibling folder ${stamp}`;
   const siblingFolderWithPrefix = `${siblingFolder} preserved`;
   const comment = `browser UI comment ${stamp}`;
+  const disposableWorkspace = `browser disposable workspace ${stamp}`;
+  const renamedDisposableWorkspace = `${disposableWorkspace} renamed`;
+  const disposableWorkspaceNote = `browser disposable cascade note ${stamp} #browser_disposable_${stamp.replace(/[^a-zA-Z0-9]/g, '')}`;
+  const updatedDisposableWorkspaceNote = `${disposableWorkspaceNote} — workspace cascade fixture`;
+  const disposableWorkspaceComment = `browser disposable cascade comment ${stamp}`;
+  const disposableWorkspaceAttachment = `browser-disposable-workspace-${stamp}.txt`;
   const attachmentName = `browser-ui-attachment-${stamp}.txt`;
   const renamedAttachmentName = `browser-ui-attachment-renamed-${stamp}.txt`;
   const disposableAttachmentNames = [
@@ -1473,7 +1848,7 @@ try {
 
   await registerAndSignIn(page);
   await createAndSelectWorkspace(page, workspace);
-  await createNote(page, '闪念', blinkora, '');
+  const createdBlinkora = await createNote(page, '闪念', blinkora, '');
   await verifyDailyReview(page, blinkora);
   await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
   await waitForApp(page);
@@ -1490,6 +1865,16 @@ try {
   });
   const updatedTodo = `${todo} (edited)`;
   await editNote(page, todo, updatedTodo, undefined, 'todo');
+  const propertyFixture = await verifyNoteProperties(page, updatedNote, createdNote.id, {
+    expectedAttachmentNames: [attachmentName, ...disposableAttachmentNames],
+    expectedReferenceId: createdBlinkora.id,
+  });
+  await verifyNoteTypeConversions(
+    page,
+    updatedNote,
+    propertyFixture.note,
+    propertyFixture.properties,
+  );
   await verifyTodoCompletion(page, updatedTodo);
   await verifyCardStateActions(page, updatedNote, updatedBlinkora);
   await verifyGlobalSearch(page, updatedBlinkora);
@@ -1497,6 +1882,7 @@ try {
   await verifyAttachmentFilter(page, updatedNote);
   await verifyLinkFilter(page, updatedNote);
   await verifyTagTreeFilter(page, tagParent, tagChild, updatedNote);
+  await verifyTaggedAttachmentFilter(page, tagChild, updatedNote);
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
   await moveCardToDefaultWorkspace(page, updatedNote);
   await switchWorkspace(page, workspace, '默认工作区');
@@ -1657,10 +2043,38 @@ try {
   await verifyFullJsonBackupImport(page, fullJsonArchive);
   await verifyBackupImport(page, backupArchive);
   await switchWorkspace(page, backupWorkspace, '默认工作区');
+  const disposableWorkspaceRecord = await createAndSelectWorkspace(page, disposableWorkspace);
+  await createNote(page, '笔记', disposableWorkspaceNote, 'path=notes');
+  await editNote(
+    page,
+    disposableWorkspaceNote,
+    updatedDisposableWorkspaceNote,
+    async () => attachFileToEditedNote(page, disposableWorkspaceAttachment),
+  );
+  await verifyCommentTree(page, updatedDisposableWorkspaceNote, disposableWorkspaceComment);
+  const disposableAgentToken = await runTrpcFixtureMutation(page, 'agentTokens.create', {
+    workspaceId: disposableWorkspaceRecord.id,
+    name: `browser disposable token ${stamp}`,
+  });
+  assert(Number.isInteger(disposableAgentToken?.id) && disposableAgentToken?.token?.startsWith('bkws_'),
+    'Create disposable Workspace Agent token failed.');
+  await verifyWorkspaceLifecycle(page, {
+    workspaceName: disposableWorkspace,
+    renamedWorkspaceName: renamedDisposableWorkspace,
+    defaultWorkspaceName: '默认工作区',
+    expectedDeletedAttachmentFiles: 1,
+  });
+  await verifyMultiSelectMove(page, {
+    currentWorkspace: '默认工作区',
+    sourceWorkspace: workspace,
+    targetWorkspace: '默认工作区',
+    targetWorkspaceIsDefault: true,
+    candidateContents: paginationNotes,
+  });
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace creation/switch/move, three note types, edit/history/tag-tree/attachment/reference, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, date-range/attachment/link/Todo-content/without-tag filters with reset and reload retention where supported, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource attachment/folder rename/nesting/move/sibling-delete protection and multi-select delete; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace create/switch/rename/default/delete, single and multi-card Workspace move, three note types plus round-trip conversion, edit/history/tag-tree/attachment/reference/custom typed properties, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, date-range/tag+attachment/attachment/link/Todo-content/without-tag filters with reset and reload retention where supported, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource download/attachment/folder rename/nesting/move/sibling-delete protection and multi-select delete; no console errors or local 4xx/5xx');
 } finally {
   await desktop.close();
   await browser.close();
