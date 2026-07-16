@@ -22,6 +22,28 @@ bun run migrate:postgres-to-sqlite -- \
 
 本地附件沿用原 `DATA_DIR/files`，工具会验证每条本地附件记录的文件存在性和汇总 SHA-256；S3 对象不复制，继续由原 S3 配置引用。
 
+## 源服务不停写的只读预演
+
+现用服务不能停写时，不要让迁移工具直接连接源库，因为工具会锁住 14 张表。先用 `pg_dump` 取得在线一致性快照，再把快照恢复到隔离 PostgreSQL；迁移工具只连接这个副本：
+
+```bash
+pg_dump --format=custom --file='<受限目录>/blinkora-postgres.dump' '<源库连接串>'
+pg_restore --list '<受限目录>/blinkora-postgres.dump'
+
+createdb '<隔离数据库名>'
+pg_restore --no-owner --no-privileges --dbname='<隔离数据库名>' \
+  '<受限目录>/blinkora-postgres.dump'
+
+BLINKORA_POSTGRES_URL='<隔离数据库连接串>' \
+bun run migrate:postgres-to-sqlite -- \
+  --data-dir '<空的候选 DATA_DIR>' \
+  --snapshot-dir '<受限目录>/tool-snapshots'
+```
+
+这条路径不会让迁移工具锁源表，也不会修改源数据；源 Web、MCP 和 Agent 可以继续工作。它只生成某一时刻的数据库副本，不能作为最终生产切换：快照完成后的写入不会自动同步到 SQLite。
+
+如果数据库中存在本地附件记录，在线数据库快照与 `DATA_DIR/files` 不是原子整体，只读预演只能用于验证迁移路径。最终迁移仍要进入停写窗口，再取得数据库和本地附件的一致副本。若有效附件全部位于 S3，可以只迁移附件记录和 S3 配置；是否读取或校验现有对象必须遵守当次授权，不能借迁移擅自列举 Bucket。
+
 ## 迁移后验证
 
 ```bash
