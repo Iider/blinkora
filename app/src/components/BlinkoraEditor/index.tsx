@@ -109,12 +109,15 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
         }
       } else {
         const noteId = Number(blinkora.curSelectedNote?.id)
-        const currentAttachments = blinkora.curSelectedNote?.attachments ?? []
+        const currentAttachments = (blinkora.curSelectedNote?.attachments ?? [])
+          .map(attachment => ({ ...attachment, attachedToNote: true }))
         const editingAttachments = blinkora.editAttachmentsStorage.list.filter(i => Number(i.id) == noteId)
         const currentPaths = new Set(currentAttachments.map(i => i.path))
         return [
           ...currentAttachments,
-          ...editingAttachments.filter(i => !currentPaths.has(i.path))
+          ...editingAttachments
+            .filter(i => !currentPaths.has(i.path))
+            .map(attachment => ({ ...attachment, attachedToNote: false }))
         ]
       }
     }
@@ -174,7 +177,7 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
         isCreateMode ? <div className='text-xs text-ignore ml-2'>{t('drop-to-upload')}</div> :
           blinkora.curSelectedNote?.createdAt ? <div className='text-xs text-desc'>{dayjs(blinkora.curSelectedNote.createdAt).format("YYYY-MM-DD hh:mm:ss")}</div> : null
       }
-      onSend={async ({ content, files, references, noteType, metadata }) => {
+      onSend={async ({ content, files, deletedAttachmentPaths, references, noteType, metadata }) => {
         if (isCreateMode) {
           //@ts-ignore
           await blinkora.upsertNote.call({ type: noteType, references, refresh: false, content, attachments: files.map(i => { return { name: i.name, path: i.uploadPath, size: i.size, type: i.type } }), metadata })
@@ -184,18 +187,20 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
           blinkora.updateTicker++
         } else {
           if (!blinkora.curSelectedNote) return;
-          await blinkora.upsertNote.call({
+          const updatedNote = await blinkora.upsertNote.call({
             id: blinkora.curSelectedNote.id,
             type: noteType,
             //@ts-ignore
             content,
             //@ts-ignore
             attachments: files.map(i => { return { name: i.name, path: i.uploadPath, size: i.size, type: i.type } }),
+            deletedAttachmentPaths,
             references,
             metadata,
             refresh: true // Ensure list is refreshed after update
           })
           blinkora.curSelectedNote.content = content
+          blinkora.curSelectedNote.attachments = updatedNote.attachments ?? []
           try {
             const noteId = Number(blinkora.curSelectedNote.id)
             blinkora.editAttachmentsStorage.save(blinkora.editAttachmentsStorage.list.filter(i => Number(i.id) !== noteId))

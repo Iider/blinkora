@@ -20,6 +20,8 @@ import axiosInstance from '@/lib/axios';
 
 export class EditorStore {
   files: FileType[] = []
+  deletedAttachmentPaths: string[] = []
+  editingNoteId: number | null = null
   lastRange: Range | null = null
   lastStartOffset: number = 0
   lastEndOffset: number = 0
@@ -105,6 +107,12 @@ export class EditorStore {
 
   removeFile = (target: FileType) => {
     const targetPath = target.uploadPromise?.value || target.preview;
+    if (this.mode === 'edit' && target.attachedToNote && targetPath) {
+      const normalizedPath = targetPath.split(/[?#]/, 1)[0];
+      if (normalizedPath && !this.deletedAttachmentPaths.includes(normalizedPath)) {
+        this.deletedAttachmentPaths.push(normalizedPath);
+      }
+    }
     this.files = this.files.filter(file => {
       const filePath = file.uploadPromise?.value || file.preview;
       if (targetPath && filePath) return filePath !== targetPath;
@@ -398,6 +406,7 @@ export class EditorStore {
       await this.onSend?.({
         content,
         files: this.files.map(i => ({ ...i, uploadPath: i.uploadPromise.value })),
+        deletedAttachmentPaths: [...this.deletedAttachmentPaths],
         noteType: this.noteType,
         references: this.references,
         metadata: this.metadata
@@ -412,6 +421,7 @@ export class EditorStore {
   clearEditor = () => {
     this.vditor?.setValue('')
     this.files = [];
+    this.deletedAttachmentPaths = [];
     this.references = []
     this.metadata = {};
   }

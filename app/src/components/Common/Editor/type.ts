@@ -4,6 +4,7 @@ import { PromiseState } from "@/store/standard/PromiseState";
 export type OnSendContentType = {
   content: string;
   files: (FileType & { uploadPath: string })[]
+  deletedAttachmentPaths: string[];
   noteType: NoteType;
   references: number[]
   metadata?: any;
@@ -17,4 +18,5 @@ export type FileType = {
   preview: any
   uploadPromise: PromiseState<any>
   type: string // audio/webm
+  attachedToNote?: boolean
 }

@@ -379,11 +379,92 @@ fn review(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     .boxed()
 }
 
+fn deleted_attachment_paths(input: &Value) -> Vec<String> {
+    let mut seen = HashSet::new();
+    input
+        .get("deletedAttachmentPaths")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(normalize_attachment_path)
+        .filter(|path| !path.is_empty() && seen.insert(path.clone()))
+        .collect()
+}
+
+struct NoteAttachmentRemoval {
+    id: i32,
+    path: String,
+    delete_file: bool,
+}
+
+async fn attachment_removals_for_note_update(
+    ctx: &ProcedureContext,
+    note_id: Option<i32>,
+    account_id: i32,
+    workspace_id: i32,
+    paths: &[String],
+) -> anyhow::Result<Vec<NoteAttachmentRemoval>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let note_id = note_id.ok_or_else(|| anyhow!("Attachment deletion requires a note id"))?;
+    let rows = sqlx::query(
+        r#"WITH target AS (
+             SELECT a.id, a.path
+             FROM attachments a
+             JOIN notes n ON n.id=a."noteId"
+             WHERE a."noteId"=$1
+               AND n."accountId"=$2
+               AND n."workspaceId"=$3
+               AND a.path IN (SELECT value FROM json_each($4))
+           )
+           SELECT target.id,
+                  target.path,
+                  NOT EXISTS (
+                    SELECT 1 FROM attachments other
+                    WHERE other.path=target.path
+                      AND other.id NOT IN (SELECT id FROM target)
+                  ) AND NOT EXISTS (
+                    SELECT 1 FROM notes other_note
+                    WHERE other_note.id<>$1
+                      AND other_note."accountId"=$2
+                      AND other_note."workspaceId"=$3
+                      AND instr(other_note.content, target.path)>0
+                  ) AS "deleteFile"
+           FROM target"#,
+    )
+    .bind(note_id)
+    .bind(account_id)
+    .bind(workspace_id)
+    .bind(crate::db::json_array(paths))
+    .fetch_all(ctx.state.pool())
+    .await?;
+    let found_paths = rows
+        .iter()
+        .map(|row| row.get::<String, _>("path"))
+        .collect::<HashSet<_>>();
+    if paths.iter().any(|path| !found_paths.contains(path)) {
+        bail!("Attachment not found");
+    }
+    Ok(rows
+        .into_iter()
+        .map(|row| NoteAttachmentRemoval {
+            id: row.get::<i32, _>("id"),
+            path: row.get::<String, _>("path"),
+            delete_file: row.get::<bool, _>("deleteFile"),
+        })
+        .collect())
+}
+
 fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
     async move {
         let user = ctx.user.as_ref().ok_or_else(|| anyhow!("Unauthorized"))?;
         let ws = workspace_id(&ctx).await?;
-        if user.is_workspace_agent() && input.get("attachments").is_some() {
+        if user.is_workspace_agent()
+            && (input.get("attachments").is_some()
+                || input.get("deletedAttachmentPaths").is_some())
+        {
             bail!("Agent token cannot modify attachments");
         }
         let id = input.get("id").and_then(Value::as_i64).map(|v| v as i32);
@@ -394,196 +475,275 @@ fn upsert(ctx: ProcedureContext, input: Value) -> ProcedureFuture {
         let is_top = input.get("isTop").and_then(Value::as_bool);
         let is_reviewed = input.get("isReviewed").and_then(Value::as_bool);
         let metadata = input.get("metadata").cloned();
-        let mut tx = ctx.state.pool().begin().await?;
-        let (note_id, synced_content) = if let Some(id) = id {
-            let old = note_snapshot_tx(&mut tx, id, user.id, ws).await?;
-            if let Some(old) = old {
-                let before_tags = note_tag_ids_tx(&mut tx, id).await?;
-                let before_references = note_reference_ids_tx(&mut tx, id).await?;
-                let version: i32 = sqlx::query_scalar(r#"SELECT COALESCE(MAX(version),0)+1 FROM "noteHistory" WHERE "noteId"=$1"#)
-                    .bind(id)
-                    .fetch_one(&mut *tx)
+        let requested_delete_paths = deleted_attachment_paths(&input);
+        let attachment_removals = attachment_removals_for_note_update(
+            &ctx,
+            id,
+            user.id,
+            ws,
+            &requested_delete_paths,
+        )
+        .await?;
+        let attachment_ids_to_delete = attachment_removals
+            .iter()
+            .filter(|removal| removal.delete_file)
+            .map(|removal| removal.id)
+            .collect::<Vec<_>>();
+        let attachment_ids_to_detach = attachment_removals
+            .iter()
+            .filter(|removal| !removal.delete_file)
+            .map(|removal| removal.id)
+            .collect::<Vec<_>>();
+        let attachment_paths_to_delete = attachment_removals
+            .iter()
+            .filter(|removal| removal.delete_file)
+            .map(|removal| removal.path.clone())
+            .collect::<Vec<_>>();
+        let staged_deletions = crate::attachment_files::stage_attachment_deletions(
+            &ctx,
+            &attachment_paths_to_delete,
+        )
+        .await?;
+        let database_result: anyhow::Result<i32> = async {
+            let mut tx = ctx.state.pool().begin().await?;
+            let (note_id, synced_content) = if let Some(id) = id {
+                let old = note_snapshot_tx(&mut tx, id, user.id, ws).await?;
+                if let Some(old) = old {
+                    let before_tags = note_tag_ids_tx(&mut tx, id).await?;
+                    let before_references = note_reference_ids_tx(&mut tx, id).await?;
+                    let version: i32 = sqlx::query_scalar(r#"SELECT COALESCE(MAX(version),0)+1 FROM "noteHistory" WHERE "noteId"=$1"#)
+                        .bind(id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                    sqlx::query(r#"INSERT INTO "noteHistory" ("noteId", content, metadata, version, "accountId", "workspaceId") VALUES ($1,$2,$3,$4,$5,$6)"#)
+                        .bind(id)
+                        .bind(&old.content)
+                        .bind(old.metadata.clone())
+                        .bind(version)
+                        .bind(user.id)
+                        .bind(ws)
+                        .execute(&mut *tx)
+                        .await?;
+                    let next_content = content.clone().unwrap_or_else(|| old.content.clone());
+                    let next_note_type = note_type.unwrap_or(old.note_type);
+                    let next_metadata = metadata.clone().or_else(|| old.metadata.clone());
+                    let next_is_recycle = is_recycle.unwrap_or(old.is_recycle);
+                    sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3, metadata), "isArchived"=COALESCE($4, "isArchived"), "isRecycle"=COALESCE($5, "isRecycle"), "isTop"=COALESCE($6, "isTop"), "isReviewed"=COALESCE($7, "isReviewed"), "updatedAt"=blinkora_now() WHERE id=$8 AND "accountId"=$9 AND "workspaceId"=$10"#)
+                        .bind(&next_content)
+                        .bind(next_note_type)
+                        .bind(metadata.clone())
+                        .bind(is_archived)
+                        .bind(is_recycle)
+                        .bind(is_top)
+                        .bind(is_reviewed)
+                        .bind(id)
+                        .bind(user.id)
+                        .bind(ws)
+                        .execute(&mut *tx)
+                        .await?;
+                    sync_tags_for_recycle_state(
+                        &ctx,
+                        &mut tx,
+                        id,
+                        user.id,
+                        ws,
+                        &next_content,
+                        next_is_recycle,
+                    )
                     .await?;
-                sqlx::query(r#"INSERT INTO "noteHistory" ("noteId", content, metadata, version, "accountId", "workspaceId") VALUES ($1,$2,$3,$4,$5,$6)"#)
-                    .bind(id)
-                    .bind(&old.content)
-                    .bind(old.metadata.clone())
-                    .bind(version)
-                    .bind(user.id)
-                    .bind(ws)
-                    .execute(&mut *tx)
+                    sync_references(&mut tx, id, user.id, ws, input.get("references")).await?;
+                    let after_tags = note_tag_ids_tx(&mut tx, id).await?;
+                    let after_references = note_reference_ids_tx(&mut tx, id).await?;
+
+                    let mut changed_fields = Vec::new();
+                    let mut details = Map::new();
+                    if old.content != next_content {
+                        push_changed_field(&mut changed_fields, "content");
+                        details.insert(
+                            "content".to_string(),
+                            content_change_detail(Some(&old.content), &next_content, Some(version)),
+                        );
+                    }
+                    if old.note_type != next_note_type {
+                        push_changed_field(&mut changed_fields, "type");
+                        details.insert(
+                            "type".to_string(),
+                            json!({ "before": old.note_type, "after": next_note_type }),
+                        );
+                    }
+                    if metadata.is_some() && old.metadata != next_metadata {
+                        push_changed_field(&mut changed_fields, "metadata");
+                        details.insert("metadata".to_string(), metadata_detail(&old.metadata, &next_metadata));
+                    }
+
+                    let mut flags = Map::new();
+                    add_flag_change(&mut flags, "isArchived", old.is_archived, is_archived);
+                    add_flag_change(&mut flags, "isRecycle", old.is_recycle, is_recycle);
+                    add_flag_change(&mut flags, "isTop", old.is_top, is_top);
+                    add_flag_change(&mut flags, "isReviewed", old.is_reviewed, is_reviewed);
+                    if !flags.is_empty() {
+                        push_changed_field(&mut changed_fields, "flags");
+                        details.insert("flags".to_string(), Value::Object(flags));
+                    }
+
+                    if before_tags != after_tags {
+                        push_changed_field(&mut changed_fields, "tags");
+                        details.insert("tags".to_string(), ids_diff_detail(&before_tags, &after_tags));
+                    }
+                    if input.get("references").is_some() && before_references != after_references {
+                        push_changed_field(&mut changed_fields, "references");
+                        details.insert(
+                            "references".to_string(),
+                            ids_diff_detail(&before_references, &after_references),
+                        );
+                    }
+
+                    let action = action_for_update(&changed_fields, &details);
+                    let title = note_title(&next_content, id);
+                    insert_note_log_if_enabled_tx(
+                        &ctx,
+                        &mut tx,
+                        user,
+                        OperationLogDraft {
+                            action,
+                            note_id: id,
+                            note_type: next_note_type,
+                            previous_note_type: Some(old.note_type),
+                            note_title: title.clone(),
+                            changed_fields,
+                            summary: format!("Updated note: {title}"),
+                            details: Value::Object(details),
+                        },
+                    )
                     .await?;
-                let next_content = content.clone().unwrap_or_else(|| old.content.clone());
-                let next_note_type = note_type.unwrap_or(old.note_type);
-                let next_metadata = metadata.clone().or_else(|| old.metadata.clone());
-                let next_is_recycle = is_recycle.unwrap_or(old.is_recycle);
-                sqlx::query(r#"UPDATE notes SET content=$1, type=$2, metadata=COALESCE($3, metadata), "isArchived"=COALESCE($4, "isArchived"), "isRecycle"=COALESCE($5, "isRecycle"), "isTop"=COALESCE($6, "isTop"), "isReviewed"=COALESCE($7, "isReviewed"), "updatedAt"=blinkora_now() WHERE id=$8 AND "accountId"=$9 AND "workspaceId"=$10"#)
-                    .bind(&next_content)
-                    .bind(next_note_type)
+                    (id, next_content)
+                } else {
+                    bail!("Note not found");
+                }
+            } else {
+                let content = content.unwrap_or_default();
+                let note_type = note_type.unwrap_or(0);
+                let note_id: i32 = sqlx::query_scalar(r#"INSERT INTO notes (content, type, metadata, "isArchived", "isRecycle", "isTop", "isReviewed", "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,blinkora_now()) RETURNING id"#)
+                    .bind(&content)
+                    .bind(note_type)
                     .bind(metadata.clone())
-                    .bind(is_archived)
-                    .bind(is_recycle)
-                    .bind(is_top)
-                    .bind(is_reviewed)
-                    .bind(id)
+                    .bind(is_archived.unwrap_or(false))
+                    .bind(is_recycle.unwrap_or(false))
+                    .bind(is_top.unwrap_or(false))
+                    .bind(is_reviewed.unwrap_or(false))
                     .bind(user.id)
                     .bind(ws)
-                    .execute(&mut *tx)
+                    .fetch_one(&mut *tx)
                     .await?;
                 sync_tags_for_recycle_state(
                     &ctx,
                     &mut tx,
-                    id,
+                    note_id,
                     user.id,
                     ws,
-                    &next_content,
-                    next_is_recycle,
+                    &content,
+                    is_recycle.unwrap_or(false),
                 )
                 .await?;
-                sync_references(&mut tx, id, user.id, ws, input.get("references")).await?;
-                let after_tags = note_tag_ids_tx(&mut tx, id).await?;
-                let after_references = note_reference_ids_tx(&mut tx, id).await?;
+                sync_references(&mut tx, note_id, user.id, ws, input.get("references")).await?;
+                let after_tags = note_tag_ids_tx(&mut tx, note_id).await?;
+                let after_references = note_reference_ids_tx(&mut tx, note_id).await?;
 
-                let mut changed_fields = Vec::new();
+                let mut changed_fields = vec!["content".to_string(), "type".to_string()];
                 let mut details = Map::new();
-                if old.content != next_content {
-                    push_changed_field(&mut changed_fields, "content");
-                    details.insert(
-                        "content".to_string(),
-                        content_change_detail(Some(&old.content), &next_content, Some(version)),
-                    );
-                }
-                if old.note_type != next_note_type {
-                    push_changed_field(&mut changed_fields, "type");
-                    details.insert(
-                        "type".to_string(),
-                        json!({ "before": old.note_type, "after": next_note_type }),
-                    );
-                }
-                if metadata.is_some() && old.metadata != next_metadata {
+                details.insert("content".to_string(), content_change_detail(None, &content, None));
+                details.insert("type".to_string(), json!({ "after": note_type }));
+                if metadata.is_some() {
                     push_changed_field(&mut changed_fields, "metadata");
-                    details.insert("metadata".to_string(), metadata_detail(&old.metadata, &next_metadata));
+                    details.insert("metadata".to_string(), metadata_detail(&None, &metadata));
                 }
-
                 let mut flags = Map::new();
-                add_flag_change(&mut flags, "isArchived", old.is_archived, is_archived);
-                add_flag_change(&mut flags, "isRecycle", old.is_recycle, is_recycle);
-                add_flag_change(&mut flags, "isTop", old.is_top, is_top);
-                add_flag_change(&mut flags, "isReviewed", old.is_reviewed, is_reviewed);
+                add_flag_change(&mut flags, "isArchived", false, is_archived);
+                add_flag_change(&mut flags, "isRecycle", false, is_recycle);
+                add_flag_change(&mut flags, "isTop", false, is_top);
+                add_flag_change(&mut flags, "isReviewed", false, is_reviewed);
                 if !flags.is_empty() {
                     push_changed_field(&mut changed_fields, "flags");
                     details.insert("flags".to_string(), Value::Object(flags));
                 }
-
-                if before_tags != after_tags {
+                if !after_tags.is_empty() {
                     push_changed_field(&mut changed_fields, "tags");
-                    details.insert("tags".to_string(), ids_diff_detail(&before_tags, &after_tags));
+                    details.insert("tags".to_string(), ids_diff_detail(&[], &after_tags));
                 }
-                if input.get("references").is_some() && before_references != after_references {
+                if !after_references.is_empty() {
                     push_changed_field(&mut changed_fields, "references");
-                    details.insert(
-                        "references".to_string(),
-                        ids_diff_detail(&before_references, &after_references),
-                    );
+                    details.insert("references".to_string(), ids_diff_detail(&[], &after_references));
                 }
-
-                let action = action_for_update(&changed_fields, &details);
-                let title = note_title(&next_content, id);
+                let title = note_title(&content, note_id);
                 insert_note_log_if_enabled_tx(
                     &ctx,
                     &mut tx,
                     user,
                     OperationLogDraft {
-                        action,
-                        note_id: id,
-                        note_type: next_note_type,
-                        previous_note_type: Some(old.note_type),
+                        action: "create".to_string(),
+                        note_id,
+                        note_type,
+                        previous_note_type: None,
                         note_title: title.clone(),
                         changed_fields,
-                        summary: format!("Updated note: {title}"),
+                        summary: format!("Created note: {title}"),
                         details: Value::Object(details),
                     },
                 )
                 .await?;
-                (id, next_content)
-            } else {
-                bail!("Note not found");
-            }
-        } else {
-            let content = content.unwrap_or_default();
-            let note_type = note_type.unwrap_or(0);
-            let note_id: i32 = sqlx::query_scalar(r#"INSERT INTO notes (content, type, metadata, "isArchived", "isRecycle", "isTop", "isReviewed", "accountId", "workspaceId", "updatedAt") VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,blinkora_now()) RETURNING id"#)
-                .bind(&content)
-                .bind(note_type)
-                .bind(metadata.clone())
-                .bind(is_archived.unwrap_or(false))
-                .bind(is_recycle.unwrap_or(false))
-                .bind(is_top.unwrap_or(false))
-                .bind(is_reviewed.unwrap_or(false))
-                .bind(user.id)
-                .bind(ws)
-                .fetch_one(&mut *tx)
-                .await?;
-            sync_tags_for_recycle_state(
-                &ctx,
+                (note_id, content)
+            };
+            sync_attachments(
                 &mut tx,
                 note_id,
                 user.id,
                 ws,
-                &content,
-                is_recycle.unwrap_or(false),
+                &synced_content,
+                input.get("attachments"),
+                &requested_delete_paths,
             )
             .await?;
-            sync_references(&mut tx, note_id, user.id, ws, input.get("references")).await?;
-            let after_tags = note_tag_ids_tx(&mut tx, note_id).await?;
-            let after_references = note_reference_ids_tx(&mut tx, note_id).await?;
-
-            let mut changed_fields = vec!["content".to_string(), "type".to_string()];
-            let mut details = Map::new();
-            details.insert("content".to_string(), content_change_detail(None, &content, None));
-            details.insert("type".to_string(), json!({ "after": note_type }));
-            if metadata.is_some() {
-                push_changed_field(&mut changed_fields, "metadata");
-                details.insert("metadata".to_string(), metadata_detail(&None, &metadata));
+            if !attachment_ids_to_delete.is_empty() {
+                sqlx::query(
+                    r#"DELETE FROM attachments WHERE id IN (SELECT value FROM json_each($1))"#,
+                )
+                .bind(crate::db::json_array(&attachment_ids_to_delete))
+                .execute(&mut *tx)
+                .await?;
             }
-            let mut flags = Map::new();
-            add_flag_change(&mut flags, "isArchived", false, is_archived);
-            add_flag_change(&mut flags, "isRecycle", false, is_recycle);
-            add_flag_change(&mut flags, "isTop", false, is_top);
-            add_flag_change(&mut flags, "isReviewed", false, is_reviewed);
-            if !flags.is_empty() {
-                push_changed_field(&mut changed_fields, "flags");
-                details.insert("flags".to_string(), Value::Object(flags));
+            if !attachment_ids_to_detach.is_empty() {
+                sqlx::query(
+                    r#"UPDATE attachments
+                       SET "noteId"=NULL, "updatedAt"=blinkora_now()
+                       WHERE id IN (SELECT value FROM json_each($1))"#,
+                )
+                .bind(crate::db::json_array(&attachment_ids_to_detach))
+                .execute(&mut *tx)
+                .await?;
             }
-            if !after_tags.is_empty() {
-                push_changed_field(&mut changed_fields, "tags");
-                details.insert("tags".to_string(), ids_diff_detail(&[], &after_tags));
+            tx.commit().await?;
+            Ok(note_id)
+        }
+        .await;
+        let note_id = match database_result {
+            Ok(note_id) => note_id,
+            Err(database_error) => {
+                if let Err(rollback_error) =
+                    crate::attachment_files::rollback_attachment_deletions(staged_deletions)
+                        .await
+                {
+                    return Err(database_error.context(format!(
+                        "note update database transaction failed and attachment rollback also failed: {rollback_error}"
+                    )));
+                }
+                return Err(database_error);
             }
-            if !after_references.is_empty() {
-                push_changed_field(&mut changed_fields, "references");
-                details.insert("references".to_string(), ids_diff_detail(&[], &after_references));
-            }
-            let title = note_title(&content, note_id);
-            insert_note_log_if_enabled_tx(
-                &ctx,
-                &mut tx,
-                user,
-                OperationLogDraft {
-                    action: "create".to_string(),
-                    note_id,
-                    note_type,
-                    previous_note_type: None,
-                    note_title: title.clone(),
-                    changed_fields,
-                    summary: format!("Created note: {title}"),
-                    details: Value::Object(details),
-                },
-            )
-            .await?;
-            (note_id, content)
         };
-        sync_attachments(&mut tx, note_id, user.id, ws, &synced_content, input.get("attachments")).await?;
-        tx.commit().await?;
+        if let Err(error) =
+            crate::attachment_files::finalize_attachment_deletions(staged_deletions).await
+        {
+            tracing::error!(%error, "note was updated but private attachment staging cleanup failed");
+        }
         let row = sqlx::query(&note_select_sql("id=$3"))
             .bind(user.id)
             .bind(ws)
@@ -1741,6 +1901,7 @@ async fn sync_attachments<'a>(
     workspace_id: i32,
     content: &str,
     attachments_input: Option<&Value>,
+    excluded_paths: &[String],
 ) -> anyhow::Result<()> {
     let mut paths = extract_attachment_paths(content);
     if let Some(items) = attachments_input.and_then(Value::as_array) {
@@ -1753,6 +1914,9 @@ async fn sync_attachments<'a>(
                 paths.insert(normalize_attachment_path(path));
             }
         }
+    }
+    for path in excluded_paths {
+        paths.remove(path);
     }
     if paths.is_empty() {
         return Ok(());
@@ -1867,6 +2031,7 @@ fn extract_attachment_paths(content: &str) -> HashSet<String> {
 mod tests {
     use super::{
         extract_hashtags, get_history, get_version, update_attachments_order, update_notes_order,
+        upsert,
     };
     use crate::handlers::test_support::HandlerTestFixture;
     use serde_json::{json, Value};
@@ -2121,6 +2286,220 @@ mod tests {
         )
         .await
         .expect_err("history in another workspace must not be readable");
+        fixture.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn note_update_deletes_attachment_with_history_in_one_transaction() {
+        let fixture = HandlerTestFixture::new("note-attachment-delete").await;
+        let note_id: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('before', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let api_path = "/api/file/note-attachment-delete.txt";
+        let file_path = fixture.data_dir.join("files/note-attachment-delete.txt");
+        tokio::fs::create_dir_all(file_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&file_path, b"delete me").await.unwrap();
+        sqlx::query(
+            r#"INSERT INTO attachments (name, path, "noteId", "accountId", "workspaceId", "updatedAt")
+               VALUES ('delete.txt', $1, $2, $3, $4, blinkora_now())"#,
+        )
+        .bind(api_path)
+        .bind(note_id)
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+        let updated = upsert(
+            fixture.ctx.clone(),
+            json!({
+                "id": note_id,
+                "content": format!("after {api_path}"),
+                "attachments": [],
+                "deletedAttachmentPaths": [api_path]
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            updated.pointer("/content"),
+            Some(&json!(format!("after {api_path}")))
+        );
+        assert_eq!(updated.pointer("/attachments"), Some(&json!([])));
+        assert!(!tokio::fs::try_exists(&file_path).await.unwrap());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM attachments WHERE path=$1")
+                .bind(api_path)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                r#"SELECT COUNT(*) FROM "noteHistory" WHERE "noteId"=$1 AND content='before'"#,
+            )
+            .bind(note_id)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+            1
+        );
+        fixture.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn note_update_keeps_attachment_file_used_by_another_note() {
+        let fixture = HandlerTestFixture::new("note-attachment-shared").await;
+        let owner_note_id: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('owner', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let api_path = "/api/file/note-attachment-shared.txt";
+        let shared_content = format!("consumer [{api_path}]({api_path})");
+        sqlx::query(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ($1, blinkora_now(), $2, $3)"#,
+        )
+        .bind(shared_content)
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+        let file_path = fixture.data_dir.join("files/note-attachment-shared.txt");
+        tokio::fs::create_dir_all(file_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&file_path, b"keep me").await.unwrap();
+        let attachment_id: i32 = sqlx::query_scalar(
+            r#"INSERT INTO attachments (name, path, "noteId", "accountId", "workspaceId", "updatedAt")
+               VALUES ('shared.txt', $1, $2, $3, $4, blinkora_now()) RETURNING id"#,
+        )
+        .bind(api_path)
+        .bind(owner_note_id)
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+
+        let updated = upsert(
+            fixture.ctx.clone(),
+            json!({
+                "id": owner_note_id,
+                "content": format!("owner still mentions {api_path}"),
+                "attachments": [{ "name": "shared.txt", "path": api_path }],
+                "deletedAttachmentPaths": [api_path]
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(updated.pointer("/attachments"), Some(&json!([])));
+        assert_eq!(tokio::fs::read(&file_path).await.unwrap(), b"keep me");
+        assert_eq!(
+            sqlx::query_scalar::<_, Option<i32>>(
+                r#"SELECT "noteId" FROM attachments WHERE id=$1"#,
+            )
+            .bind(attachment_id)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap(),
+            None
+        );
+        fixture.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn failed_note_update_restores_staged_attachment_and_database_state() {
+        let fixture = HandlerTestFixture::new("note-attachment-rollback").await;
+        let note_id: i32 = sqlx::query_scalar(
+            r#"INSERT INTO notes (content, "updatedAt", "accountId", "workspaceId")
+               VALUES ('before', blinkora_now(), $1, $2) RETURNING id"#,
+        )
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        let api_path = "/api/file/note-attachment-rollback.txt";
+        let file_path = fixture.data_dir.join("files/note-attachment-rollback.txt");
+        tokio::fs::create_dir_all(file_path.parent().unwrap())
+            .await
+            .unwrap();
+        tokio::fs::write(&file_path, b"restore me").await.unwrap();
+        let attachment_id: i32 = sqlx::query_scalar(
+            r#"INSERT INTO attachments (name, path, "noteId", "accountId", "workspaceId", "updatedAt")
+               VALUES ('rollback.txt', $1, $2, $3, $4, blinkora_now()) RETURNING id"#,
+        )
+        .bind(api_path)
+        .bind(note_id)
+        .bind(fixture.account_id)
+        .bind(fixture.workspace_id)
+        .fetch_one(&fixture.pool)
+        .await
+        .unwrap();
+        sqlx::query(&format!(
+            r#"CREATE TRIGGER fail_note_attachment_delete BEFORE DELETE ON attachments
+               WHEN OLD.id={attachment_id} BEGIN SELECT RAISE(ABORT, 'forced attachment delete failure'); END"#
+        ))
+        .execute(&fixture.pool)
+        .await
+        .unwrap();
+
+        upsert(
+            fixture.ctx.clone(),
+            json!({
+                "id": note_id,
+                "content": "after",
+                "attachments": [],
+                "deletedAttachmentPaths": [api_path]
+            }),
+        )
+        .await
+        .expect_err("attachment delete failure must roll back the entire note update");
+
+        assert_eq!(tokio::fs::read(&file_path).await.unwrap(), b"restore me");
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT content FROM notes WHERE id=$1")
+                .bind(note_id)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            "before"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM attachments WHERE id=$1")
+                .bind(attachment_id)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(r#"SELECT COUNT(*) FROM "noteHistory" WHERE "noteId"=$1"#)
+                .bind(note_id)
+                .fetch_one(&fixture.pool)
+                .await
+                .unwrap(),
+            0
+        );
         fixture.cleanup().await;
     }
 }

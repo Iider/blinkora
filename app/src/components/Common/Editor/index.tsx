@@ -115,7 +115,7 @@ const Editor = observer(({ content, onChange, onSend, isSendLoading, originFiles
     store.setCallbacks(onChange, onSend);
   }, [onChange, onSend, store]);
   useEditorEvents(store);
-  useEditorFiles(store, blinkora, originFiles);
+  useEditorFiles(store, blinkora, originFiles, mode === 'edit' ? blinkora.curSelectedNote?.id : undefined);
   useEditorHeight(onHeightChange, blinkora, content, store);
 
   // Handle initial data from sharing

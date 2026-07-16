@@ -164,7 +164,7 @@ pub async fn probe(pool: &SqlitePool) -> anyhow::Result<()> {
 /// Encode a list for the `json_each($n)` membership patterns used by SQLite.
 /// This avoids SQLite's bind-variable limit while keeping a single statement
 /// and transaction for every bulk operation.
-pub fn json_array<T: Serialize>(values: &T) -> String {
+pub fn json_array<T: Serialize + ?Sized>(values: &T) -> String {
     serde_json::to_string(values).expect("serializing a JSON-compatible ID list cannot fail")
 }
 

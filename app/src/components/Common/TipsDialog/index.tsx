@@ -2,7 +2,8 @@ import { RootStore } from "@/store";
 import { Icon } from '@/components/Common/Iconify/icons';
 import { observer } from "mobx-react-lite";
 import { useTranslation } from "react-i18next";
-import { Popover, PopoverTrigger, PopoverContent, Button } from "@heroui/react";
+import { Popover, PopoverTrigger, PopoverContent, Button, Spinner } from "@heroui/react";
+import { button as buttonStyles } from "@heroui/theme";
 import { DialogStandaloneStore } from "@/store/module/DialogStandalone";
 import { useState } from "react";
 
@@ -16,11 +17,11 @@ const TipsDialog = observer(({ content, onConfirm, onCancel, buttonSlot }: any) 
       {
         buttonSlot ? buttonSlot : <>
           <Button className="ml-auto" color='default'
-            onPress={e => {
+            onPress={() => {
               RootStore.Get(DialogStandaloneStore).close()
               onCancel?.()
             }}>{t('cancel')}</Button>
-          <Button color='danger' onPress={async e => {
+          <Button color='danger' onPress={() => {
             onConfirm?.()
           }}>{t('confrim')}</Button>
         </>
@@ -64,12 +65,26 @@ export const TipsPopover = observer((props: { children: React.ReactNode, content
           <div className="font-bold mb-2">{props.content}</div>
         </div>
         <div className='flex my-1 gap-2'>
-          <Button startContent={<Icon icon="iconoir:cancel" width="20" height="20" />} variant="flat" size="sm" className="ml-auto" color='default' onPress={e => {
-            handleCancel()
-          }}>{t('cancel')}</Button>
-          <Button startContent={<Icon icon="cil:check-alt" width="20" height="20" />} isLoading={isLoading} isDisabled={isLoading} size="sm" color='danger' onPress={async e => {
-            await handleConfirm()
-          }}>{t('confirm')}</Button>
+          <button
+            type="button"
+            className={`${buttonStyles({ variant: 'flat', size: 'sm', color: 'default' })} ml-auto`}
+            onClick={handleCancel}
+          >
+            <Icon icon="iconoir:cancel" width="20" height="20" />
+            {t('cancel')}
+          </button>
+          <button
+            type="button"
+            aria-busy={isLoading}
+            disabled={isLoading}
+            className={buttonStyles({ size: 'sm', color: 'danger', isDisabled: isLoading })}
+            onClick={() => void handleConfirm()}
+          >
+            {isLoading
+              ? <Spinner size="sm" color="current" />
+              : <Icon icon="cil:check-alt" width="20" height="20" />}
+            {t('confirm')}
+          </button>
         </div>
       </div>
     </PopoverContent>

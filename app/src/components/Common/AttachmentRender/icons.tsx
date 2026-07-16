@@ -4,7 +4,6 @@ import { RootStore } from '@/store';
 import { TipsPopover } from '@/components/Common/TipsDialog';
 import { ToastPlugin } from '@/store/module/Toast/Toast';
 import { useTranslation } from 'react-i18next';
-import { PromiseState } from '@/store/standard/PromiseState';
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { FileType } from '../Editor/type';
 import { Tooltip } from '@heroui/react';
@@ -13,50 +12,72 @@ import { getBlinkoraEndpoint } from '@/lib/blinkoraEndpoint';
 import axiosInstance from '@/lib/axios';
 import { downloadFromLink } from '@/lib/browserRuntime';
 import { runInAction } from 'mobx';
+import { useState } from 'react';
+import { localizeErrorMessage } from '@/lib/errorMessage';
 
 const resolveFilePath = (file: FileType) => file.uploadPromise?.value || file.preview;
 
 export const DeleteIcon = observer(({ className, file, files, size = 20, onDeleted }: { className: string, file: FileType, files: FileType[], size?: number, onDeleted?: (file: FileType) => void }) => {
-  const store = RootStore.Local(() => ({
-    deleteFile: new PromiseState({
-      function: async (file) => {
-        const path = resolveFilePath(file);
-        const isSameFile = (item: FileType) => {
-          const itemPath = resolveFilePath(item);
-          if (path && itemPath) return itemPath === path;
-          return item.name === file.name;
-        }
+  const { t } = useTranslation()
+  const [isDeleting, setIsDeleting] = useState(false)
 
-        if (path) {
-          try {
-            await axiosInstance.post(getBlinkoraEndpoint('/api/file/delete'), {
-              attachment_path: path,
-            });
-          } catch (error: any) {
-            if (error?.response?.status !== 404) {
-              throw error;
-            }
-          }
+  const deleteFile = async () => {
+    if (isDeleting) return
+    setIsDeleting(true)
+    try {
+      const path = resolveFilePath(file);
+      const blinkora = RootStore.Get(BlinkoraStore);
+      const attachedToNote = Boolean(
+        file.attachedToNote || blinkora.curSelectedNote?.attachments?.some(
+          attachment => path && attachment.path === path,
+        ),
+      );
+      const isSameFile = (item: FileType) => {
+        const itemPath = resolveFilePath(item);
+        if (path && itemPath) return itemPath === path;
+        return item.name === file.name;
+      }
+
+      if (path && !attachedToNote) {
+        try {
+          await axiosInstance.post(getBlinkoraEndpoint('/api/file/delete'), {
+            attachment_path: path,
+          });
+        } catch (error: any) {
+          if (error?.response?.status !== 404) throw error;
         }
+      }
+      if (onDeleted) {
+        onDeleted({ ...file, attachedToNote })
+      } else {
         runInAction(() => {
           files.splice(0, files.length, ...files.filter(i => !isSameFile(i)))
         })
-        onDeleted?.(file)
-        RootStore.Get(BlinkoraStore).removeAttachmentFromClient({ name: file.name, path }, RootStore.Get(BlinkoraStore).curSelectedNote?.id)
-        RootStore.Get(ToastPlugin).success(t('delete-success'))
       }
-    })
-  }))
+      if (!attachedToNote) {
+        blinkora.removeAttachmentFromClient(
+          { name: file.name, path },
+          blinkora.curSelectedNote?.id,
+        )
+      }
+      RootStore.Get(ToastPlugin).success(t('delete-success'))
+    } catch (error) {
+      RootStore.Get(ToastPlugin).error(localizeErrorMessage(error))
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
-  const { t } = useTranslation()
   return <>
-    <TipsPopover isLoading={store.deleteFile.loading.value} content={t('this-operation-will-be-delete-resource-are-you-sure')}
-      onConfirm={async e => {
-        await store.deleteFile.call(file)
-      }}>
-      <div className={`opacity-70 hover:opacity-100 bg-black cursor-pointer rounded-sm transition-al ${className}`}>
+    <TipsPopover isLoading={isDeleting} content={t('this-operation-will-be-delete-resource-are-you-sure')}
+      onConfirm={deleteFile}>
+      <button
+        type="button"
+        aria-label={t('delete')}
+        className={`opacity-70 hover:opacity-100 bg-black cursor-pointer rounded-sm transition-al ${className}`}
+      >
         <Icon className='!text-white' icon="basil:cross-solid" width={size} height={size} />
-      </div>
+      </button>
     </TipsPopover >
   </>
 })

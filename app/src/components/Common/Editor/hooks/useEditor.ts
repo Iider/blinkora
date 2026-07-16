@@ -764,14 +764,24 @@ export const useEditorFiles = (
   store: EditorStore,
   blinkora: BlinkoraStore,
   originFiles?: any[],
+  noteId?: number,
 ) => {
   useEffect(() => {
+    const nextNoteId = noteId ?? null;
+    if (store.editingNoteId !== nextNoteId) {
+      store.editingNoteId = nextNoteId;
+      store.deletedAttachmentPaths = [];
+    }
+    const deletedPaths = new Set(store.deletedAttachmentPaths);
     if (originFiles?.length) {
-      store.files = HandleFileType(originFiles);
+      store.files = HandleFileType(originFiles).filter(file => {
+        const path = file.uploadPromise?.value || file.preview;
+        return !path || !deletedPaths.has(path.split(/[?#]/, 1)[0]);
+      });
     } else if (store.files.length && store.files.every(file => !file.uploadPromise?.loading?.value)) {
       store.files = [];
     }
-  }, [originFiles]);
+  }, [originFiles, noteId]);
 };
 
 export const useEditorHeight = (

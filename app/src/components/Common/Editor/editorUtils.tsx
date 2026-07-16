@@ -43,7 +43,8 @@ export const HandleFileType = (originFiles: Attachment[]): FileType[] => {
         defaultValue: file.path,
         function: async () => file.path
       }),
-      type: file.type
+      type: file.type,
+      attachedToNote: file.attachedToNote === true || file.noteId != null
     }
   })
   return res

@@ -36,6 +36,8 @@ interface UpsertNoteParams {
   id?: number;
   /** List of attachments */
   attachments?: Attachment[];
+  /** Existing attachment paths to delete atomically with this note update */
+  deletedAttachmentPaths?: string[];
   /** Whether to refresh the list after operation */
   refresh?: boolean;
   /** Whether the note is pinned to top */
@@ -207,6 +209,7 @@ export class BlinkoraStore implements Store {
         type,
         id,
         attachments,
+        deletedAttachmentPaths,
         refresh = true,
         isTop,
         showToast = true,
@@ -255,6 +258,9 @@ export class BlinkoraStore implements Store {
       }
       if (id == null || attachments !== undefined) {
         mutationInput.attachments = attachments ?? [];
+      }
+      if (deletedAttachmentPaths !== undefined) {
+        mutationInput.deletedAttachmentPaths = deletedAttachmentPaths;
       }
       if (id == null || references !== undefined) {
         mutationInput.references = references ?? [];
