@@ -255,7 +255,7 @@ export const ShowMoveWorkspaceModel = (options: MoveWorkspaceModelOptions = {}) 
       const selectedWorkspace = targetWorkspaces.find(workspace => String(workspace.id) === selectedWorkspaceId);
 
       const handleMove = async () => {
-        if (!selectedWorkspace || !blinkora.curSelectedNote?.id) return;
+        if (!selectedWorkspace || selectedNoteIds.length === 0) return;
         setIsMoving(true);
         try {
           const moved = await blinkora.moveNoteToWorkspace.call({

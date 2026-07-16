@@ -201,16 +201,16 @@ export class BlinkoraStore implements Store {
     eventKey: 'upsertNote',
     function: async (params: UpsertNoteParams) => {
       const {
-        content = null,
+        content,
         isArchived,
         isRecycle,
         type,
         id,
-        attachments = [],
+        attachments,
         refresh = true,
         isTop,
         showToast = true,
-        references = [],
+        references,
         createdAt: inputCreatedAt,
         updatedAt: inputUpdatedAt,
         metadata
@@ -224,9 +224,9 @@ export class BlinkoraStore implements Store {
           type,
           isArchived: !!isArchived,
           isRecycle: !!isRecycle,
-          attachments: attachments || [],
+          attachments: attachments ?? [],
           isTop: !!isTop,
-          references: references.map(refId => ({ toNoteId: refId })),
+          references: (references ?? []).map(refId => ({ toNoteId: refId })),
           createdAt: now,
           updatedAt: now,
           isOffline: true,
@@ -240,19 +240,30 @@ export class BlinkoraStore implements Store {
         return offlineNote;
       }
 
-      const res = await api.notes.upsert.mutate({
-        content,
+      const mutationInput: Record<string, unknown> = Object.fromEntries(Object.entries({
         type,
         isArchived,
         isRecycle,
         id,
-        attachments,
         isTop,
-        references,
         createdAt: inputCreatedAt ? new Date(inputCreatedAt) : undefined,
         updatedAt: inputUpdatedAt ? new Date(inputUpdatedAt) : undefined,
-        metadata
-      });
+      }).filter(([, value]) => value !== undefined));
+
+      if (id == null || content !== undefined) {
+        mutationInput.content = content ?? null;
+      }
+      if (id == null || attachments !== undefined) {
+        mutationInput.attachments = attachments ?? [];
+      }
+      if (id == null || references !== undefined) {
+        mutationInput.references = references ?? [];
+      }
+      if (metadata !== undefined) {
+        mutationInput.metadata = metadata;
+      }
+
+      const res = await api.notes.upsert.mutate(mutationInput);
       eventBus.emit('editor:clear')
       showToast && RootStore.Get(ToastPlugin).success(id ? i18n.t("update-successfully") : i18n.t("create-successfully"))
       refresh && this.updateTicker++
