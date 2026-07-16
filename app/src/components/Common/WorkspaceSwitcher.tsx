@@ -140,7 +140,7 @@ export const WorkspaceSwitcher = observer(() => {
         setDeletingWorkspaceId(id);
         try {
           const res = await workspaceStore.delete.call(id);
-          if (res === true || res?.success) {
+          if (res?.success) {
             RootStore.Get(ToastPlugin).success(t('workspace-deleted'));
             RootStore.Get(DialogStandaloneStore).close();
           }
@@ -193,19 +193,21 @@ export const WorkspaceSwitcher = observer(() => {
               }
             }}
           >
-            {workspaces.map((ws) => (
-              <DropdownItem key={String(ws.id)} textValue={getWorkspaceName(ws)}>
-                <div className="flex items-center justify-between w-full">
-                  <div className="flex items-center gap-2">
-                    <Icon icon={ws.icon || 'tabler:briefcase-2'} width="16" height="16" />
-                    <span>{getWorkspaceName(ws)}</span>
-                    {ws.isDefault && (
-                      <span className="text-xs text-default-400">({t('default')})</span>
-                    )}
+            <>
+              {workspaces.map((ws) => (
+                <DropdownItem key={String(ws.id)} textValue={getWorkspaceName(ws)}>
+                  <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center gap-2">
+                      <Icon icon={ws.icon || 'tabler:briefcase-2'} width="16" height="16" />
+                      <span>{getWorkspaceName(ws)}</span>
+                      {ws.isDefault && (
+                        <span className="text-xs text-default-400">({t('default')})</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </DropdownItem>
-            ))}
+                </DropdownItem>
+              ))}
+            </>
             <DropdownItem key="manage" textValue={t('manage-workspaces')} onPress={handleOpenManage}>
               <div className="flex items-center gap-2">
                 <Icon icon="hugeicons:settings-02" width="16" height="16" />

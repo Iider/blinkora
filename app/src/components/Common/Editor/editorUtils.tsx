@@ -35,7 +35,7 @@ export const HandleFileType = (originFiles: Attachment[]): FileType[] => {
     const previewType = helper.getFileType(file.type, file.name)
     return {
       name: file.name,
-      size: file.size,
+      size: Number(file.size) || 0,
       previewType,
       extension: extension ?? '',
       preview: file.path,

@@ -611,13 +611,15 @@ export const LeftCickMenu = observer(({ onTrigger, className }: { onTrigger: () 
         <AgentDiscussionItem />
       </DropdownItem>
       <DropdownItem key="EditTimeItem" onPress={() => ShowEditTimeModel()}> <EditTimeItem /></DropdownItem>
-      {getConvertTargetOptions(blinkora.curSelectedNote?.type).map(option => (
-        <DropdownItem key={`ConvertItem-${option.type}`} onPress={() => ConvertItemFunction(option.type)}>
-          <ConvertItem targetType={option.type} />
-        </DropdownItem>
-      ))}
+      <>
+        {getConvertTargetOptions(blinkora.curSelectedNote?.type).map(option => (
+          <DropdownItem key={`ConvertItem-${option.type}`} onPress={() => ConvertItemFunction(option.type)}>
+            <ConvertItem targetType={option.type} />
+          </DropdownItem>
+        ))}
+      </>
       {!blinkora.curSelectedNote?.isRecycle ? (
-        <DropdownItem key="MoveWorkspaceItem" onPress={ShowMoveWorkspaceModel}>
+        <DropdownItem key="MoveWorkspaceItem" onPress={() => ShowMoveWorkspaceModel()}>
           <MoveWorkspaceItem isDisabled={!canMoveToWorkspace} />
         </DropdownItem>
       ) : null}

@@ -8,5 +8,8 @@
     "lru-cache": "^11.1.0",
     "zod": "^4.1.12",
     "superjson": "^2.2.3"
+  },
+  "devDependencies": {
+    "@types/lodash": "^4.17.20"
   }
 }

@@ -11,8 +11,9 @@ export class memoryCache {
         try {
           return JSON.stringify(value).length
         } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
           // Handle circular references or non-serializable objects
-          if (error.message.includes('circular') || error.message.includes('cyclic')) {
+          if (message.includes('circular') || message.includes('cyclic')) {
             // For objects with circular references, use a rough size estimation
             if (typeof value === 'object' && value !== null) {
               return Object.keys(value).length * 50; // Rough estimation

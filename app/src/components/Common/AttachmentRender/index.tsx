@@ -154,6 +154,8 @@ const ReferenceRender = observer(({ store }: { store: EditorStore }) => {
   return <div className='grid grid-cols-2 md:grid-cols-3 gap-2'>
     {
       store?.currentReferences?.map(i => {
+        if (typeof i.id !== 'number') return null;
+        const referenceId = i.id;
         return <Popover placement="bottom">
           <PopoverTrigger>
             <div className="flex items-center gap-1 blinkora-tag cursor-pointer hover:opacity-80 group">
@@ -161,8 +163,8 @@ const ReferenceRender = observer(({ store }: { store: EditorStore }) => {
               <div className="truncate">{i.content}</div>
               <div onClick={(e) => {
                 e.stopPropagation()
-                store.noteListByIds.value = store.noteListByIds.value?.filter(t => i.id !== t.id)
-                store.deleteReference(i.id)
+                store.noteListByIds.value = store.noteListByIds.value?.filter(t => referenceId !== t.id)
+                store.deleteReference(referenceId)
               }} className={`group-hover:opacity-100 md:opacity-0 hover:opacity-100 cursor-pointer rounded-sm transition-al ml-auto`}>
                 <Icon icon="basil:cross-solid" width={20} height={20} />
               </div>

@@ -4,7 +4,7 @@ import { DialogStore } from ".";
 import { RootStore } from "@/store/root";
 import { useHistoryBack, useIsIOS } from "@/lib/hooks";
 import { useMediaQuery } from "usehooks-ts";
-import { motion } from "motion/react";
+import { motion, type Variants } from "motion/react";
 import { Icon } from '@/components/Common/Iconify/icons';
 import { CancelIcon } from "@/components/Common/Icons";
 
@@ -50,22 +50,23 @@ const Dialog = observer(() => {
     historyState: 'modal'
   });
 
+  const variants: Variants = {
+    enter: {
+      y: 0,
+      opacity: 1,
+      transition: { type: 'spring', bounce: 0.5, duration: 0.6 },
+    },
+    exit: {
+      y: -20,
+      opacity: 0,
+      transition: { type: 'spring', bounce: 0.5, duration: 0.3 },
+    },
+  };
   const motionConfig = {
     initial: "enter",
     animate: "enter",
     exit: "exit",
-    variants: {
-      enter: {
-        y: 0,
-        opacity: 1,
-        transition: { type: 'spring', bounce: 0.5, duration: 0.6 },
-      },
-      exit: {
-        y: -20,
-        opacity: 0,
-        transition: { type: 'spring', bounce: 0.5, duration: 0.3 },
-      },
-    }
+    variants,
   };
 
   const containerClass = isPc

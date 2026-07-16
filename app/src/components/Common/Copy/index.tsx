@@ -19,9 +19,7 @@ export const Copy = ({ content, size = 20, className }: IProps) => {
     }
   }, []);
 
-  const handleCopy = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation();
-
+  const handleCopy = async () => {
     try {
       await writeTextToClipboard(content);
       setCopied(true);
@@ -37,7 +35,7 @@ export const Copy = ({ content, size = 20, className }: IProps) => {
   };
 
   return (
-    <div className={`flex items-center ${className ?? ''}`}>
+    <div className={`flex items-center ${className ?? ''}`} onClick={event => event.stopPropagation()}>
       <Tooltip content={t(isCopied ? 'copied' : 'copy')} delay={300}>
         <Button
           aria-label={t(isCopied ? 'copied' : 'copy')}
@@ -46,7 +44,7 @@ export const Copy = ({ content, size = 20, className }: IProps) => {
           size="sm"
           variant="light"
           className="h-auto! w-auto! min-w-0! p-0! bg-transparent! data-[hover=true]:bg-transparent!"
-          onClick={handleCopy}
+          onPress={handleCopy}
         >
           <Icon
             className={isCopied ? 'text-green-500' : 'text-desc'}

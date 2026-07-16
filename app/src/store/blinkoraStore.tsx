@@ -68,6 +68,20 @@ interface OfflineNote extends Omit<Note, 'id' | 'references'> {
   references: { toNoteId: number }[];
 }
 
+const isNotePage = (value: unknown): value is { items: Note[]; total: number } => (
+  value !== null
+  && typeof value === 'object'
+  && 'items' in value
+  && Array.isArray(value.items)
+);
+
+type NotePage = {
+  items: Note[];
+  total: number;
+  page: number;
+  size: number;
+};
+
 export class BlinkoraStore implements Store {
   sid = 'BlinkoraStore';
   noteContent = '';
@@ -153,7 +167,7 @@ export class BlinkoraStore implements Store {
     includePageInfo?: boolean;
     filterConfig: any;
     offlineFilter?: (note: OfflineNote) => boolean | undefined;
-  }) {
+  }): Promise<Note[] | NotePage> {
     const { page, size, includePageInfo = false, filterConfig, offlineFilter = () => true } = params;
     let notes: Note[] = [];
     let total = 0;
@@ -168,12 +182,12 @@ export class BlinkoraStore implements Store {
         includePageInfo
       };
       const res = await api.notes.list.mutate(queryParams);
-      if (includePageInfo && res && typeof res === 'object' && Array.isArray(res.items)) {
+      if (includePageInfo && isNotePage(res)) {
         notes = res.items;
         total = Number(res.total ?? notes.length) || 0;
-      } else {
+      } else if (Array.isArray(res)) {
         notes = res;
-        total = Array.isArray(notes) ? notes.length : 0;
+        total = notes.length;
       }
 
       
@@ -524,17 +538,17 @@ export class BlinkoraStore implements Store {
     let items: Note[] | undefined;
 
     if (currentPath === 'notes') {
-      items = this.noteOnlyList.value;
+      items = this.noteOnlyList.value ?? undefined;
     } else if (currentPath === 'todo') {
-      items = this.todoList.value;
+      items = this.todoList.value ?? undefined;
     } else if (currentPath === 'archived') {
-      items = this.archivedList.value;
+      items = this.archivedList.value ?? undefined;
     } else if (currentPath === 'trash') {
-      items = this.trashList.value;
+      items = this.trashList.value ?? undefined;
     } else if (currentPath === 'all') {
-      items = this.noteList.value;
+      items = this.noteList.value ?? undefined;
     } else {
-      items = this.blinkoraList.value;
+      items = this.blinkoraList.value ?? undefined;
     }
 
     const ids = (items ?? [])

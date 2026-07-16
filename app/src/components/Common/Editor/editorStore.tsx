@@ -365,7 +365,9 @@ export class EditorStore {
 
   // ************************************* reference logic  start ************************************************************************************
   get currentReferences() {
-    return this.noteListByIds.value?.slice()?.sort((a, b) => this.references.indexOf(a.id) - this.references.indexOf(b.id))
+    return this.noteListByIds.value?.slice()?.sort((a, b) => (
+      this.references.indexOf(a.id ?? -1) - this.references.indexOf(b.id ?? -1)
+    ))
   }
 
   noteListByIds = new PromiseState({

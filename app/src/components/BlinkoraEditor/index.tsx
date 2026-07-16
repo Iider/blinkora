@@ -153,7 +153,11 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
     <Editor
       mode={mode}
       originFiles={store.files}
-      originReference={!isCreateMode ? blinkora.curSelectedNote?.references?.map(i => i.toNoteId) : []}
+      originReference={!isCreateMode
+        ? blinkora.curSelectedNote?.references
+          ?.map(reference => reference.toNoteId)
+          .filter((id): id is number => typeof id === 'number')
+        : []}
       content={store.noteContent}
       onChange={v => {
         store.noteContent = v
@@ -175,7 +179,7 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
       isSendLoading={blinkora.upsertNote.loading.value}
       bottomSlot={
         isCreateMode ? <div className='text-xs text-ignore ml-2'>{t('drop-to-upload')}</div> :
-          blinkora.curSelectedNote?.createdAt ? <div className='text-xs text-desc'>{dayjs(blinkora.curSelectedNote.createdAt).format("YYYY-MM-DD hh:mm:ss")}</div> : null
+          blinkora.curSelectedNote?.createdAt ? <div className='text-xs text-desc'>{dayjs(blinkora.curSelectedNote.createdAt).format("YYYY-MM-DD hh:mm:ss")}</div> : undefined
       }
       onSend={async ({ content, files, deletedAttachmentPaths, references, noteType, metadata }) => {
         if (isCreateMode) {
@@ -200,7 +204,9 @@ export const BlinkoraEditor = observer(({ mode, onSended, onHeightChange, isInDi
             refresh: true // Ensure list is refreshed after update
           })
           blinkora.curSelectedNote.content = content
-          blinkora.curSelectedNote.attachments = updatedNote.attachments ?? []
+          if (updatedNote) {
+            blinkora.curSelectedNote.attachments = updatedNote.attachments ?? []
+          }
           try {
             const noteId = Number(blinkora.curSelectedNote.id)
             blinkora.editAttachmentsStorage.save(blinkora.editAttachmentsStorage.list.filter(i => Number(i.id) !== noteId))

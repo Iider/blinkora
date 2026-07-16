@@ -63,7 +63,7 @@ const Home = observer(() => {
 
   // Use drag card hook only for non-todo views
   const { localNotes, sensors, setLocalNotes, handleDragStart, handleDragEnd, handleDragOver } = useDragCard({
-    notes: isTodoView ? undefined : currentListState.value,
+    notes: isTodoView ? undefined : currentListState.value ?? undefined,
     activeId,
     setActiveId,
     insertPosition,

@@ -7,7 +7,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "bun run build:web",
     "build:iconify:icons": "bun run src/components/Common/Iconify/buildIcons.js",
-    "build:web": "NODE_OPTIONS=\"--max-old-space-size=4096\" vite build"
+    "build:web": "NODE_OPTIONS=\"--max-old-space-size=4096\" vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json --pretty false"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

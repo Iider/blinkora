@@ -65,18 +65,21 @@ export const BlinkoraSelectNote = observer(({ iconButton, onSelect, blackList = 
             blinkora.referenceSearchList.callNextPage({});
           }}
         >
-          {blinkora.referenceSearchList?.value?.map((item) => (
+          {blinkora.referenceSearchList?.value?.map((item) => {
+            if (typeof item.id !== 'number') return null;
+            const noteId = item.id;
+            return (
             <div
               key={item.id}
               role="button"
               aria-label={item.content}
-              aria-disabled={blackList.includes(item.id)}
+              aria-disabled={blackList.includes(noteId)}
               data-reference-option="true"
-              tabIndex={blackList.includes(item.id) ? -1 : 0}
+              tabIndex={blackList.includes(noteId) ? -1 : 0}
               className={`flex flex-col w-full bg-background hover:bg-hover rounded-md cursor-pointer p-1
-                ${blackList.includes(item.id) ? 'opacity-50 pointer-events-none' : ''}`}
+                ${blackList.includes(noteId) ? 'opacity-50 pointer-events-none' : ''}`}
               onClick={() => {
-                if (!blackList.includes(item.id)) {
+                if (!blackList.includes(noteId)) {
                   if (autoClose) {
                     setIsOpen(false);
                   }
@@ -94,7 +97,8 @@ export const BlinkoraSelectNote = observer(({ iconButton, onSelect, blackList = 
                 <div className="text-sm line-clamp-2">{item.content}</div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </ScrollArea>
       </PopoverContent>
     </Popover>

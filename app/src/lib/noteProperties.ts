@@ -110,6 +110,8 @@ export const stringifyNotePropertyValueInput = (value: NotePropertyValue) => {
   return String(value);
 };
 
-export const hasNoteProperties = (value: unknown) => {
-  return isPlainObject(value) && Object.keys(value).length > 0;
+export const hasNoteProperties = (value: unknown): value is NoteProperties => {
+  return isPlainObject(value)
+    && Object.keys(value).length > 0
+    && Object.values(value).every(isSupportedPropertyValue);
 };

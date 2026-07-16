@@ -136,21 +136,27 @@ export const OperationLogSetting = observer(() => {
           </Select>
           <Select data-operation-log-note-type-trigger="true" size="sm" label={t("note-type")} selectedKeys={[noteType]} onSelectionChange={(keys) => resetPage(setNoteType)(selectionValue(keys))}>
             <SelectItem key="all">{t("all")}</SelectItem>
-            {NOTE_TYPE_OPTIONS.map((item) => (
-              <SelectItem key={String(item.value)}>{t(item.labelKey)}</SelectItem>
-            ))}
+            <>
+              {NOTE_TYPE_OPTIONS.map((item) => (
+                <SelectItem key={String(item.value)}>{t(item.labelKey)}</SelectItem>
+              ))}
+            </>
           </Select>
           <Select data-operation-log-action-trigger="true" size="sm" label={t("operation-log-action")} selectedKeys={[action]} onSelectionChange={(keys) => resetPage(setAction)(selectionValue(keys))}>
             <SelectItem key="all">{t("all")}</SelectItem>
-            {ACTION_OPTIONS.map((item) => (
-              <SelectItem key={item}>{t(`operation-log-action-${item}`)}</SelectItem>
-            ))}
+            <>
+              {ACTION_OPTIONS.map((item) => (
+                <SelectItem key={item}>{t(`operation-log-action-${item}`)}</SelectItem>
+              ))}
+            </>
           </Select>
           <Select data-operation-log-field-trigger="true" size="sm" label={t("operation-log-field")} selectedKeys={[changedField]} onSelectionChange={(keys) => resetPage(setChangedField)(selectionValue(keys))}>
             <SelectItem key="all">{t("all")}</SelectItem>
-            {FIELD_OPTIONS.map((item) => (
-              <SelectItem key={item}>{t(`operation-log-field-${item}`)}</SelectItem>
-            ))}
+            <>
+              {FIELD_OPTIONS.map((item) => (
+                <SelectItem key={item}>{t(`operation-log-field-${item}`)}</SelectItem>
+              ))}
+            </>
           </Select>
           <Input size="sm" label={t("note-id")} value={noteId} onValueChange={resetPage(setNoteId)} />
           <div className="flex gap-2">

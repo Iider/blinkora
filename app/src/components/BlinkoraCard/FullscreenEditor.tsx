@@ -344,8 +344,9 @@ export const FullscreenEditor = observer(({ blinkoraItem, isOpen, onClose }: Ful
 
   if (!isOpen) return null;
 
-  const activeNote = blinkora.noteDetail.value?.id === blinkoraItem.id
-    ? blinkora.noteDetail.value
+  const loadedNote = blinkora.noteDetail.value;
+  const activeNote = loadedNote && loadedNote.id === blinkoraItem.id
+    ? loadedNote
     : blinkoraItem;
 
   const renderModeButton = () => editorMode === 'preview' ? (

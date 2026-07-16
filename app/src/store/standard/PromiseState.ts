@@ -163,6 +163,12 @@ type PageResponse<T = any> = {
   size?: number;
 }
 
+type PageValue<T> = Awaited<T> extends infer Result
+  ? Result extends PageResponse<infer Item>
+    ? Item[]
+    : Result
+  : never;
+
 const isPageResponse = (value: any): value is PageResponse => {
   return value && typeof value === 'object' && Array.isArray(value.items);
 }
@@ -194,7 +200,7 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
     return this.loading.value
   }
   //@ts-ignore
-  value?: Awaited<U> = [];
+  value?: PageValue<U> | null = [];
   defaultValue: any = [];
   function!: T;
 
@@ -231,12 +237,11 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
     }
   }
 
-  async setValue(val) {
-    let _val = val;
-    this.value = _val;
+  async setValue(val: PageValue<U> | null) {
+    this.value = val;
   }
 
-  private async call(...args: Parameters<T>): Promise<Awaited<U> | undefined> {
+  private async call(...args: Parameters<T>): Promise<PageValue<U> | null | undefined> {
     const toast = RootStore.Get(ToastPlugin);
     const base = RootStore.Get(BaseStore);
     let requestVersion = 0;
@@ -267,7 +272,7 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
       if (!Array.isArray(items)) throw new Error("PromisePageState function must return array")
       if (this.isPaginationMode) {
         this.isLoadAll = this.totalPages > 0 ? this.page >= this.totalPages : true;
-        this.setValue(items.length == 0 ? null : items);
+        this.setValue((items.length == 0 ? null : items) as PageValue<U> | null);
         //@ts-ignore
         return this.value;
       }
@@ -281,7 +286,7 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
       }
       if (items.length == Number(this.size.value)) {
         if (this.page == 1) {
-          this.setValue(items);
+          this.setValue(items as PageValue<U>);
         } else {
           //@ts-ignore
           // Fix: Deduplicate items when concatenating pages to avoid duplicate display
@@ -291,15 +296,15 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
               existingMap.set(item.id, item);
             }
           });
-          this.setValue(Array.from(existingMap.values()));
+          this.setValue(Array.from(existingMap.values()) as PageValue<U>);
         }
       } else {
         if (this.page == 1) {
-          this.setValue(items);
+          this.setValue(items as PageValue<U>);
           this.isLoadAll = true
         } else {
           //@ts-ignore
-          this.setValue(this.value!.concat(items));
+          this.setValue(this.value!.concat(items) as PageValue<U>);
           this.isLoadAll = true
         }
       }
@@ -340,7 +345,7 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
     }
   }
 
-  async resetAndCall(...args: Parameters<T>): Promise<Awaited<U> | undefined> {
+  async resetAndCall(...args: Parameters<T>): Promise<PageValue<U> | null | undefined> {
     this.isLoadAll = false
     this.page = 1
     this.total = 0
@@ -353,7 +358,7 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
     //@ts-ignore
     return await this.call(...args)
   }
-  async setPageAndCall(page: number, ...args: Parameters<T>): Promise<Awaited<U> | undefined> {
+  async setPageAndCall(page: number, ...args: Parameters<T>): Promise<PageValue<U> | null | undefined> {
     const nextPage = Math.max(1, Math.min(Number(page) || 1, this.totalPages || Number(page) || 1));
     this.isLoadAll = false
     this.page = nextPage
@@ -368,7 +373,7 @@ export class PromisePageState<T extends (...args: any) => Promise<any>, U = Retu
     //@ts-ignore
     return await this.call(...args)
   }
-  async callNextPage(...args: Parameters<T>): Promise<Awaited<U> | undefined> {
+  async callNextPage(...args: Parameters<T>): Promise<PageValue<U> | null | undefined> {
     if (this.isPaginationMode) {
       return this.setPageAndCall(this.page + 1, ...args)
     }

@@ -4,8 +4,8 @@ import { getBlinkoraEndpoint } from './blinkoraEndpoint';
 import { RootStore } from '@/store';
 import { UserStore } from '@/store/user';
 import { WorkspaceStore } from '@/store/workspace';
+import type { BlinkoraTrpcClient } from './trpcContract';
 
-type AppRouter = any;
 const fetchWithTimeout: typeof fetch = (url, options) => {
   return fetch(url, {
     ...options,
@@ -81,22 +81,17 @@ const getLinks = (useStream = false) => {
   }
 };
 
-export let api = createTRPCClient<AppRouter>({
-  links: [getLinks(false)],
-});
+const createClient = (useStream: boolean): BlinkoraTrpcClient => createTRPCClient({
+  links: [getLinks(useStream)],
+}) as unknown as BlinkoraTrpcClient;
 
-export let streamApi = createTRPCClient<AppRouter>({
-  links: [getLinks(true)],
-});
+export let api = createClient(false);
+
+export let streamApi = createClient(true);
 
 export const reinitializeTrpcApi = () => {
-  api = createTRPCClient<AppRouter>({
-    links: [getLinks(false)],
-  });
-
-  streamApi = createTRPCClient<AppRouter>({
-    links: [getLinks(true)],
-  });
+  api = createClient(false);
+  streamApi = createClient(true);
 
   return { api, streamApi };
 };

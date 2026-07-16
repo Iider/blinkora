@@ -6,6 +6,8 @@ export interface TagTreeNode {
   children?: TagTreeNode[];
 }
 export type TagTreeDBNode = Tag & { children?: TagTreeDBNode[]; metadata: { icon: string, path: string } }
+type MutableRecord = Record<string, unknown>;
+type CrawlOptions = Partial<Record<string, (value: unknown) => unknown>>;
 const HASHTAG_TRAILING_PUNCTUATION_RE = /[。！？；：，、,.!?;:)\]}>）】》"”'’*]+$/u;
 const HASHTAG_INLINE_DELIMITER_RE = /[。！？；：，、,!?;:)\]}>）】》"”'’*]/u;
 
@@ -126,7 +128,7 @@ export const helper = {
     return null
   },
   promise: {
-    async sleep(ms) {
+    async sleep(ms: number): Promise<void> {
       return new Promise((resolve) => setTimeout(resolve, ms));
     },
     async runAsync<T, U = Error>(promise: Promise<T>): Promise<[U | null, T | null]> {
@@ -134,18 +136,20 @@ export const helper = {
     },
   },
   object: {
-    crawlObject(object, options) {
-      const newObj = JSON.parse(JSON.stringify(object));
+    crawlObject<T extends MutableRecord>(object: T, options: CrawlOptions): T {
+      const newObj = JSON.parse(JSON.stringify(object)) as T;
       return helper.object.crawl(newObj, options);
     },
-    crawl(object, options) {
+    crawl<T extends MutableRecord>(object: T, options: CrawlOptions): T {
+      const mutableObject: MutableRecord = object;
       Object.keys(object).forEach((i) => {
-        if (typeof object[i] === 'object') {
-          helper.object.crawl(object[i], options);
+        const value = mutableObject[i];
+        if (helper.isObject(value)) {
+          helper.object.crawl(value, options);
         } else {
-          const handler = options[typeof object[i]];
+          const handler = options[typeof value];
           if (handler) {
-            object[i] = handler(object[i]);
+            mutableObject[i] = handler(value);
           }
         }
       });
@@ -163,7 +167,7 @@ export const helper = {
       }
       return true;
     },
-    safeParse(val: any) {
+    safeParse(val: string): unknown {
       try {
         return JSON.parse(val);
       } catch (error) {
@@ -171,29 +175,30 @@ export const helper = {
       }
     },
   },
-  deepAssign(target, ...sources) {
+  deepAssign<T extends MutableRecord>(target: T, ...sources: MutableRecord[]): T {
+    const mutableTarget: MutableRecord = target;
     sources.forEach((source) => {
       Object.keys(source).forEach((key) => {
         let descriptor = Object.getOwnPropertyDescriptor(source, key);
         if (descriptor && descriptor?.get) {
           return Object.defineProperty(target, key, descriptor);
         }
-        const targetValue = target[key];
+        const targetValue = mutableTarget[key];
         let sourceValue = source[key];
         if (helper.isObject(targetValue) && helper.isObject(sourceValue)) {
           try {
-            target[key] = helper.deepAssign(targetValue, sourceValue);
+            mutableTarget[key] = helper.deepAssign(targetValue, sourceValue);
           } catch (e) {
-            target[key] = Object.assign(targetValue, sourceValue);
+            mutableTarget[key] = Object.assign(targetValue, sourceValue);
           }
         } else {
-          target[key] = sourceValue;
+          mutableTarget[key] = sourceValue;
         }
       });
     });
     return target;
   },
-  isObject(value) {
+  isObject(value: unknown): value is MutableRecord {
     return value != null && typeof value === 'object';
   },
   download: {
