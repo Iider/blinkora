@@ -29,12 +29,15 @@ bun run deploy:local update
 bun run deploy:local status
 bun run deploy:local logs
 bun run deploy:local restart
+bun run deploy:local rotate-secret
 bun run deploy:local stop
 bun run deploy:local start
 bun run deploy:local uninstall
 ```
 
 `uninstall` 只移除 `launchd` 服务，保留全部数据。
+
+`rotate-secret` 会生成新的随机 `BLINKORA_SECRET` 并重启服务。轮换后现有登录会话和账号 API token 立即失效，需要重新登录并更新使用账号 token 的外部调用；密码、笔记、附件和 Workspace Agent token 不受影响。新服务未能通过健康检查时，脚本会恢复原环境和服务。
 
 ## 验收与排障
 

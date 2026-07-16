@@ -36,6 +36,49 @@ grep -q '^BLINKORA_SECRET=preserve-this-test-secret$' "$FIXTURE/app/blinkora.env
 grep -q "^PUBLIC_PATH=$FIXTURE/app/release/public$" "$FIXTURE/app/blinkora.env"
 grep -q "^SCHEMA_PATH=$FIXTURE/app/release/db/schema.sqlite.sql$" "$FIXTURE/app/blinkora.env"
 
+HOME="$FIXTURE/home" BLINKORA_LOCAL_HOME="$FIXTURE/app" bash -c '
+  script="$1"
+  calls="$2"
+  set -- help
+  source "$script" >/dev/null
+  generate_secret() { printf "%s\n" "rotated-test-secret"; }
+  stop_service() { printf "%s\n" stop >>"$calls"; }
+  start_service() { printf "%s\n" start >>"$calls"; }
+  rotate_secret >/dev/null
+' _ "$ROOT_DIR/scripts/local-persistent-deploy.sh" "$FIXTURE/rotation-calls"
+
+grep -q '^BLINKORA_SECRET=rotated-test-secret$' "$FIXTURE/app/blinkora.env"
+[[ "$(sed -n '1p' "$FIXTURE/rotation-calls")" == stop ]]
+[[ "$(sed -n '2p' "$FIXTURE/rotation-calls")" == start ]]
+if find "$FIXTURE/app" -maxdepth 1 -name '.blinkora.env.pre-rotation.*' -print -quit | grep -q .; then
+  echo "error: successful secret rotation left a backup sidecar" >&2
+  exit 1
+fi
+
+printf '%s\n' 'BLINKORA_SECRET=rollback-test-secret' >"$FIXTURE/app/blinkora.env"
+chmod 600 "$FIXTURE/app/blinkora.env"
+if HOME="$FIXTURE/home" BLINKORA_LOCAL_HOME="$FIXTURE/app" bash -c '
+  script="$1"
+  calls="$2"
+  set -- help
+  source "$script" >/dev/null
+  generate_secret() { printf "%s\n" "rejected-test-secret"; }
+  stop_service() { printf "%s\n" stop >>"$calls"; }
+  start_service() {
+    printf "%s\n" start >>"$calls"
+    [[ "$(grep -c '^start$' "$calls")" -gt 1 ]]
+  }
+  rotate_secret >/dev/null 2>&1
+' _ "$ROOT_DIR/scripts/local-persistent-deploy.sh" "$FIXTURE/rollback-calls"; then
+  echo "error: rejected secret rotation unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -q '^BLINKORA_SECRET=rollback-test-secret$' "$FIXTURE/app/blinkora.env"
+if find "$FIXTURE/app" -maxdepth 1 -name '.blinkora.env.pre-rotation.*' -print -quit | grep -q .; then
+  echo "error: failed secret rotation left a backup sidecar" >&2
+  exit 1
+fi
+
 permissions="$(stat -f '%Lp' "$FIXTURE/app/blinkora.env" 2>/dev/null || stat -c '%a' "$FIXTURE/app/blinkora.env")"
 if [[ "$permissions" != 600 ]]; then
   echo "error: local deployment environment permissions are $permissions, expected 600" >&2

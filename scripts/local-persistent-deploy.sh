@@ -27,6 +27,8 @@ Commands:
   start       Start the launchd service
   stop        Stop the launchd service
   restart     Restart the launchd service
+  rotate-secret
+              Replace BLINKORA_SECRET and restart; invalidates login/API JWTs
   status      Show launchd service status
   logs        Tail local Blinkora service logs
   uninstall   Stop the service and remove its plist; keep all local data
@@ -242,7 +244,7 @@ start_service() {
   launchctl bootout "$domain" "$PLIST" >/dev/null 2>&1 || true
   launchctl bootstrap "$domain" "$PLIST"
   launchctl kickstart -k "$domain/$LABEL"
-  wait_for_service_health
+  wait_for_service_health || return 1
   echo "Blinkora local service started: http://localhost:$PORT"
 }
 
@@ -283,6 +285,60 @@ restart_service() {
   start_service
 }
 
+rotate_secret() (
+  set -Eeuo pipefail
+  require_cmd openssl "macOS should include openssl; install it before rotating the auth secret."
+  ensure_env_file
+
+  local backup
+  backup="$(mktemp "$APP_HOME/.blinkora.env.pre-rotation.XXXXXX")"
+  cp "$ENV_FILE" "$backup"
+  chmod 600 "$backup"
+  local restore_required=false
+
+  cleanup_rotation() {
+    local status=$?
+    local rollback_failed=false
+    trap - EXIT INT TERM
+    if [[ "$restore_required" == true ]]; then
+      cp "$backup" "$ENV_FILE" || rollback_failed=true
+      chmod 600 "$ENV_FILE" || rollback_failed=true
+      stop_service >/dev/null 2>&1 || true
+      if ! start_service; then
+        rollback_failed=true
+      fi
+    fi
+    rm -f "$backup"
+    if [[ "$rollback_failed" == true ]]; then
+      echo "error: secret rotation failed and the previous local service could not be restored" >&2
+      exit 1
+    fi
+    exit "$status"
+  }
+  trap cleanup_rotation EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  local new_secret
+  new_secret="$(generate_secret)"
+  [[ -n "$new_secret" ]] || {
+    echo "error: generated BLINKORA_SECRET is empty" >&2
+    return 1
+  }
+  set_env_value BLINKORA_SECRET "$new_secret"
+  unset new_secret
+  restore_required=true
+
+  stop_service
+  if ! start_service; then
+    echo "error: local service rejected the new secret; restoring the previous environment" >&2
+    return 1
+  fi
+
+  restore_required=false
+  echo "Blinkora local auth secret rotated; existing login sessions and account API tokens are invalid"
+)
+
 uninstall() {
   stop_service
   rm -f "$PLIST"
@@ -297,6 +353,7 @@ case "${1:-}" in
   start) start_service ;;
   stop) stop_service ;;
   restart) restart_service ;;
+  rotate-secret) rotate_secret ;;
   status) status ;;
   logs) tail_logs ;;
   uninstall) uninstall ;;
