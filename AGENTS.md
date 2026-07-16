@@ -46,6 +46,7 @@ bun run dev:frontend  # Vite dev server, default http://localhost:5173 and proxi
 ### Build and Verify
 
 ```bash
+bun run typecheck
 bun run build:web --force  # use before release packaging when validating frontend changes
 bun run build:rust-release
 bun run deploy:local install

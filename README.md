@@ -77,6 +77,7 @@ bun run deploy:local logs
 bun install
 bun run dev:rust
 bun run dev:frontend
+bun run typecheck
 bun run build:web --force
 bun run build:rust-release
 bun run verify:rust

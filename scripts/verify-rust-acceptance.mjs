@@ -36,6 +36,7 @@ run('PostgreSQL/SQLite performance script syntax', 'node', ['--check', 'scripts/
 run('PostgreSQL/SQLite backup performance script syntax', 'node', ['--check', 'scripts/postgres-sqlite-backup-performance.mjs']);
 run('SQLite backup shell syntax', 'bash', ['-n', 'scripts/sqlite-backup.sh']);
 run('SQLite restore shell syntax', 'bash', ['-n', 'scripts/sqlite-restore.sh']);
+run('TypeScript', 'bun', ['run', 'typecheck']);
 run('rust unit tests', 'cargo', ['test', '--manifest-path', 'server/Cargo.toml']);
 run('PostgreSQL migration tool tests', 'cargo', ['test', '--manifest-path', 'tools/postgres-to-sqlite/Cargo.toml']);
 

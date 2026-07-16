@@ -38,6 +38,7 @@
 | 同机 p95 性能 | 同一 macOS arm64 主机、同一迁移夹具、PostgreSQL 与 SQLite macOS release 二进制各采样 100 次、预热 20 次：SQLite/PG p95 为列表 27.6%（2.604/9.446 ms）、详情 36.5%（2.470/6.770 ms）、子串搜索 40.0%（3.014/7.540 ms）、写入 21.8%（3.290/15.091 ms），均低于 120% 门槛。 |
 | 导入导出性能 | 固定基线 `f061365` 与候选 `c158b13` 在同一 macOS arm64 主机使用 release 二进制、原生 PostgreSQL 14 和由其无损迁移出的 SQLite；夹具只含 smoke 生成的 2 个 Workspace、16 条笔记、6 个本地附件，不复用真实数据或 S3。Workspace/full × Markdown/JSON 各执行 5 次，每次导入后删除导入 Workspace，双方都回到 2 个 Workspace。SQLite/PG 的导出、导入 p95 比例分别为：Workspace Markdown 66.2%/70.3%、Workspace JSON 64.1%/88.7%、full Markdown 66.4%/52.2%、full JSON 51.5%/38.6%，全部低于 150% 门槛；最终 `integrity_check=ok`、外键检查为 0。指标和迁移计数保存在 `~/.blinkora/acceptance-evidence-20260716/backup-performance-synthetic-*-c158b13.json` 及同目录迁移日志，权限均为 `0600`。 |
 | 构建与部署 | M1 冻结候选的 `bun run build:web --force`、`bun run verify:rust` 和 macOS 原生 release 构建均通过；`bun run deploy:local update` 再次完成同一 Web/native 构建并更新 `launchd` 服务。既有 Linux arm64/amd64 与单 Web 容器运行时证据来自此前候选，当前产品代码改动后没有重跑：本机 Homebrew Rust 不提供 Linux musl target，而本次明确不使用 Docker，因此 `bun run build:rust-release` 的 Linux 阶段是平台范围跳过，不写成当前候选通过。Docker 资源最终只读复核为 0 镜像、0 容器、0 卷、0 Build Cache，默认网络之外为 0。 |
+| TypeScript 独立门禁 | 2026-07-16 以 app 的 134 个错误、45 个文件和 shared 的 30 个错误建立基线；补齐 Rust 74 个 tRPC procedure 的显式前端契约，并清理分页、可空值、HeroUI、Motion、可选 ID、shared 工具函数与 lodash 声明后，`bun run typecheck` 同时检查两个包并零错误退出。没有降低严格度、增加批量忽略或新增宽泛 `any`；该命令已接入 `verify:rust`，后续类型回归直接阻断统一验收。 |
 | PostgreSQL 残留防回归 | `verify:rust` 会执行 `scripts/verify-sqlite-runtime-residuals.mjs`：检查部署文档、模板与 Compose 文件不含 PostgreSQL URL、`psql`、旧容器名、默认端口或运行时环境变量；检查正式运行时源文件不含 PostgreSQL 专用 backend 或 SQL 语法，并要求 Compose 只定义 `web` 服务。冻结候选最新实跑通过 64 个服务端测试和 6 个迁移工具测试。 |
 | 浏览器核心 smoke | 同一隔离 SQLite Docker 实例中，桌面和 390×844 移动视口均完成真实登录与主界面验证；笔记列表、带附件笔记、底部导航与移动侧栏开合正常。最新候选重新构建后，以全新登录标签页验证桌面待办页和编辑器，以及 390×844 待办页；控制台 error、warn、warning 均为 0。当前 macOS 原生本地服务也已验证未登录的桌面与 390×844 登录、注册页正常渲染，控制台 error、warn、warning 均为 0。 |
 | 浏览器扩展 smoke | 新建隔离 Docker 实例后，完整 `smoke:rust` 先通过；浏览器随后真实创建闪念、笔记、待办各一条，标签树筛选和全局搜索均能找到新闪念，资源页能列出既有附件并创建/进入嵌套目录，设置页能读取操作日志及新建笔记的日志记录。最新候选通过 UI 将 `type=2` 待办更新为带 `（再次编辑）` 的内容；离线检查确认 `noteHistory.version=1` 保存前一版本，`integrity_check=ok`，`foreign_key_check` 为 0 行，容器重启后 `/health` 恢复正常。基础设置与 2FA 入口均正常渲染。 |
@@ -110,7 +111,6 @@
 - **真实 S3 内容未纳入本轮读取验收。** 8 条附件记录和 S3 配置已无损迁移，但按用户要求没有列举、读取、下载、写入或删除现有业务对象，因此内容 SHA-256、真实附件预览和最终切换后的 S3 可用性仍待维护窗口或独立只读授权验证。源 `files/` 中 2 个无数据库引用的遗留文件也仍需在最终迁移前决定是否作为原始目录快照一并归档。
 - **最终候选浏览器/MCP smoke 尚未执行。** M2-A 真实结构克隆通过浏览器、MCP、Workspace 级备份恢复、令牌和清理；临时停写候选只做了账号 API token 只读检查。正式脚本会在激活前对全新候选克隆重跑完整隔离 smoke，现有业务 S3 对象继续禁止访问。
 - **当前候选的 Linux/Docker release 未重跑。** M1 明确只交付 macOS 本地部署；`bun run build:rust-release` 在本机进入 Linux musl 阶段时因 Homebrew Rust 缺少该 target 无法继续，且本轮按用户要求不启动 Docker fallback。Web、macOS native release 和常驻部署均已通过；Linux/Docker 保留既有证据，若以后恢复该交付面，必须基于当前候选重跑。
-- `bunx tsc --noEmit -p app/tsconfig.json` 不是当前交付门禁，且仍存在仓库历史类型错误；正式 `bun run build:web --force` 已通过。若以后把独立 `tsc` 提升为门禁，需要先清理或建立明确基线。
 - 卡片长按拖动、相机/麦克风入口重新启用后的权限拒绝、Firefox/Safari 和更多移动尺寸属于延期未分类，不涉及数据测试跳过。相机/麦克风当前没有产品入口；M1 已覆盖音频/视频附件、卡背、多引用、全屏浮层、日夜主题、桌面/移动和真实 OSS 卡片级联删除。
 - 飞牛实际机器的 systemd 安装、更新、启动、停止和卸载不属于 `blinkora_local` 分支范围。本轮只保留模板语法校验，不写成飞牛实机通过。
 
