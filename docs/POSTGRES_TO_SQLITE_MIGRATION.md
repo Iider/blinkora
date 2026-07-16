@@ -5,7 +5,7 @@
 ## 前提
 
 - 迁移期间停止 Blinkora 写入，并保留原数据目录与 PostgreSQL 实例。
-- 安装 `pg_dump`、Rust toolchain 和 SQLite CLI。
+- 安装 PostgreSQL client tools（`pg_dump`、`pg_restore`、`createdb`）、Rust toolchain 和 SQLite CLI。
 - `DATA_DIR` 必须是现有附件目录；其中不能已有 `blinkora.sqlite3`。
 - SQLite 只支持一个 Blinkora 服务进程和本地文件系统，不支持 NFS、SMB 或多副本运行。
 
@@ -66,7 +66,7 @@ BLINKORA_CONTRACT_REPORT_PATH='/受限目录/contract.json' \
 bun run test:postgres-sqlite-contract
 ```
 
-脚本从当前服务端注册表读取全部 74 个 procedure，拒绝数量漂移；确定性读接口逐值比较，原本无排序约束的列表按成员集合比较，随机和写入接口比较 HTTP/tRPC envelope、业务错误和返回结构。
+脚本扫描服务端 procedure 注册源并要求恰好包含 74 项，拒绝数量漂移；确定性读接口逐值比较，原本无排序约束的列表按成员集合比较，随机和写入接口比较 HTTP/tRPC envelope、业务错误和返回结构。
 
 它还会对照以下外部接口：
 
@@ -101,6 +101,7 @@ BLINKORA_POSTGRES_BASE_URL='http://127.0.0.1:16676' \
 BLINKORA_SQLITE_BASE_URL='http://127.0.0.1:16678' \
 BLINKORA_SMOKE_USER='<夹具账号>' \
 BLINKORA_SMOKE_PASSWORD='<夹具密码>' \
+BLINKORA_BACKUP_PERF_ISOLATED=1 \
 BLINKORA_BACKUP_PERF_FORMAT='markdown' \
 BLINKORA_BACKUP_PERF_SCOPE='workspace' \
 BLINKORA_BACKUP_PERF_REPORT_PATH='/受限目录/backup-performance.json' \
@@ -117,3 +118,5 @@ bun run test:postgres-sqlite-backup-performance
 4. 只有完成问题修复并重新全量校验后，才再次执行迁移。
 
 不要用 `blinkora.backup.v1` 替代数据库迁移：该格式不是所有账号、字体、令牌和运行配置的物理全量快照。
+
+飞牛现用服务到 macOS 本机的最终停写、快照、激活和回滚步骤见 [M2 生产切换运行手册](./M2_PRODUCTION_CUTOVER_RUNBOOK.md)。

@@ -12,6 +12,7 @@ const browserExecutable = process.env.BLINKORA_BROWSER_EXECUTABLE
 const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`;
 const user = process.env.BLINKORA_BROWSER_SMOKE_USER || `browser_smoke_${stamp}`;
 const password = process.env.BLINKORA_BROWSER_SMOKE_PASSWORD || 'BrowserSmoke!local';
+const accountToken = process.env.BLINKORA_BROWSER_SMOKE_ACCOUNT_TOKEN?.trim() || '';
 const scenario = process.env.BLINKORA_BROWSER_SMOKE_SCENARIO?.trim() || 'full';
 const m1ArtifactsDir = process.env.BLINKORA_M1_REVIEW_ARTIFACTS_DIR?.trim() || '';
 const FONT_FIXTURE_PATH = '/System/Library/Fonts/Symbol.ttf';
@@ -186,6 +187,107 @@ async function registerAndSignIn(page) {
     page.locator('form button').filter({ hasText: '登录' }).click(),
   ]);
   await waitForApp(page);
+}
+
+async function accountTrpc(procedure, input) {
+  const response = await fetch(new URL(`/api/trpc/${procedure}`, base), {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accountToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ json: input }),
+  });
+  const payload = await response.json().catch(() => null);
+  assert(response.ok && !payload?.error, `Account API token could not call ${procedure}.`, {
+    status: response.status,
+  });
+  return payload?.result?.data?.json;
+}
+
+async function signInWithAccountToken(page, workspaceId) {
+  assert(accountToken, 'M2 clone browser smoke requires an account API token.');
+  const response = await fetch(new URL('/api/auth/profile', base), {
+    headers: { Authorization: `Bearer ${accountToken}` },
+  });
+  assert(response.ok, 'Account API token could not read the migrated profile.', {
+    status: response.status,
+  });
+  const payload = await response.json();
+  const profile = payload?.user;
+  assert(Number.isInteger(profile?.id), 'Migrated profile omitted its account id.');
+
+  await page.addInitScript(({ token, userProfile, initialWorkspaceId }) => {
+    window.localStorage.setItem('blinkoraToken', JSON.stringify({
+      token,
+      expires: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      user: {
+        id: String(userProfile.id),
+        name: userProfile.name,
+        nickname: userProfile.nickname ?? userProfile.nickName,
+        image: userProfile.image,
+        role: userProfile.role,
+      },
+    }));
+    window.localStorage.setItem('blinkoraCurrentWorkspaceId', JSON.stringify(initialWorkspaceId));
+  }, { token: accountToken, userProfile: profile, initialWorkspaceId: workspaceId });
+
+  await page.goto(new URL('/', base).toString(), { waitUntil: 'networkidle' });
+  await waitForApp(page);
+}
+
+async function verifyM2CloneReview(page, diagnostics) {
+  const workspaces = await accountTrpc('workspaces.list', {});
+  const defaultWorkspace = workspaces.find(item => item.isDefault === true);
+  assert(Number.isInteger(defaultWorkspace?.id), 'M2 clone has no default Workspace.');
+
+  const workspaceName = `M2 clone workspace ${stamp}`;
+  const workspace = await accountTrpc('workspaces.create', {
+    name: workspaceName,
+    description: 'Disposable M2 clone browser smoke Workspace',
+    icon: 'tabler:database-check',
+    color: '#2563eb',
+  });
+  assert(Number.isInteger(workspace?.id), 'M2 clone Workspace creation failed.');
+
+  try {
+    await signInWithAccountToken(page, workspace.id);
+
+    const tagParent = `m2_clone_${stamp.replace(/[^a-zA-Z0-9]/g, '')}`;
+    const tagChild = `${tagParent}_child`;
+    const blinkora = `M2 clone Blinkora ${stamp}`;
+    const note = `M2 clone Note ${stamp} #${tagParent}/${tagChild}`;
+    const todo = `M2 clone Todo ${stamp}`;
+    const updatedNote = `${note} (edited)`;
+    const attachmentName = `m2-clone-${stamp}.txt`;
+    const comment = `M2 clone comment ${stamp}`;
+
+    await createNote(page, '闪念', blinkora, '');
+    const createdNote = await createNote(page, '笔记', note, 'path=notes');
+    await createNote(page, '待办', todo, 'path=todo');
+    await editNote(page, note, updatedNote, async () => {
+      await attachFileToEditedNote(page, attachmentName);
+    });
+    await verifyTodoCompletion(page, todo);
+    await verifyGlobalSearch(page, blinkora);
+    await verifyTagTreeFilter(page, tagParent, tagChild, updatedNote);
+    await verifyAttachmentFilter(page, updatedNote);
+    await verifyTaggedAttachmentFilter(page, tagChild, updatedNote);
+    await verifyCommentTree(page, updatedNote, comment);
+    await verifyOperationLogSettings(page, updatedNote);
+    await verifyWorkspaceTokenGuide(page);
+    const archive = await verifyBackupExport(page);
+    const archivePath = await archive.path();
+    assert(archivePath && statSync(archivePath).size > 0,
+      'M2 clone Workspace export did not produce a non-empty archive.');
+    assert(createdNote.id > 0, 'M2 clone Note omitted its stable id.');
+    assert(diagnostics.length === 0,
+      'M2 clone browser review observed console or local HTTP errors.', diagnostics);
+  } finally {
+    const deleted = await accountTrpc('workspaces.delete', { id: workspace.id });
+    assert(deleted?.success === true && deleted.deletedAttachmentFiles === 1,
+      'M2 clone Workspace cleanup returned an unexpected cascade summary.', deleted);
+  }
 }
 
 async function createAndSelectWorkspace(page, name) {
@@ -2626,7 +2728,10 @@ const page = await desktop.newPage();
 const diagnostics = createDiagnostics(page, 'desktop');
 
 try {
-  if (scenario === 'attachment-transaction') {
+  if (scenario === 'm2-clone') {
+    await verifyM2CloneReview(page, diagnostics);
+    console.log('focused M2 clone browser smoke passed: migrated account token, isolated Workspace writes, local attachment, comments, tags, history, operation logs, Workspace token, backup, and cascade cleanup');
+  } else if (scenario === 'attachment-transaction') {
     const workspace = `browser attachment transaction workspace ${stamp}`;
     await registerAndSignIn(page);
     await createAndSelectWorkspace(page, workspace);

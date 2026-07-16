@@ -12,7 +12,7 @@
     "dev:frontend": "turbo run dev --filter=@blinkora/frontend",
     "dev:rust": "PATH=\"/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH\" PORT=\"${PORT:-6677}\" PUBLIC_PATH=\"${PUBLIC_PATH:-dist/public}\" DATA_DIR=\"${DATA_DIR:-docker/data/blinkora}\" SCHEMA_PATH=\"${SCHEMA_PATH:-db/schema.sqlite.sql}\" cargo run --manifest-path server/Cargo.toml",
     "build:web": "turbo run build:web",
-    "test": "node --check scripts/rust-smoke.mjs && node --check scripts/workspace-agent-smoke.mjs && node --check scripts/sqlite-two-factor-smoke.mjs && node --check scripts/browser-smoke.mjs && node --check scripts/s3-browser-smoke.mjs && bash -n scripts/browser-smoke-local.sh && bash -n scripts/s3-smoke-local.sh",
+    "test": "node --check scripts/rust-smoke.mjs && node --check scripts/workspace-agent-smoke.mjs && node --check scripts/sqlite-two-factor-smoke.mjs && node --check scripts/browser-smoke.mjs && node --check scripts/s3-browser-smoke.mjs && bash -n scripts/browser-smoke-local.sh && bash -n scripts/s3-smoke-local.sh && bash -n scripts/m2-readonly-clone-smoke.sh",
     "test:rust": "bun run verify:rust",
     "test:all": "bun run test && bun run test:rust",
     "clean": "turbo run clean && rm -rf node_modules",
@@ -33,6 +33,7 @@
     "smoke:s3": "node scripts/s3-smoke.mjs",
     "smoke:s3-browser": "node scripts/s3-browser-smoke.mjs",
     "smoke:s3-local": "bash scripts/s3-smoke-local.sh",
+    "smoke:m2-clone": "bash scripts/m2-readonly-clone-smoke.sh",
     "smoke:agent": "node scripts/workspace-agent-smoke.mjs",
     "verify:rust": "node scripts/verify-rust-acceptance.mjs"
   },
