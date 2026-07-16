@@ -2,6 +2,7 @@ import { Image } from '@heroui/react';
 import { PhotoProvider, PhotoView } from 'react-photo-view';
 import { RootStore } from '@/store';
 import { UserStore } from '@/store/user';
+import { WorkspaceStore } from '@/store/workspace';
 import { withBlinkoraFileAccessToken } from '@/lib/blinkoraEndpoint';
 
 interface ImageWrapperProps {
@@ -14,7 +15,11 @@ interface ImageWrapperProps {
 export const ImageWrapper = ({ src = '', width, height, alt }: ImageWrapperProps) => {
   const props = { width, height, alt }
   if (!src) return null;
-  const imageSrc = withBlinkoraFileAccessToken(src, RootStore.Get(UserStore).tokenData.value?.token);
+  const imageSrc = withBlinkoraFileAccessToken(
+    src,
+    RootStore.Get(UserStore).tokenData.value?.token,
+    RootStore.Get(WorkspaceStore).workspaceId,
+  );
   
   return (
     <div className='markdown-image-wrapper w-full'>

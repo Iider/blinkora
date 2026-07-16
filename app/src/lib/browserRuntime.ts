@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { RootStore } from '@/store';
 import { ToastPlugin } from '@/store/module/Toast/Toast';
 import { UserStore } from '@/store/user';
+import { WorkspaceStore } from '@/store/workspace';
+import { withBlinkoraFileAccessToken } from './blinkoraEndpoint';
 import i18n from './i18n';
 
 export interface PermissionStatus {
@@ -15,12 +17,10 @@ export async function downloadFromLink(uri: string, filename?: string) {
     url.searchParams.set('download', 'true');
 
     const token = RootStore.Get(UserStore).tokenData.value?.token;
-    if (token) {
-      url.searchParams.set('token', token);
-    }
+    const workspaceId = RootStore.Get(WorkspaceStore).workspaceId;
 
     const link = document.createElement('a');
-    link.href = url.toString();
+    link.href = withBlinkoraFileAccessToken(url.toString(), token, workspaceId);
     if (filename) {
       link.download = filename;
     }

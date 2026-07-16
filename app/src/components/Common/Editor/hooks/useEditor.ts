@@ -98,13 +98,14 @@ const applyThemeToEditor = (mode: string, theme: string): void => {
 
 const addAccessTokenToProtectedImages = (editorElement: HTMLElement): void => {
   const token = RootStore.Get(UserStore).tokenData.value?.token;
+  const workspaceId = RootStore.Get(WorkspaceStore).workspaceId;
   if (!token) return;
 
   editorElement.querySelectorAll('img').forEach((image) => {
     ['src', 'data-src', 'data-original'].forEach((attr) => {
       const value = image.getAttribute(attr);
       if (!value) return;
-      const nextValue = withBlinkoraFileAccessToken(value, token);
+      const nextValue = withBlinkoraFileAccessToken(value, token, workspaceId);
       if (nextValue !== value) {
         image.setAttribute(attr, nextValue);
       }

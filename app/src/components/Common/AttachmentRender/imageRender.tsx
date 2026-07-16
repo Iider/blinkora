@@ -8,9 +8,10 @@ import { observer } from 'mobx-react-lite';
 import { useMediaQuery } from 'usehooks-ts';
 import { DraggableFileGrid } from './DraggableFileGrid';
 import axiosInstance from '@/lib/axios';
-import { getBlinkoraEndpoint } from '@/lib/blinkoraEndpoint';
+import { getBlinkoraEndpoint, withBlinkoraFileAccessToken } from '@/lib/blinkoraEndpoint';
 import { RootStore } from '@/store';
 import { UserStore } from '@/store/user';
+import { WorkspaceStore } from '@/store/workspace';
 
 type IProps = {
   files: FileType[]
@@ -144,7 +145,11 @@ const ImageRender = observer((props: IProps) => {
           </div>
         )}
         <div className='w-full'>
-          <PhotoView src={getBlinkoraEndpoint(`${file.preview}?token=${RootStore.Get(UserStore).tokenData.value?.token}`)}>
+          <PhotoView src={withBlinkoraFileAccessToken(
+            file.preview,
+            RootStore.Get(UserStore).tokenData.value?.token,
+            RootStore.Get(WorkspaceStore).workspaceId,
+          )}>
             <div>
               <ImageThumbnailRender
                 src={file.preview}

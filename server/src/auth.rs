@@ -198,7 +198,7 @@ impl FromRequestParts<AppState> for CurrentUser {
 
         let claims = decode_jwt(&token, &state.config.auth_secret)
             .map_err(|_| auth_error(parts, "Invalid token"))?;
-        let workspace_id = validate_workspace_header(parts, state.pool(), claims.id)
+        let workspace_id = validate_workspace_scope(parts, state.pool(), claims.id)
             .await
             .map_err(|message| auth_error(parts, &message))?;
         let mut user = CurrentUser::from_claims(claims);
@@ -214,7 +214,7 @@ pub async fn optional_user(parts: &mut Parts, state: &AppState) -> Option<Curren
     }
 
     let claims = decode_jwt(&token, &state.config.auth_secret).ok()?;
-    let workspace_id = validate_workspace_header(parts, state.pool(), claims.id)
+    let workspace_id = validate_workspace_scope(parts, state.pool(), claims.id)
         .await
         .ok()?;
     let mut user = CurrentUser::from_claims(claims);
@@ -255,8 +255,8 @@ async fn authenticate_agent_token(
     };
 
     let workspace_id = row.get::<i32, _>("workspaceId");
-    if let Some(header_workspace_id) = workspace_header(parts)? {
-        if header_workspace_id != workspace_id {
+    if let Some(requested_workspace_id) = workspace_scope(parts)? {
+        if requested_workspace_id != workspace_id {
             return Err("invalid workspace".to_string());
         }
     }
@@ -348,12 +348,12 @@ fn extract_token(parts: &Parts) -> Option<String> {
     })
 }
 
-async fn validate_workspace_header(
+async fn validate_workspace_scope(
     parts: &Parts,
     pool: &SqlitePool,
     user_id: i32,
 ) -> Result<Option<i32>, String> {
-    let Some(workspace_id) = workspace_header(parts)? else {
+    let Some(workspace_id) = workspace_scope(parts)? else {
         return Ok(None);
     };
     let exists: Option<i32> =
@@ -368,18 +368,29 @@ async fn validate_workspace_header(
         .ok_or_else(|| "invalid workspace".to_string())
 }
 
-fn workspace_header(parts: &Parts) -> Result<Option<i32>, String> {
-    let Some(value) = parts
-        .headers
-        .get("x-workspace-id")
-        .and_then(|v| v.to_str().ok())
-    else {
+fn workspace_scope(parts: &Parts) -> Result<Option<i32>, String> {
+    if let Some(value) = parts.headers.get("x-workspace-id") {
+        return value
+            .to_str()
+            .map_err(|_| "invalid workspace".to_string())?
+            .parse()
+            .map(Some)
+            .map_err(|_| "invalid workspace".to_string());
+    }
+
+    if parts.method != Method::GET || !is_agent_readable_file_path(parts.uri.path()) {
         return Ok(None);
-    };
+    }
+
+    let value = parts.uri.query().and_then(|query| {
+        query.split('&').find_map(|part| {
+            let (key, value) = part.split_once('=')?;
+            (key == "workspaceId").then_some(value)
+        })
+    });
     value
-        .parse()
-        .map(Some)
-        .map_err(|_| "invalid workspace".to_string())
+        .map(|value| value.parse().map_err(|_| "invalid workspace".to_string()))
+        .transpose()
 }
 
 fn permission_allows(value: &Value, resource: &str, action: &str) -> bool {
@@ -556,9 +567,25 @@ fn totp_code(secret: &[u8], counter: u64) -> String {
 mod tests {
     use super::{
         agent_endpoint_allowed, generate_agent_token, hash_agent_token, hash_password,
-        verify_password, AgentPermissions,
+        verify_password, workspace_scope, AgentPermissions,
     };
-    use axum::http::Method;
+    use axum::http::{Method, Request};
+
+    fn request_parts(
+        method: Method,
+        uri: &str,
+        workspace_header: Option<&str>,
+    ) -> axum::http::request::Parts {
+        let mut request = Request::builder().method(method).uri(uri);
+        if let Some(workspace_id) = workspace_header {
+            request = request.header("x-workspace-id", workspace_id);
+        }
+        request
+            .body(())
+            .expect("test request is valid")
+            .into_parts()
+            .0
+    }
 
     #[test]
     fn verifies_node_compatible_pbkdf2() {
@@ -627,5 +654,54 @@ mod tests {
             "/api/file/upload-by-url"
         ));
         assert!(!agent_endpoint_allowed(&Method::POST, "/api/file/delete"));
+    }
+
+    #[test]
+    fn file_get_accepts_workspace_query_scope() {
+        let parts = request_parts(
+            Method::GET,
+            "/api/file/example.wav?token=test&workspaceId=17",
+            None,
+        );
+        assert_eq!(workspace_scope(&parts), Ok(Some(17)));
+
+        let s3_parts = request_parts(
+            Method::GET,
+            "/api/s3file/folder/example.webm?workspaceId=23",
+            None,
+        );
+        assert_eq!(workspace_scope(&s3_parts), Ok(Some(23)));
+    }
+
+    #[test]
+    fn workspace_header_precedes_file_query_scope() {
+        let parts = request_parts(
+            Method::GET,
+            "/api/file/example.wav?workspaceId=17",
+            Some("11"),
+        );
+        assert_eq!(workspace_scope(&parts), Ok(Some(11)));
+    }
+
+    #[test]
+    fn workspace_query_scope_is_limited_to_file_gets() {
+        let trpc_parts = request_parts(Method::GET, "/api/trpc/notes.list?workspaceId=17", None);
+        assert_eq!(workspace_scope(&trpc_parts), Ok(None));
+
+        let post_parts = request_parts(Method::POST, "/api/file/upload?workspaceId=17", None);
+        assert_eq!(workspace_scope(&post_parts), Ok(None));
+    }
+
+    #[test]
+    fn file_get_rejects_invalid_workspace_query_scope() {
+        let parts = request_parts(
+            Method::GET,
+            "/api/file/example.wav?workspaceId=invalid",
+            None,
+        );
+        assert_eq!(
+            workspace_scope(&parts),
+            Err("invalid workspace".to_string())
+        );
     }
 }

@@ -5,7 +5,8 @@ import { observer } from 'mobx-react-lite';
 import { Icon } from '@/components/Common/Iconify/icons';
 import { RootStore } from '@/store';
 import { UserStore } from '@/store/user';
-import { getBlinkoraEndpoint } from '@/lib/blinkoraEndpoint';
+import { WorkspaceStore } from '@/store/workspace';
+import { withBlinkoraFileAccessToken } from '@/lib/blinkoraEndpoint';
 import { FileType } from '../Editor/type';
 import { DeleteIcon, DownloadIcon } from './icons';
 
@@ -18,10 +19,9 @@ interface Props {
 const INITIAL_DISPLAY_COUNT = 3;
 
 const buildAudioUrl = (preview: string) => {
-  const url = getBlinkoraEndpoint(preview);
   const token = RootStore.Get(UserStore).tokenData?.value?.token;
-  if (!token) return url;
-  return `${url}${url.includes('?') ? '&' : '?'}token=${token}`;
+  const workspaceId = RootStore.Get(WorkspaceStore).workspaceId;
+  return withBlinkoraFileAccessToken(preview, token, workspaceId);
 };
 
 export const AudioRender = observer(({ files, preview = false, onDelete }: Props) => {

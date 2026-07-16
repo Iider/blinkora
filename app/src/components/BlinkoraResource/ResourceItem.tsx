@@ -16,8 +16,9 @@ import { observer } from 'mobx-react-lite';
 import { toJS } from 'mobx';
 import { motion } from 'framer-motion';
 import { ImageThumbnailRender } from '../Common/AttachmentRender/imageRender';
-import { getBlinkoraEndpoint } from '@/lib/blinkoraEndpoint';
+import { withBlinkoraFileAccessToken } from '@/lib/blinkoraEndpoint';
 import { UserStore } from '@/store/user';
+import { WorkspaceStore } from '@/store/workspace';
 
 
 // Reusable component for rendering resource preview
@@ -53,7 +54,11 @@ export const ResourceItemPreview = ({
     <div className={`w-full flex items-center gap-2 p-2 rounded-md cursor-pointer group ${className}`} onClick={onClick}>
       {isImage ? (
         <PhotoProvider>
-          <PhotoView src={getBlinkoraEndpoint(`${item.path}?token=${RootStore.Get(UserStore).tokenData.value?.token}`)}>
+          <PhotoView src={withBlinkoraFileAccessToken(
+            item.path,
+            RootStore.Get(UserStore).tokenData.value?.token,
+            RootStore.Get(WorkspaceStore).workspaceId,
+          )}>
             <div>
               <ImageThumbnailRender src={item.path} className="!w-[28px] !h-[28px] object-cover rounded" />
             </div>

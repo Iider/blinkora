@@ -11,11 +11,12 @@ import { OperationLogSetting } from '@/components/BlinkoraSettings/OperationLogS
 import { useTranslation } from 'react-i18next';
 import { JSX } from 'react';
 import { ScrollableTabs, TabItem } from '@/components/Common/ScrollableTabs';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { Icon } from '@/components/Common/Iconify/icons';
 import { allSettingMetas, SettingMeta } from './settingsMeta';
+import { useSearchParams } from 'react-router-dom';
 
 type SettingItem = SettingMeta & {
   component: JSX.Element;
@@ -39,8 +40,21 @@ const Page = observer(() => {
   const user = RootStore.Get(UserStore);
   const blinkoraStore = RootStore.Get(BlinkoraStore);
   const { t } = useTranslation();
-  const [selected, setSelected] = useState<string>('basic');
+  const [searchParams] = useSearchParams();
+  const requestedSection = searchParams.get('section');
+  const canOpenSection = (section: string | null): section is string => allSettings.some(
+    (setting) => setting.key === section && (!setting.requireAdmin || user.isSuperAdmin),
+  );
+  const [selected, setSelected] = useState<string>(() => (
+    canOpenSection(requestedSection) ? requestedSection : 'basic'
+  ));
   const isMobile = useMediaQuery('(max-width: 768px)');
+
+  useEffect(() => {
+    if (canOpenSection(requestedSection)) {
+      setSelected(requestedSection);
+    }
+  }, [requestedSection, user.isSuperAdmin]);
 
   const getVisibleSettings = () => {
     const settings = allSettings.filter((setting) => !setting.requireAdmin || user.isSuperAdmin);
@@ -65,7 +79,11 @@ const Page = observer(() => {
 
   const getCurrentComponent = () => {
     const setting = allSettings.find((s) => s.key === selected);
-    return setting ? <div key={setting.key}>{setting.component}</div> : null;
+    return setting ? (
+      <div key={setting.key} data-settings-section={setting.key}>
+        {setting.component}
+      </div>
+    ) : null;
   };
 
   const tabItems: TabItem[] = getVisibleSettings().map((setting) => ({

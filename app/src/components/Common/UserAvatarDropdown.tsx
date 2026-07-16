@@ -7,11 +7,12 @@ import { UserStore } from '@/store/user';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import { signOut, navigate } from '../Auth/auth-client';
-import { getBlinkoraEndpoint } from '@/lib/blinkoraEndpoint';
+import { withBlinkoraFileAccessToken } from '@/lib/blinkoraEndpoint';
 import { useTheme } from 'next-themes';
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { PromiseCall } from '@/store/standard/PromiseState';
 import { api } from '@/lib/trpc';
+import { WorkspaceStore } from '@/store/workspace';
 
 interface UserAvatarDropdownProps {
   onItemClick?: () => void;
@@ -55,7 +56,15 @@ export const UserAvatarDropdown = observer(({ onItemClick, collapsed = false, sh
         <div className={`cursor-pointer ${collapsed ? 'flex justify-center' : 'flex items-center gap-2'}`}>
           <div className="relative group">
             {user.image ? (
-              <img src={getBlinkoraEndpoint(`${user.image}?token=${user.tokenData.value?.token}`)} alt="avatar" className={`${collapsed ? 'w-10 h-10' : 'w-8 h-8'} rounded-full object-cover transition-all`} />
+              <img
+                src={withBlinkoraFileAccessToken(
+                  user.image,
+                  user.tokenData.value?.token,
+                  RootStore.Get(WorkspaceStore).workspaceId,
+                )}
+                alt="avatar"
+                className={`${collapsed ? 'w-10 h-10' : 'w-8 h-8'} rounded-full object-cover transition-all`}
+              />
             ) : (
               <Image src="/logo.png" width={30} />
             )}

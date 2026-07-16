@@ -18,7 +18,7 @@ import { CollapsibleCard } from "../Common/CollapsibleCard";
 import { eventBus } from "@/lib/event";
 import { UploadFileWrapper } from "../Common/UploadFile";
 import { signOut } from "../Auth/auth-client";
-import { getBlinkoraEndpoint } from "@/lib/blinkoraEndpoint";
+import { getBlinkoraEndpoint, withBlinkoraFileAccessToken } from "@/lib/blinkoraEndpoint";
 
 export const BasicSetting = observer(() => {
   const user = RootStore.Get(UserStore)
@@ -51,7 +51,11 @@ export const BasicSetting = observer(() => {
               >
                 {user.userInfo.value?.image ? (
                   <img
-                    src={getBlinkoraEndpoint(`${user.userInfo.value.image}?token=${user.tokenData.value?.token}`)}
+                    src={withBlinkoraFileAccessToken(
+                      user.userInfo.value.image,
+                      user.tokenData.value?.token,
+                      RootStore.Get(WorkspaceStore).workspaceId,
+                    )}
                     alt="avatar"
                     className="w-10 h-10 rounded-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
                   />

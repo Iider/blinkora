@@ -14,9 +14,10 @@ import { EditorStore } from '../Editor/editorStore';
 import { DraggableFileGrid } from './DraggableFileGrid';
 import { AudioRender } from './audioRender';
 import { downloadFromLink } from '@/lib/browserRuntime';
-import { getBlinkoraEndpoint } from '@/lib/blinkoraEndpoint';
+import { getBlinkoraEndpoint, withBlinkoraFileAccessToken } from '@/lib/blinkoraEndpoint';
 import { RootStore } from '@/store';
 import { UserStore } from '@/store/user';
+import { WorkspaceStore } from '@/store/workspace';
 
 //https://www.npmjs.com/package/browser-thumbnail-generator
 
@@ -43,12 +44,9 @@ const AttachmentsRender = observer((props: IProps) => {
       {/* video render  */}
       <div className="columns-1 md:columns-1">
         {files?.filter(i => i.previewType == 'video').map((file, index) => {
-          // Add token to video URL for authentication
-          let videoUrl = getBlinkoraEndpoint(file.preview);
           const token = RootStore.Get(UserStore).tokenData?.value?.token;
-          if (token) {
-            videoUrl = `${videoUrl}?token=${token}`;
-          }
+          const workspaceId = RootStore.Get(WorkspaceStore).workspaceId;
+          const videoUrl = withBlinkoraFileAccessToken(file.preview, token, workspaceId);
           
           return (
             <div

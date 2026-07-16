@@ -7,6 +7,8 @@ import { GlobalConfig } from '@shared/lib/types';
 import { RootStore } from '@/store';
 import { BlinkoraStore } from '@/store/blinkoraStore';
 import { UserStore } from '@/store/user';
+import { WorkspaceStore } from '@/store/workspace';
+import { withBlinkoraFileAccessToken } from './blinkoraEndpoint';
 
 const valMap = {
   undefined: '',
@@ -238,7 +240,13 @@ export const helper = {
     },
     downloadByLink(href: string) {
       const a = document.createElement('a');
-      a.href = href + '?download=true&token='+RootStore.Get(UserStore).tokenData?.value?.token;
+      const url = new URL(href, window.location.origin);
+      url.searchParams.set('download', 'true');
+      a.href = withBlinkoraFileAccessToken(
+        url.toString(),
+        RootStore.Get(UserStore).tokenData?.value?.token,
+        RootStore.Get(WorkspaceStore).workspaceId,
+      );
       a.click();
     },
   },

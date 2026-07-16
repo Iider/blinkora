@@ -7,7 +7,7 @@ export function getBlinkoraEndpoint(path: string = ''): string {
   }
 }
 
-export function withBlinkoraFileAccessToken(path: string = '', token?: string): string {
+export function withBlinkoraFileAccessToken(path: string = '', token?: string, workspaceId?: number): string {
   if (!path || !token || typeof window === 'undefined') return path;
   if (path.startsWith('blob:') || path.startsWith('data:')) return path;
 
@@ -19,6 +19,9 @@ export function withBlinkoraFileAccessToken(path: string = '', token?: string): 
 
     if (!url.searchParams.has('token')) {
       url.searchParams.set('token', token);
+    }
+    if (Number.isInteger(workspaceId) && Number(workspaceId) > 0) {
+      url.searchParams.set('workspaceId', String(workspaceId));
     }
     return url.toString();
   } catch (error) {
@@ -38,6 +41,7 @@ export function withoutBlinkoraFileAccessToken(path: string = ''): string {
     if (!isSameOrigin || !isProtectedFile) return path;
 
     url.searchParams.delete('token');
+    url.searchParams.delete('workspaceId');
     return `${url.pathname}${url.search}${url.hash}`;
   } catch (error) {
     console.error(error);
