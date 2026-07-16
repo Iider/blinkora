@@ -5,6 +5,8 @@
 ## 文档
 
 - [Smoke test checklist](./SMOKE_TEST_CHECKLIST.md)：Rust 运行栈手动烟测清单。
+- [SQLite 快速收尾清单](./SQLITE_CLOSEOUT_CHECKLIST.md)：区分本地软件交付、生产迁移和延期完善，并给出逐项验收标准。
+- [SQLite 替换验收记录](./SQLITE_MIGRATION_ACCEPTANCE.md)：记录 PostgreSQL → SQLite 已实际执行的验收证据和待验项。
 - [笔记状态模型](./NOTE_STATE_LIFECYCLE.md)：闪念、笔记、待办的类型转换、归档、回收站、置顶、回顾、列表交互、卡背和引用展示规则。
 - [Local persistent deployment](./LOCAL_PERSISTENT_DEPLOYMENT.md)：macOS `launchd` 常驻，SQLite 与附件保存在本机数据目录。
 - [飞牛常驻部署](./FNAS_PERSISTENT_DEPLOYMENT.md)：单 Rust 服务加本地 SQLite 的 systemd 部署。
