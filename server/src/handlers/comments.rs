@@ -296,7 +296,7 @@ mod tests {
     };
     use serde_json::{json, Value};
     use sqlx::{Row, SqlitePool};
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     struct ConvertTodoFixture {
         data_dir: PathBuf,
@@ -316,12 +316,9 @@ mod tests {
         let pool = crate::db::connect(&data_dir)
             .await
             .expect("open comments test database");
-        crate::db::init_schema(
-            &pool,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../db/schema.sqlite.sql"),
-        )
-        .await
-        .expect("initialize comments test schema");
+        crate::db::init_schema(&pool)
+            .await
+            .expect("initialize comments test schema");
 
         let account_id: i32 = sqlx::query_scalar(
             r#"INSERT INTO accounts (name, password, nickname, image, role, "updatedAt")
@@ -366,9 +363,7 @@ mod tests {
                 port: "0".into(),
                 auth_secret: "test-secret".into(),
                 node_env: "test".into(),
-                public_path: "./public".into(),
                 data_dir: data_dir.display().to_string(),
-                schema_path: "db/schema.sqlite.sql".into(),
             },
             pool.clone(),
         );

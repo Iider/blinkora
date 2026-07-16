@@ -74,7 +74,7 @@ cd docker
 docker compose up -d
 ```
 
-这条路径中，Docker build 只需要拉取 Debian slim 基础镜像并复制 `docker/release/rust` 中的二进制、静态资源与 `db/schema.sqlite.sql`，不会执行 `cargo build`，也不会访问 npm/Bun registry 或 Rust crate 下载链路。最终运行容器不包含 Node、Bun、npm、cargo、Go 或 Rust 编译器。
+这条路径中，Docker build 只需要拉取 Debian slim 基础镜像并复制 `docker/release/rust/blinkora-server`。前端静态资源和 SQLite schema 已内置于该二进制，因此不会执行 `cargo build`，也不会访问 npm/Bun registry 或 Rust crate 下载链路。最终运行容器不包含 Node、Bun、npm、cargo、Go 或 Rust 编译器。
 
 如果本机不能直接交叉编译 Linux Rust 二进制，可在开发机或 CI 临时使用 Docker builder 生成 release 产物：
 
@@ -85,6 +85,7 @@ BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
 如果确实需要在 Docker 内完成 Rust 编译，可使用兜底 Dockerfile：
 
 ```bash
+bun run build:web --force
 docker build -f docker/dockerfile.rust.fullbuild -t blinkora-web:latest .
 ```
 

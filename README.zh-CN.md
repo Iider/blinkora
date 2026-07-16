@@ -10,7 +10,7 @@ Blinkora 由 Rust 后端直接托管浏览器应用。默认部署只运行一�
 | --- | --- | --- |
 | Web 前端 | `app/` | React/Vite 前端 |
 | Rust 后端 | `server/` | 唯一维护的服务端 |
-| 数据库结构 | `db/schema.sqlite.sql` | 运行时 SQLite schema |
+| 数据库结构 | `db/schema.sqlite.sql` | 构建时内置的 SQLite schema |
 | 共享代码 | `shared/` | 前端和 Rust API 兼容的共享类型/工具 |
 | Docker 部署 | `docker/` | 默认部署入口 |
 
@@ -37,6 +37,16 @@ docker compose up -d
 本机默认入口是 [http://localhost:6676](http://localhost:6676)。公网或正式部署时复制 `docker/.env.tmpl` 为 `docker/.env`，替换 `BLINKORA_SECRET`。
 
 `bun run build:rust-release` 会同步生成 `docker/release/rust` 部署副本。部署服务器拿到 `docker/` 和其中的 `release/rust` 后，只需要 Docker。
+
+## Linux 无头单二进制部署
+
+Linux 服务器使用一个内置前端静态资源与 SQLite schema 的 x86_64 静态二进制：
+
+```bash
+BLINKORA_RUST_DOCKER_BUILD=1 bun run build:linux-headless
+```
+
+发布物不依赖 Docker、Bun、Node.js、Rust、SQLite CLI、GUI 或 FUSE。通过 systemd 运行，数据与密钥放在二进制外的持久目录；详见 [Linux 无头单二进制部署](docs/LINUX_HEADLESS_DEPLOYMENT.md)。
 
 ## macOS 本机持久化部署
 

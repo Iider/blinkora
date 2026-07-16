@@ -33,8 +33,10 @@ if grep -Eq '^(DATABASE_URL|PGPASSWORD|POSTGRES_PASSWORD)=' "$FIXTURE/app/blinko
   exit 1
 fi
 grep -q '^BLINKORA_SECRET=preserve-this-test-secret$' "$FIXTURE/app/blinkora.env"
-grep -q "^PUBLIC_PATH=$FIXTURE/app/release/public$" "$FIXTURE/app/blinkora.env"
-grep -q "^SCHEMA_PATH=$FIXTURE/app/release/db/schema.sqlite.sql$" "$FIXTURE/app/blinkora.env"
+if grep -Eq '^(PUBLIC_PATH|SCHEMA_PATH)=' "$FIXTURE/app/blinkora.env"; then
+  echo "error: environment file retains obsolete external runtime asset paths" >&2
+  exit 1
+fi
 
 HOME="$FIXTURE/home" BLINKORA_LOCAL_HOME="$FIXTURE/app" bash -c '
   script="$1"

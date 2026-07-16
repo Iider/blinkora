@@ -10,7 +10,10 @@ RUN apt-get update \
     && rustup target add "$RUST_TARGET"
 
 COPY server/Cargo.toml server/Cargo.lock ./
+COPY server/build.rs ./build.rs
 COPY server/src ./src
+COPY db/schema.sqlite.sql /build/db/schema.sqlite.sql
+COPY dist/public /build/dist/public
 COPY .agents/skills/blinkora-workspace /build/.agents/skills/blinkora-workspace
 
 RUN cargo build --release --locked --target "$RUST_TARGET"
@@ -22,8 +25,8 @@ WORKDIR /app
 ARG RUST_TARGET=x86_64-unknown-linux-musl
 
 ENV NODE_ENV=production
+ENV BIND_ADDR=0.0.0.0
 ENV PORT=6676
-ENV PUBLIC_PATH=/app/public
 ENV DATA_DIR=/app/.blinkora
 ENV TRUST_PROXY=1
 
@@ -32,8 +35,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=backend-builder /build/server/target/${RUST_TARGET}/release/blinkora-server /app/blinkora-server
-COPY release/rust/public /app/public
-COPY db/schema.sqlite.sql /app/db/schema.sqlite.sql
 
 RUN chmod +x /app/blinkora-server
 

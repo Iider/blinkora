@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Blinkora
-Comment=Private notes and memory base
-Exec=Blinkora-x86_64.AppImage
-Icon=blinkora
-Terminal=false
-Categories=Office;
-StartupNotify=true

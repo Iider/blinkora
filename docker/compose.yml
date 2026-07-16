@@ -9,10 +9,9 @@ services:
       dockerfile: dockerfile.rust
     environment:
       NODE_ENV: production
+      BIND_ADDR: 0.0.0.0
       PORT: 6676
-      PUBLIC_PATH: /app/public
       DATA_DIR: /app/.blinkora
-      SCHEMA_PATH: /app/db/schema.sqlite.sql
       BLINKORA_SECRET: ${BLINKORA_SECRET:-blinkora-local-default-secret-change-me}
     restart: unless-stopped
     ports:

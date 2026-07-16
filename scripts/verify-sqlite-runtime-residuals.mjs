@@ -26,7 +26,14 @@ const publicRuntimeFiles = [
   'server/README.md',
 ];
 
-const runtimeSourceRoots = ['server/src', 'db/schema.sqlite.sql', 'server/Cargo.toml', 'docker/dockerfile.rust'];
+const runtimeSourceRoots = [
+  'server/src',
+  'server/build.rs',
+  'db/schema.sqlite.sql',
+  'server/Cargo.toml',
+  'docker/dockerfile.rust',
+  'docker/dockerfile.rust.fullbuild',
+];
 
 const deploymentResidues = [
   ['PostgreSQL connection URL', /\bpostgres(?:ql)?:\/\//i],

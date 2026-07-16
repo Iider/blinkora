@@ -28,6 +28,7 @@ run('M2 cutover rollback guardrails', 'bash', ['scripts/verify-m2-cutover-guardr
 run('local deployment environment cleanup', 'bash', ['scripts/verify-local-persistent-env-cleanup.sh']);
 run('SQLite runtime residuals', 'node', ['scripts/verify-sqlite-runtime-residuals.mjs']);
 run('FNAS systemd unit template', 'node', ['scripts/verify-fnas-systemd-unit.mjs']);
+run('FNAS SQLite systemd unit template', 'node', ['scripts/verify-fnas-sqlite-systemd-unit.mjs']);
 run('workspace agent smoke script syntax', 'node', ['--check', 'scripts/workspace-agent-smoke.mjs']);
 run('SQLite concurrency script syntax', 'node', ['--check', 'scripts/sqlite-concurrency.mjs']);
 run('SQLite bulk script syntax', 'node', ['--check', 'scripts/sqlite-bulk.mjs']);

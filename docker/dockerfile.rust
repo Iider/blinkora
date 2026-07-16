@@ -3,8 +3,8 @@ FROM debian:bookworm-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
+ENV BIND_ADDR=0.0.0.0
 ENV PORT=6676
-ENV PUBLIC_PATH=/app/public
 ENV DATA_DIR=/app/.blinkora
 ENV TRUST_PROXY=1
 
@@ -13,8 +13,6 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY release/rust/blinkora-server /app/blinkora-server
-COPY release/rust/public /app/public
-COPY release/rust/db/schema.sqlite.sql /app/db/schema.sqlite.sql
 
 RUN chmod +x /app/blinkora-server
 

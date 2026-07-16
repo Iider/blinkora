@@ -34,6 +34,10 @@ rm -rf "$RELEASE_DIR" "$DOCKER_RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 
 bun run build:web --force
+if [[ ! -f "$ROOT_DIR/dist/public/index.html" ]]; then
+  echo "error: frontend build did not produce dist/public/index.html" >&2
+  exit 1
+fi
 
 build_with_cargo() {
   if ! command -v cargo >/dev/null 2>&1; then
@@ -94,18 +98,10 @@ if ! file "$RELEASE_DIR/blinkora-server" | grep -Eq 'statically linked|static-pi
   exit 1
 fi
 
-cp -R dist/public "$RELEASE_DIR/public"
-
-mkdir -p "$RELEASE_DIR/db"
-cp db/schema.sqlite.sql "$RELEASE_DIR/db/schema.sqlite.sql"
-
 mkdir -p "$DOCKER_RELEASE_DIR"
 cp "$RELEASE_DIR/blinkora-server" "$DOCKER_RELEASE_DIR/blinkora-server"
-cp -R "$RELEASE_DIR/public" "$DOCKER_RELEASE_DIR/public"
-mkdir -p "$DOCKER_RELEASE_DIR/db"
-cp "$RELEASE_DIR/db/schema.sqlite.sql" "$DOCKER_RELEASE_DIR/db/schema.sqlite.sql"
 
 chmod +x "$RELEASE_DIR/blinkora-server"
 chmod +x "$DOCKER_RELEASE_DIR/blinkora-server"
-echo "Rust release artifacts are ready in $RELEASE_DIR"
-echo "Docker deployment artifacts are ready in $DOCKER_RELEASE_DIR"
+echo "Single-binary Linux release is ready in $RELEASE_DIR/blinkora-server"
+echo "Docker deployment binary is ready in $DOCKER_RELEASE_DIR/blinkora-server"

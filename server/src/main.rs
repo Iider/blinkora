@@ -3,6 +3,7 @@ mod attachment_files;
 mod auth;
 mod config;
 mod db;
+mod embedded_assets;
 mod handlers;
 mod s3;
 mod static_files;
@@ -25,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let cfg = config::Config::from_env();
     cfg.validate()?;
     let pool = db::connect(&cfg.data_dir).await?;
-    db::init_schema(&pool, &cfg.schema_path).await?;
+    db::init_schema(&pool).await?;
     let state = app::AppState::new(cfg.clone(), pool);
     let recovered_file_operations =
         attachment_files::recover_pending_attachment_operations(&state).await?;

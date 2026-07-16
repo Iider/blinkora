@@ -49,7 +49,7 @@ Docker compose 文件：
 | --- | --- | --- | --- |
 | 当前范围不适用（macOS 本地） | 完整 Docker 服务健康 | 完整 Docker 模式下，在 `docker/` 执行 `docker compose ps` | `blinkora-web` 为 healthy，`data/blinkora/blinkora.sqlite3` 存在 |
 | 自动通过（2026-07-16 常驻服务） | 本机持久化服务健康 | 本机持久化模式下，执行 `bun run deploy:local status` | `com.blinkora.local` 为 running，SQLite 探针与健康接口均通过 |
-| 自动通过（2026-07-16 常驻服务） | 本机部署更新生效 | 本机持久化模式下执行 `bun run deploy:local update`，再运行 `curl -fsS -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:6676/` 并刷新 `http://localhost:6676` | 命令输出 `200`；页面加载 `~/.blinkora/local/release/public` 中最新 `index-*.js`，新功能可见 |
+| 自动通过（2026-07-16 常驻服务） | 本机部署更新生效 | 本机持久化模式下执行 `bun run deploy:local update`，再运行 `curl -fsS -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:6676/` 并刷新 `http://localhost:6676` | 命令输出 `200`；页面加载二进制内置的最新静态资源，新功能可见 |
 | 自动通过（完整隔离 smoke） | Web 端口正确 | 打开 Rust 主栈 `http://localhost:6676` | 页面可打开，不出现 `ERR_UNSAFE_PORT` |
 | 自动通过（完整隔离 smoke） | Web 端口统一 | 搜索当前文档或配置中的 Web 入口 | 运行入口使用 `6676` |
 | 自动通过（隔离 smoke + 常驻日志） | 启动日志无新错误 | Docker 模式看 `docker compose logs --tail=80 web`；本机持久化模式看 `tail -n 80 ~/.blinkora/local/logs/blinkora.out.log ~/.blinkora/local/logs/blinkora.err.log` | 除未登录请求外，无新增服务端异常 |

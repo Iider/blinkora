@@ -89,7 +89,7 @@ pub fn database_path(data_dir: &Path) -> PathBuf {
     data_dir.join("blinkora.sqlite3")
 }
 
-pub async fn init_schema(pool: &SqlitePool, schema_path: impl AsRef<Path>) -> anyhow::Result<()> {
+pub async fn init_schema(pool: &SqlitePool) -> anyhow::Result<()> {
     let table_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
     )
@@ -102,25 +102,16 @@ pub async fn init_schema(pool: &SqlitePool, schema_path: impl AsRef<Path>) -> an
                 "SQLite database contains tables but is not a Blinkora database; refusing to create an empty schema over existing data"
             );
         }
-        let schema_path = schema_path.as_ref();
-        let sql = tokio::fs::read_to_string(schema_path)
-            .await
-            .with_context(|| format!("failed to read SQLite schema {}", schema_path.display()))?;
         let mut tx = pool.begin().await?;
-        sqlx::raw_sql(&sql)
+        sqlx::raw_sql(crate::embedded_assets::EMBEDDED_SCHEMA_SQL)
             .execute(&mut *tx)
             .await
-            .with_context(|| {
-                format!(
-                    "failed to initialize SQLite schema {}",
-                    schema_path.display()
-                )
-            })?;
+            .context("failed to initialize the embedded SQLite schema")?;
         sqlx::query(&format!("PRAGMA user_version = {SCHEMA_VERSION}"))
             .execute(&mut *tx)
             .await?;
         tx.commit().await?;
-        tracing::info!(schema = %schema_path.display(), "SQLite schema initialized");
+        tracing::info!("SQLite schema initialized from the embedded runtime");
     }
 
     ensure_schema_version(pool).await?;
@@ -720,12 +711,7 @@ mod tests {
     async fn initialized_pool(name: &str) -> (PathBuf, SqlitePool) {
         let data_dir = test_data_dir(name);
         let pool = connect(&data_dir).await.expect("connect SQLite");
-        init_schema(
-            &pool,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../db/schema.sqlite.sql"),
-        )
-        .await
-        .expect("initialize SQLite schema");
+        init_schema(&pool).await.expect("initialize SQLite schema");
         (data_dir, pool)
     }
 
@@ -763,12 +749,9 @@ mod tests {
         pool.close().await;
 
         let reopened = connect(&data_dir).await.expect("reopen SQLite");
-        init_schema(
-            &reopened,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../db/schema.sqlite.sql"),
-        )
-        .await
-        .expect("repeat schema initialization");
+        init_schema(&reopened)
+            .await
+            .expect("repeat schema initialization");
         probe(&reopened).await.expect("healthy reopened database");
         cleanup(data_dir, reopened).await;
     }
@@ -781,12 +764,9 @@ mod tests {
             .execute(&unknown_pool)
             .await
             .unwrap();
-        let unknown_error = init_schema(
-            &unknown_pool,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../db/schema.sqlite.sql"),
-        )
-        .await
-        .expect_err("unknown nonempty database must not be adopted");
+        let unknown_error = init_schema(&unknown_pool)
+            .await
+            .expect_err("unknown nonempty database must not be adopted");
         assert!(unknown_error.to_string().contains("refusing to create"));
         cleanup(unknown_dir, unknown_pool).await;
 
@@ -795,12 +775,9 @@ mod tests {
             .execute(&version_pool)
             .await
             .unwrap();
-        let version_error = init_schema(
-            &version_pool,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../db/schema.sqlite.sql"),
-        )
-        .await
-        .expect_err("newer SQLite schema must be rejected");
+        let version_error = init_schema(&version_pool)
+            .await
+            .expect_err("newer SQLite schema must be rejected");
         assert!(version_error.to_string().contains("newer"));
         cleanup(version_dir, version_pool).await;
     }
@@ -855,12 +832,9 @@ mod tests {
         pool.close().await;
 
         let upgraded = connect(&data_dir).await.unwrap();
-        init_schema(
-            &upgraded,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../db/schema.sqlite.sql"),
-        )
-        .await
-        .expect("upgrade schema v1 to v2");
+        init_schema(&upgraded)
+            .await
+            .expect("upgrade schema v1 to v2");
         assert_eq!(
             sqlx::query_scalar::<_, i64>("PRAGMA user_version")
                 .fetch_one(&upgraded)
@@ -1205,12 +1179,9 @@ mod tests {
         pool.close().await;
 
         let reopened = connect(&data_dir).await.expect("reopen SQLite");
-        init_schema(
-            &reopened,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../db/schema.sqlite.sql"),
-        )
-        .await
-        .expect("validate existing SQLite schema");
+        init_schema(&reopened)
+            .await
+            .expect("validate existing SQLite schema");
         sqlx::query(r#"INSERT INTO "tagsToNote" ("noteId", "tagId") VALUES (5, 5)"#)
             .execute(&reopened)
             .await

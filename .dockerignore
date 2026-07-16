@@ -4,14 +4,13 @@ node_modules
 .github
 dist
 **/dist
+!dist/
+!dist/public/
+!dist/public/**
 release/**
 !release/
 !release/rust/
 !release/rust/blinkora-server
-!release/rust/public/
-!release/rust/public/**
-!release/rust/db/
-!release/rust/db/schema.sql
 build
 **/build
 .turbo

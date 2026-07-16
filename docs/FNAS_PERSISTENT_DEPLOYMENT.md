@@ -7,7 +7,7 @@
 | 内容 | SQLite 正式位置 |
 | --- | --- |
 | systemd 服务 | `blinkora-sqlite.service` |
-| 运行目录 | `/vol1/1000/docker/blinkora-sqlite/local` |
+| 单二进制运行时 | `/vol1/1000/docker/blinkora-sqlite/local/bin/blinkora-server` |
 | SQLite 与本地附件 | `/vol1/1000/docker/blinkora-sqlite/data/app` |
 | 迁移前 Mac 快照 | `/vol1/1000/docker/blinkora-sqlite/backups/macos-snapshot-<timestamp>` |
 | 服务账号 | `weio:Users` |
@@ -25,7 +25,7 @@ TARGETARCH=amd64 DOCKER_DEFAULT_PLATFORM=linux/amd64 \
 BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
 ```
 
-将 `release/rust/`、`deploy/fnas/blinkora-sqlite.service` 和受限权限的 `blinkora.env` 上传到飞牛临时目录。生产路径已经有数据时，更新只允许替换 `local/bin/blinkora-server`、`local/public/` 和 `local/db/schema.sqlite.sql`；不得重建或覆盖 `data/app`。
+将单个 `blinkora-server`、`deploy/fnas/blinkora-sqlite.service` 和受限权限的 `blinkora.env` 上传到飞牛临时目录。二进制已经内置 schema 与 Web 静态资源；生产路径已经有数据时，更新只允许替换 `local/bin/blinkora-server`，不得重建或覆盖 `data/app`。
 
 环境文件的最小内容如下；`BLINKORA_SECRET` 必须使用已有服务的随机值或新生成的 32 字节随机值，绝不能填写示例文本。
 
@@ -33,9 +33,7 @@ BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
 NODE_ENV=production
 BIND_ADDR=0.0.0.0
 PORT=6676
-PUBLIC_PATH=/vol1/1000/docker/blinkora-sqlite/local/public
 DATA_DIR=/vol1/1000/docker/blinkora-sqlite/data/app
-SCHEMA_PATH=/vol1/1000/docker/blinkora-sqlite/local/db/schema.sqlite.sql
 BLINKORA_SECRET=<随机值>
 RUST_LOG=info
 ```
@@ -74,11 +72,11 @@ print('SQLite integrity and foreign keys: ok')
 PY
 ```
 
-更新前先停止服务并为当前运行时生成可回退副本，再替换 release 文件并启动服务。`DATA_DIR` 不参与更新；完成后至少检查健康接口、登录与附件读取。
+首次从外置资源版切换时，应把旧二进制以及 `local/public`、`local/db` 一并移入同一回退备份目录；正式 `local/` 目录不保留这两份运行时资源。之后的更新只需备份并原子替换 `local/bin/blinkora-server`。`DATA_DIR` 不参与更新；完成后至少检查健康接口、登录与附件读取。
 
 ```bash
 sudo systemctl stop blinkora-sqlite.service
-# 在同一文件系统备份并替换 local/bin、local/public、local/db
+# 在同一文件系统备份并替换 local/bin/blinkora-server；不要触碰 data/app
 sudo systemctl start blinkora-sqlite.service
 ```
 

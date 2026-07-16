@@ -65,4 +65,4 @@ bun run smoke:rust
 
 ## 静态资源规则
 
-Rust 后端托管前端时，Vditor / Lute 等动态资源由镜像内 `/app/public/vditor-assets/dist/js/*` 提供。缺失的 `.js`、`.css` 等带扩展名资源应返回 `404`，不能 fallback 到 `index.html`。
+Rust 二进制内置 React/Vite 前端、Vditor / Lute 等静态资源与 SQLite schema；镜像只复制 `/app/blinkora-server`。缺失的 `.js`、`.css` 等带扩展名资源应返回 `404`，不能 fallback 到 `index.html`。

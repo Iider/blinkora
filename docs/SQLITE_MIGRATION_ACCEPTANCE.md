@@ -60,10 +60,10 @@
 
 这是当前生产拓扑的实际记录，数据源是已经稳定运行的 macOS SQLite 服务，而非重新从 PostgreSQL 生成的候选。切换前已停止 macOS 常驻服务，避免快照后出现两处可写副本。
 
-- 隔离验证：飞牛新目录的独立 Rust 服务在 `6678` 完成 `smoke:rust`，覆盖 API、MCP、附件、导入导出和静态资源；同一 x86_64 静态 release 的 AppImage 另在 `6679` 完成启动、停止和重启验证。测试服务均已停止，测试目录保留以便复查。
+- 隔离验证：飞牛新目录的独立 Rust 服务在 `6678` 完成 `smoke:rust`，覆盖 API、MCP、附件、导入导出和静态资源。后续将 Linux 交付面收敛为无头单二进制：同一 x86_64 静态 release 在独立数据目录和 `6681` 完成启动、停止、健康检查、首页 `200`、内置前端资源 `200` 与不存在资源 `404` 验证。测试服务均已停止，测试目录保留以便复查；AppImage 不再是支持的发布形式。
 - 快照与恢复：macOS 源数据库先通过 SQLite `.backup` 生成一致物理快照，并对源库和恢复库检查 `integrity_check=ok`、`foreign_key_check=0`。恢复到 `/vol1/1000/docker/blinkora-sqlite/data/app` 后，账户、笔记、附件记录和 Workspace 分别为 `1 / 256 / 8 / 5`，与源快照一致。
-- 正式服务：`blinkora-sqlite.service` 以 `weio:Users` 运行，运行时位于 `/vol1/1000/docker/blinkora-sqlite/local`，监听 `0.0.0.0:6676`，已设为开机自启。飞牛本机和局域网地址的 `/health` 均为 `200`，编辑器静态资源返回 `200`；启动日志只有正常监听记录。
-- 备份与回退：恢复用的 macOS 快照已保留在 `/vol1/1000/docker/blinkora-sqlite/backups/macos-snapshot-20260716T160000Z`。旧 `/vol1/1000/docker/blinkora` 目录及 PostgreSQL 数据未改动；旧 `blinkora.service` 已停止并禁用。回退仅需停用 `blinkora-sqlite.service` 后重新启用旧 unit，不能删除任一数据目录。
+- 正式服务：`blinkora-sqlite.service` 以 `weio:Users` 运行，运行时为 `/vol1/1000/docker/blinkora-sqlite/local/bin/blinkora-server` 这一个静态 x86_64 文件，监听 `0.0.0.0:6676`，已设为开机自启。它内置 schema 与前端资源，不再读取 `PUBLIC_PATH` 或 `SCHEMA_PATH`；飞牛本机和局域网地址的 `/health` 均为 `200`，首页和内置前端资源均为 `200`，不存在资源为 `404`。SQLite 再次检查 `integrity_check=ok`、`foreign_key_check=0`，核心记录仍为 `1 / 256 / 8 / 5`。unit 配置 `TimeoutStopSec=20s`，避免长连接无限拖住更新。
+- 备份与回退：恢复用的 macOS 快照已保留在 `/vol1/1000/docker/blinkora-sqlite/backups/macos-snapshot-20260716T160000Z`，切换前的外置资源版运行时（`blinkora-server`、`public`、`db`）另完整保留在 `backups/headless-runtime-20260717/`；正式 `local/` 中已没有 `public` 或 `db`。旧 `/vol1/1000/docker/blinkora` 目录及 PostgreSQL 数据未改动；旧 `blinkora.service` 已停止并禁用。回退仅需停用 `blinkora-sqlite.service` 后重新启用旧 unit，不能删除任一数据目录。
 - 附件边界：8 条附件记录和既有 S3 配置随 SQLite 快照保留。本次未读取、列举或改动现有 S3 业务对象；这是保留的安全边界，不影响本次本地数据库与服务切换结论。
 
 ## M2 只读副本迁移实跑
@@ -121,7 +121,7 @@
 - **历史 M2 直迁路径未执行。** 该路径原计划从飞牛 PostgreSQL 直迁 macOS；当前正式路径改为从 macOS SQLite 的一致快照恢复到飞牛 SQLite，已实际启用。历史 M2 脚本与预演保留作迁移和回退参考，不能用于覆盖当前服务。
 - **真实 S3 内容未纳入本轮读取验收。** 8 条附件记录和 S3 配置已无损迁移，但按用户要求没有列举、读取、下载、写入或删除现有业务对象，因此内容 SHA-256、真实附件预览和最终切换后的 S3 可用性仍待维护窗口或独立只读授权验证。源 `files/` 中 2 个无数据库引用的遗留文件也仍需在最终迁移前决定是否作为原始目录快照一并归档。
 - **最终候选浏览器/MCP smoke 尚未执行。** M2-A 真实结构克隆通过浏览器、MCP、Workspace 级备份恢复、令牌和清理；临时停写候选只做了账号 API token 只读检查。正式脚本会在激活前对全新候选克隆重跑完整隔离 smoke，现有业务 S3 对象继续禁止访问。
-- **Linux 便携版兼容矩阵仍待扩展。** 当前 x86_64 musl release、AppImage 启动/停止/重启和飞牛 x86_64 实机服务均已通过；更多发行版和 arm64 需要单独验收。
+- **Linux 交付范围刻意限定为无头 x86_64。** 当前静态 x86_64 单文件和飞牛实机 systemd 服务均已通过；不提供桌面、AppImage 或 arm64 兼容路径。若将来需要其他 CPU 架构，应单独构建并验收对应二进制。
 - 卡片长按拖动、相机/麦克风入口重新启用后的权限拒绝、Firefox/Safari 和更多移动尺寸属于延期未分类，不涉及数据测试跳过。相机/麦克风当前没有产品入口；M1 已覆盖音频/视频附件、卡背、多引用、全屏浮层、日夜主题、桌面/移动和真实 OSS 卡片级联删除。
 - 飞牛 systemd 的安装、启动、停止、开机自启和旧服务回退目录保留已实机通过；后续升级回滚与卸载生命周期仍应在非生产目录演练。
 
@@ -129,4 +129,4 @@
 
 2026-07-16，冻结候选的 macOS 本地工程门禁和凭据收口均已通过，M1 状态为 **本地软件交付完成**。S3 AccessKey 由用户在正式使用时自行轮换。
 
-同日已把 macOS SQLite 的一致物理快照恢复到飞牛新目录，并正式启用 `blinkora-sqlite.service` 为主服务。飞牛的 `/health`、静态资源、SQLite 完整性、外键及 `1 / 256 / 8 / 5` 核心记录数均已实机验证；旧 PostgreSQL 目录和旧 unit 作为未改动的回退副本保留。因此当前结论为 **飞牛 SQLite 已是正式主服务**。现有 S3 业务对象仍按边界未读取，历史 M2 直迁路径不再是当前部署的待执行步骤。
+同日已把 macOS SQLite 的一致物理快照恢复到飞牛新目录，并正式启用 `blinkora-sqlite.service` 为主服务。2026-07-17 已将它更新为内置 schema 与前端资源的无头 x86_64 单二进制，并再次实机验证健康、静态资源、SQLite 完整性、外键及 `1 / 256 / 8 / 5` 核心记录数；旧 PostgreSQL 目录和旧 unit 作为未改动的回退副本保留。因此当前结论为 **飞牛 SQLite 已是正式主服务**。现有 S3 业务对象仍按边界未读取，历史 M2 直迁路径不再是当前部署的待执行步骤。

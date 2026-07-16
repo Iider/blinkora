@@ -10,7 +10,7 @@ Blinkora is served as a browser app by the Rust backend. Default deployment uses
 | --- | --- | --- |
 | Web frontend | `app/` | React/Vite frontend |
 | Rust backend | `server/` | Only maintained server runtime |
-| Database schema | `db/schema.sqlite.sql` | Runtime SQLite schema |
+| Database schema | `db/schema.sqlite.sql` | Build-time embedded SQLite schema |
 | Shared code | `shared/` | Frontend-friendly shared types and utilities |
 | Docker deployment | `docker/` | Default single-container Docker entry |
 
@@ -52,17 +52,16 @@ The local URL is [http://localhost:6676](http://localhost:6676). For public or p
 
 `bun run build:rust-release` syncs a deployment copy to `docker/release/rust`. A deployment server with `docker/` and its generated `release/rust` contents only needs Docker.
 
-## Linux Portable Release
+## Linux Headless Single-Binary Release
 
-给 x86_64 Linux 桌面用户分发单个可双击运行的 AppImage：
+给 x86_64 Linux 服务器分发一个不依赖 Docker、Bun、Node.js、Rust、SQLite、GUI 或 FUSE 的静态二进制：
 
 ```bash
-APPIMAGETOOL=/绝对路径/appimagetool-x86_64.AppImage \
 BLINKORA_RUST_DOCKER_BUILD=1 \
-bun run build:linux-appimage
+bun run build:linux-headless
 ```
 
-用户无需安装 Docker、Bun、Node.js、Rust 或 SQLite。AppImage 把服务限制在 `127.0.0.1`，用户数据保存在标准 XDG 用户目录，升级 AppImage 不会覆盖数据。发布、控制命令和备份注意事项见 [docs/LINUX_PORTABLE_DEPLOYMENT.md](docs/LINUX_PORTABLE_DEPLOYMENT.md)。
+产物只包含一个 `blinkora-server-*-linux-x86_64` 文件；它内置 SQLite schema、React/Vite 静态资源和 Rust 运行时。服务器使用 systemd 或其他进程守护程序直接启动该二进制，数据与配置放在应用外的持久目录。部署、升级和回退说明见 [docs/LINUX_HEADLESS_DEPLOYMENT.md](docs/LINUX_HEADLESS_DEPLOYMENT.md)。
 
 ## Local Persistent Deployment
 

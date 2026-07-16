@@ -18,6 +18,7 @@ const expected = new Map([
     ['ExecStart', '/vol1/1000/docker/blinkora-sqlite/local/bin/blinkora-server'],
     ['Restart', 'on-failure'],
     ['RestartSec', '3'],
+    ['TimeoutStopSec', '20s'],
     ['NoNewPrivileges', 'true'],
     ['PrivateTmp', 'true'],
   ])],

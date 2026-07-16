@@ -8,7 +8,7 @@
 bun run dev:rust
 ```
 
-默认监听 `http://127.0.0.1:6677`，使用 `dist/public` 作为静态资源目录，并将 SQLite 文件与附件写入 `DATA_DIR`。可覆盖 `PUBLIC_PATH`、`DATA_DIR`、`PORT`。
+默认监听 `http://127.0.0.1:6677`，并将 SQLite 文件与附件写入 `DATA_DIR`。前端资源与 schema 在构建时内置于 Rust 二进制；可覆盖 `BIND_ADDR`、`DATA_DIR`、`PORT`。
 
 ## 构建和部署
 
@@ -18,7 +18,7 @@ cd docker
 docker compose up -d
 ```
 
-`docker/dockerfile.rust` 只复制 `docker/release/rust` 中的 Linux 二进制、前端静态资源和 `db/schema.sqlite.sql`。runtime 镜像不包含 Node、Bun、npm、cargo、Go 或 Rust 编译器。
+`docker/dockerfile.rust` 只复制 `docker/release/rust/blinkora-server`。runtime 镜像不包含 Node、Bun、npm、cargo、Go 或 Rust 编译器，前端资源和 schema 已在编译时嵌入二进制。
 
 如果本机无法交叉编译 Linux Rust 二进制，`bun run build:rust-release` 会回退到 Docker binary builder。`docker/dockerfile.rust.fullbuild` 仅用于排障或构建机。
 
@@ -43,7 +43,7 @@ curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:6676/
 
 ## 数据库初始化
 
-Rust 后端启动时会检查 SQLite 的 schema 版本和必需表。空数据目录会执行 `SCHEMA_PATH` 指向的 `db/schema.sqlite.sql`；未知非空库、损坏库或版本过新都会拒绝启动，不会静默创建新库。
+Rust 后端启动时会检查 SQLite 的 schema 版本和必需表。空数据目录会执行二进制内置的 schema；未知非空库、损坏库或版本过新都会拒绝启动，不会静默创建新库。
 
 ## Smoke
 

@@ -7,9 +7,7 @@ pub struct Config {
     pub port: String,
     pub auth_secret: String,
     pub node_env: String,
-    pub public_path: String,
     pub data_dir: String,
-    pub schema_path: String,
 }
 
 impl Config {
@@ -20,13 +18,11 @@ impl Config {
             auth_secret = "dev-only-insecure-secret".to_string();
         }
         Self {
-            bind_addr: env_var("BIND_ADDR", "0.0.0.0"),
+            bind_addr: env_var("BIND_ADDR", "127.0.0.1"),
             port: env_var("PORT", "6676"),
             auth_secret,
             node_env,
-            public_path: env_var("PUBLIC_PATH", "./public"),
             data_dir: env_var("DATA_DIR", "./data"),
-            schema_path: env_var("SCHEMA_PATH", "db/schema.sqlite.sql"),
         }
     }
 
@@ -61,9 +57,7 @@ mod tests {
             port: "6676".into(),
             auth_secret: "dev-only-insecure-secret".into(),
             node_env: "production".into(),
-            public_path: "./public".into(),
             data_dir: "./data".into(),
-            schema_path: "db/schema.sqlite.sql".into(),
         };
         assert!(cfg.validate().is_err());
     }

@@ -61,8 +61,6 @@ DB_PATH="$DATA_DIR/blinkora.sqlite3"
 BLINKORA_SECRET="$(openssl rand -hex 32)"
 PORT="$PORT" \
 DATA_DIR="$DATA_DIR" \
-PUBLIC_PATH="$APP_HOME/release/public" \
-SCHEMA_PATH="$APP_HOME/release/db/schema.sqlite.sql" \
 BLINKORA_SECRET="$BLINKORA_SECRET" \
 RUST_LOG=warn \
 "$APP_HOME/release/blinkora-server" >"$APP_HOME/browser-smoke-server.log" 2>&1 &

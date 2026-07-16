@@ -5,7 +5,7 @@ use crate::{
     trpc::ProcedureContext,
 };
 use sqlx::SqlitePool;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(crate) struct HandlerTestFixture {
     pub data_dir: PathBuf,
@@ -22,12 +22,9 @@ impl HandlerTestFixture {
         let pool = crate::db::connect(&data_dir)
             .await
             .expect("open handler test database");
-        crate::db::init_schema(
-            &pool,
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../db/schema.sqlite.sql"),
-        )
-        .await
-        .expect("initialize handler test schema");
+        crate::db::init_schema(&pool)
+            .await
+            .expect("initialize handler test schema");
         let account_id: i32 = sqlx::query_scalar(
             r#"INSERT INTO accounts (name, password, nickname, role, "updatedAt")
                VALUES ('owner', 'hash', 'Owner', 'superadmin', blinkora_now()) RETURNING id"#,
@@ -49,9 +46,7 @@ impl HandlerTestFixture {
                 port: "0".into(),
                 auth_secret: "test-secret".into(),
                 node_env: "test".into(),
-                public_path: "./public".into(),
                 data_dir: data_dir.display().to_string(),
-                schema_path: "db/schema.sqlite.sql".into(),
             },
             pool.clone(),
         );

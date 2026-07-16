@@ -50,10 +50,6 @@ done
   echo "error: local Blinkora runtime is missing: $RUNTIME_HOME/bin/blinkora-server" >&2
   exit 1
 }
-[[ -d "$RUNTIME_HOME/release/public" && -f "$RUNTIME_HOME/release/db/schema.sqlite.sql" ]] || {
-  echo "error: local Blinkora release assets are incomplete" >&2
-  exit 1
-}
 if [[ "$PORT" == "6676" || "$RESTORE_PORT" == "6676" ]]; then
   echo "error: M2 clone smoke refuses the persistent service port 6676" >&2
   exit 1
@@ -132,8 +128,6 @@ wait_for_health() {
 
 PORT="$PORT" \
 DATA_DIR="$DATA_DIR" \
-PUBLIC_PATH="$RUNTIME_HOME/release/public" \
-SCHEMA_PATH="$RUNTIME_HOME/release/db/schema.sqlite.sql" \
 BLINKORA_SECRET="$ORIGINAL_SECRET" \
 RUST_LOG=warn \
 "$RUNTIME_HOME/bin/blinkora-server" >"$APP_HOME/server.log" 2>&1 &
@@ -200,8 +194,6 @@ bash "$ROOT_DIR/scripts/sqlite-restore.sh" --backup "$BACKUP_DIR" --data-dir "$R
 
 PORT="$RESTORE_PORT" \
 DATA_DIR="$RESTORE_DIR" \
-PUBLIC_PATH="$RUNTIME_HOME/release/public" \
-SCHEMA_PATH="$RUNTIME_HOME/release/db/schema.sqlite.sql" \
 BLINKORA_SECRET="$ORIGINAL_SECRET" \
 RUST_LOG=warn \
 "$RUNTIME_HOME/bin/blinkora-server" >"$APP_HOME/restored-server.log" 2>&1 &

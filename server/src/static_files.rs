@@ -1,54 +1,46 @@
-use crate::app::AppState;
+use crate::embedded_assets::static_asset;
 use axum::body::Body;
-use axum::extract::State;
 use axum::http::{header, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
-use std::path::{Component, Path, PathBuf};
-use tokio::fs;
+use std::path::{Component, Path};
 
-pub async fn static_handler(State(state): State<AppState>, request: Request<Body>) -> Response {
-    let public_path = PathBuf::from(&state.config.public_path);
+pub async fn static_handler(request: Request<Body>) -> Response {
     let request_path = request.uri().path();
     let relative = sanitize_path(request_path);
-    let file_path = public_path.join(&relative);
 
-    if let Ok(metadata) = fs::metadata(&file_path).await {
-        if metadata.is_file() {
-            return serve_file(file_path, request_path, false).await;
-        }
+    if let Some(bytes) = static_asset(&relative) {
+        return serve_file(bytes, request_path, false);
     }
 
     if Path::new(request_path).extension().is_some() {
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    serve_file(public_path.join("index.html"), "/index.html", true).await
-}
-
-async fn serve_file(path: PathBuf, request_path: &str, fallback: bool) -> Response {
-    match fs::read(path).await {
-        Ok(bytes) => {
-            let mut response = (StatusCode::OK, bytes).into_response();
-            set_cache_headers(response.headers_mut(), request_path, fallback);
-            if let Some(content_type) = content_type(request_path) {
-                response
-                    .headers_mut()
-                    .insert(header::CONTENT_TYPE, content_type.parse().unwrap());
-            }
-            response
-        }
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    match static_asset("index.html") {
+        Some(bytes) => serve_file(bytes, "/index.html", true),
+        None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
 
-fn sanitize_path(path: &str) -> PathBuf {
-    let mut output = PathBuf::new();
+fn serve_file(bytes: &'static [u8], request_path: &str, fallback: bool) -> Response {
+    let mut response = (StatusCode::OK, Body::from(bytes)).into_response();
+    set_cache_headers(response.headers_mut(), request_path, fallback);
+    if let Some(content_type) = content_type(request_path) {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type.parse().unwrap());
+    }
+    response
+}
+
+fn sanitize_path(path: &str) -> String {
+    let mut output = Vec::new();
     for component in Path::new(path.trim_start_matches('/')).components() {
         if let Component::Normal(part) = component {
-            output.push(part);
+            output.push(part.to_string_lossy());
         }
     }
-    output
+    output.join("/")
 }
 
 fn set_cache_headers(headers: &mut axum::http::HeaderMap, path: &str, fallback: bool) {

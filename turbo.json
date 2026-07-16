@@ -6,9 +6,7 @@
   "globalEnv": [
     "NODE_ENV",
     "PORT",
-    "PUBLIC_PATH",
     "DATA_DIR",
-    "SCHEMA_PATH",
     "BLINKORA_SECRET",
     "BLINKORA_DEV_FRONTEND_PORT",
     "BLINKORA_DEV_BACKEND_URL",

@@ -119,11 +119,6 @@ remove_legacy_database_env() {
   mv "$temporary" "$ENV_FILE"
 }
 
-sync_runtime_paths() {
-  set_env_value PUBLIC_PATH "$RELEASE_DIR/public"
-  set_env_value SCHEMA_PATH "$RELEASE_DIR/db/schema.sqlite.sql"
-}
-
 ensure_env_file() {
   ensure_dirs
   if [[ ! -f "$ENV_FILE" ]]; then
@@ -133,9 +128,7 @@ ensure_env_file() {
     cat > "$ENV_FILE" <<EOF
 NODE_ENV=production
 PORT=$PORT
-PUBLIC_PATH=$RELEASE_DIR/public
 DATA_DIR=$DATA_DIR
-SCHEMA_PATH=$RELEASE_DIR/db/schema.sqlite.sql
 BLINKORA_SECRET=$secret
 RUST_LOG=info
 EOF
@@ -143,7 +136,18 @@ EOF
     echo "created $ENV_FILE"
   fi
   remove_legacy_database_env
-  sync_runtime_paths
+  remove_runtime_asset_env
+}
+
+remove_runtime_asset_env() {
+  local temporary
+  temporary="$(mktemp "$APP_HOME/.blinkora.env.XXXXXX")"
+  awk '
+    /^[[:space:]]*(PUBLIC_PATH|SCHEMA_PATH)=/ { next }
+    { print }
+  ' "$ENV_FILE" > "$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$ENV_FILE"
 }
 
 build_native() {
@@ -155,10 +159,6 @@ build_native() {
   CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build --release --locked --manifest-path server/Cargo.toml
   cp "$CARGO_TARGET_DIR/release/blinkora-server" "$RELEASE_DIR/blinkora-server"
   cp "$CARGO_TARGET_DIR/release/blinkora-server" "$LOCAL_BIN"
-  rm -rf "$RELEASE_DIR/public"
-  cp -R dist/public "$RELEASE_DIR/public"
-  mkdir -p "$RELEASE_DIR/db"
-  cp db/schema.sqlite.sql "$RELEASE_DIR/db/schema.sqlite.sql"
   chmod +x "$RELEASE_DIR/blinkora-server" "$LOCAL_BIN"
   sign_local_binary
   echo "native release artifacts are ready in $RELEASE_DIR"
