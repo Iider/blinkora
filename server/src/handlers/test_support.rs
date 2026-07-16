@@ -45,6 +45,7 @@ impl HandlerTestFixture {
         .expect("seed handler test workspace");
         let state = AppState::new(
             Config {
+                bind_addr: "127.0.0.1".into(),
                 port: "0".into(),
                 auth_secret: "test-secret".into(),
                 node_env: "test".into(),

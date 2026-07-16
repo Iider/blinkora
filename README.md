@@ -52,6 +52,18 @@ The local URL is [http://localhost:6676](http://localhost:6676). For public or p
 
 `bun run build:rust-release` syncs a deployment copy to `docker/release/rust`. A deployment server with `docker/` and its generated `release/rust` contents only needs Docker.
 
+## Linux Portable Release
+
+给 x86_64 Linux 桌面用户分发单个可双击运行的 AppImage：
+
+```bash
+APPIMAGETOOL=/绝对路径/appimagetool-x86_64.AppImage \
+BLINKORA_RUST_DOCKER_BUILD=1 \
+bun run build:linux-appimage
+```
+
+用户无需安装 Docker、Bun、Node.js、Rust 或 SQLite。AppImage 把服务限制在 `127.0.0.1`，用户数据保存在标准 XDG 用户目录，升级 AppImage 不会覆盖数据。发布、控制命令和备份注意事项见 [docs/LINUX_PORTABLE_DEPLOYMENT.md](docs/LINUX_PORTABLE_DEPLOYMENT.md)。
+
 ## Local Persistent Deployment
 
 macOS 本机持久化模式不需要 Docker：

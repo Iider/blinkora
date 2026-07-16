@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.blinkora.Blinkora</id>
+  <name>Blinkora</name>
+  <summary>Private notes and memory base</summary>
+  <description>
+    <p>Blinkora is a private, local-first note and memory base.</p>
+  </description>
+  <launchable type="desktop-id">Blinkora.desktop</launchable>
+  <provides>
+    <binary>blinkora-server</binary>
+  </provides>
+</component>

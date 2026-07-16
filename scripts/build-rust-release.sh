@@ -66,11 +66,12 @@ build_with_docker() {
   docker build \
     --target backend-builder \
     -f docker/dockerfile.rust.fullbuild \
+    --build-arg "RUST_TARGET=$RUST_TARGET" \
     -t "$image" \
     .
   container_id="$(docker create "$image")"
   trap 'docker rm -f "$container_id" >/dev/null 2>&1 || true' RETURN
-  docker cp "$container_id:/build/server/target/release/blinkora-server" "$RELEASE_DIR/blinkora-server"
+  docker cp "$container_id:/build/server/target/$RUST_TARGET/release/blinkora-server" "$RELEASE_DIR/blinkora-server"
   docker rm -f "$container_id" >/dev/null 2>&1 || true
   docker rmi "$image" >/dev/null 2>&1 || true
 }
@@ -85,6 +86,11 @@ fi
 if ! file "$RELEASE_DIR/blinkora-server" | grep -q 'ELF .* executable'; then
   file "$RELEASE_DIR/blinkora-server" >&2
   echo "error: release/rust/blinkora-server must be a Linux ELF executable for Docker runtime" >&2
+  exit 1
+fi
+if ! file "$RELEASE_DIR/blinkora-server" | grep -Eq 'statically linked|static-pie linked'; then
+  file "$RELEASE_DIR/blinkora-server" >&2
+  echo "error: release/rust/blinkora-server must be statically linked for portable Linux delivery" >&2
   exit 1
 fi
 

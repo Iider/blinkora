@@ -1,6 +1,8 @@
-# M2 生产切换运行手册
+# M2 生产切换运行手册（历史）
 
-适用范围：把飞牛 PostgreSQL 主服务迁移到 macOS 本机 SQLite。飞牛保留 PostgreSQL、原附件和最终快照作为回滚源，不部署 SQLite。
+> 当前飞牛 SQLite 已于 2026-07-16 在新目录启用为主服务。本手册记录的是此前“飞牛 PostgreSQL 主服务迁移到 macOS 本机 SQLite”的历史预案，**不得按此手册操作当前服务**。当前运维、更新和回退请使用 [飞牛常驻部署](./FNAS_PERSISTENT_DEPLOYMENT.md)。
+
+原适用范围：把飞牛 PostgreSQL 主服务迁移到 macOS 本机 SQLite。飞牛保留 PostgreSQL、原附件和最终快照作为回滚源，不部署 SQLite。
 
 当前没有执行最终切换。本手册和脚本已经就绪；飞牛仍是主服务。
 

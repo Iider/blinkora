@@ -3,6 +3,7 @@ use std::env;
 
 #[derive(Clone, Debug)]
 pub struct Config {
+    pub bind_addr: String,
     pub port: String,
     pub auth_secret: String,
     pub node_env: String,
@@ -19,6 +20,7 @@ impl Config {
             auth_secret = "dev-only-insecure-secret".to_string();
         }
         Self {
+            bind_addr: env_var("BIND_ADDR", "0.0.0.0"),
             port: env_var("PORT", "6676"),
             auth_secret,
             node_env,
@@ -55,6 +57,7 @@ mod tests {
     #[test]
     fn rejects_placeholder_secret_in_production() {
         let cfg = Config {
+            bind_addr: "0.0.0.0".into(),
             port: "6676".into(),
             auth_secret: "dev-only-insecure-secret".into(),
             node_env: "production".into(),

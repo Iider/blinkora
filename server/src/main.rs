@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state.clone());
 
-    let addr: SocketAddr = format!("0.0.0.0:{}", state.config.port)
+    let addr: SocketAddr = format!("{}:{}", state.config.bind_addr, state.config.port)
         .parse()
         .context("invalid bind address")?;
     let listener = TcpListener::bind(addr).await?;
