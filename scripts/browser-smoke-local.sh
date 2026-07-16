@@ -3,7 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_HOME="$(mktemp -d "${TMPDIR:-/tmp}/blinkora-browser-smoke.XXXXXX")"
-TARGET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/blinkora-browser-smoke-target.XXXXXX")"
+TARGET_DIR="${BLINKORA_SMOKE_CARGO_TARGET_DIR:-}"
+REMOVE_TARGET_DIR=false
+if [[ -z "$TARGET_DIR" ]]; then
+  TARGET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/blinkora-browser-smoke-target.XXXXXX")"
+  REMOVE_TARGET_DIR=true
+fi
 PORT="${BLINKORA_BROWSER_SMOKE_PORT:-16683}"
 LABEL="com.blinkora.browser-smoke-${RANDOM}"
 SERVER_PID=""
@@ -15,7 +20,10 @@ cleanup() {
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     wait "$SERVER_PID" >/dev/null 2>&1 || true
   fi
-  rm -rf "$APP_HOME" "$TARGET_DIR"
+  rm -rf "$APP_HOME"
+  if [[ "$REMOVE_TARGET_DIR" == true ]]; then
+    rm -rf "$TARGET_DIR"
+  fi
   exit "$status"
 }
 trap cleanup EXIT INT TERM
@@ -81,6 +89,10 @@ bun run smoke:browser
   echo "error: SQLite foreign_key_check reported rows after browser smoke" >&2
   exit 1
 }
+if [[ "${BLINKORA_BROWSER_SMOKE_SCENARIO:-full}" != "full" ]]; then
+  echo "focused browser smoke passed with SQLite integrity and foreign-key checks"
+  exit 0
+fi
 [[ "$(sqlite3 "$DB_PATH" 'SELECT type || "=" || count(*) FROM notes GROUP BY type ORDER BY type;')" == $'0=11\n1=13\n2=12' ]] || {
   echo "error: browser smoke did not persist its Blinkora, Note, and Todo pagination fixtures" >&2
   exit 1
@@ -95,10 +107,11 @@ EDITED_NOTE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM notes WHERE type = 1 AND co
   exit 1
 }
 [[ "$(sqlite3 "$DB_PATH" "SELECT json_extract(metadata, '$.properties.browser_boolean') FROM notes WHERE id=$EDITED_NOTE_ID;")" == "1" \
+  && "$(sqlite3 "$DB_PATH" "SELECT json_extract(metadata, '$.properties.browser_link') FROM notes WHERE id=$EDITED_NOTE_ID;")" == "GitHub：[browser-use/browser-harness](https://github.com/browser-use/browser-harness)" \
   && "$(sqlite3 "$DB_PATH" "SELECT json_array_length(metadata, '$.properties.browser_list') FROM notes WHERE id=$EDITED_NOTE_ID;")" == "3" \
   && "$(sqlite3 "$DB_PATH" "SELECT json_type(metadata, '$.properties.browser_null') FROM notes WHERE id=$EDITED_NOTE_ID;")" == "null" \
   && "$(sqlite3 "$DB_PATH" "SELECT json_extract(metadata, '$.properties.browser_number') FROM notes WHERE id=$EDITED_NOTE_ID;")" == "42.5" \
-  && "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM notes WHERE id=$EDITED_NOTE_ID AND json_extract(metadata, '$.properties.browser_string') LIKE 'property value %';")" == "1" ]] || {
+  && "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM notes WHERE id=$EDITED_NOTE_ID AND json_extract(metadata, '$.properties.browser_string') LIKE 'property value %' AND json_extract(metadata, '$.browser_preserved') LIKE 'preserved metadata %';")" == "1" ]] || {
   echo "error: browser smoke did not preserve typed custom Note properties" >&2
   exit 1
 }
@@ -133,6 +146,14 @@ SOURCE_WORKSPACE_ID="$(sqlite3 "$DB_PATH" "SELECT id FROM workspaces WHERE name 
 }
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM attachments WHERE name LIKE 'browser-ui-attachment-%';")" == "0" ]] || {
   echo "error: browser smoke did not delete its moved Note attachment" >&2
+  exit 1
+}
+[[ "$(sqlite3 "$DB_PATH" "
+  SELECT
+    (SELECT count(*) FROM notes WHERE content LIKE 'browser shared attachment %')
+    + (SELECT count(*) FROM attachments WHERE name LIKE 'browser-shared-attachment-%');
+")" == "0" ]] || {
+  echo "error: browser smoke left a shared-resource fixture behind" >&2
   exit 1
 }
 [[ "$(sqlite3 "$DB_PATH" "SELECT count(*) FROM \"tagsToNote\" t JOIN tag g ON g.id=t.\"tagId\" WHERE t.\"noteId\"=$EDITED_NOTE_ID AND g.\"workspaceId\"=$MOVED_WORKSPACE_ID;")" -ge 1 ]] || {

@@ -3,7 +3,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_HOME="$(mktemp -d "${TMPDIR:-/tmp}/blinkora-s3-smoke.XXXXXX")"
-TARGET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/blinkora-s3-smoke-target.XXXXXX")"
+TARGET_DIR="${BLINKORA_SMOKE_CARGO_TARGET_DIR:-}"
+REMOVE_TARGET_DIR=false
+if [[ -z "$TARGET_DIR" ]]; then
+  TARGET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/blinkora-s3-smoke-target.XXXXXX")"
+  REMOVE_TARGET_DIR=true
+fi
 PORT="${BLINKORA_S3_SMOKE_PORT:-16686}"
 LABEL="com.blinkora.s3-smoke-${RANDOM}"
 SERVER_PID=""
@@ -11,11 +16,18 @@ SERVER_PID=""
 cleanup() {
   local exit_code=$?
   trap - EXIT INT TERM
+  if (( exit_code != 0 )) && [[ -f "$APP_HOME/s3-smoke-server.log" ]]; then
+    echo "error: last temporary S3 smoke server log lines:" >&2
+    tail -n 80 "$APP_HOME/s3-smoke-server.log" >&2 || true
+  fi
   if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" >/dev/null 2>&1; then
     kill "$SERVER_PID" >/dev/null 2>&1 || true
     wait "$SERVER_PID" >/dev/null 2>&1 || true
   fi
-  rm -rf "$APP_HOME" "$TARGET_DIR"
+  rm -rf "$APP_HOME"
+  if [[ "$REMOVE_TARGET_DIR" == true ]]; then
+    rm -rf "$TARGET_DIR"
+  fi
   exit "$exit_code"
 }
 trap cleanup EXIT INT TERM
@@ -93,7 +105,14 @@ fi
 STAMP="$(date +%s)-$RANDOM"
 S3_CUSTOM_PATH_ROOT="${BLINKORA_S3_SMOKE_CUSTOM_PATH:-smoke}"
 S3_CUSTOM_PATH_ROOT="${S3_CUSTOM_PATH_ROOT%/}"
+case "/$S3_CUSTOM_PATH_ROOT/" in
+  *"/blinkora/"*|*"/blinkora_local/"*)
+    echo "error: smoke:s3-local refuses existing Blinkora data prefixes" >&2
+    exit 1
+    ;;
+esac
 S3_CUSTOM_PATH="${S3_CUSTOM_PATH_ROOT:+$S3_CUSTOM_PATH_ROOT/}smoke-$STAMP/"
+S3_BROWSER_CUSTOM_PATH="${S3_CUSTOM_PATH}browser-$STAMP/"
 
 BLINKORA_BASE_URL="http://127.0.0.1:$PORT" \
 BLINKORA_SMOKE_USER="s3_smoke_$STAMP" \
@@ -103,6 +122,14 @@ BLINKORA_S3_SMOKE_CUSTOM_PATH="$S3_CUSTOM_PATH" \
 BLINKORA_UPLOAD_BY_URL_HOST=127.0.0.1 \
 BLINKORA_UPLOAD_BY_URL_PORT="$UPLOAD_BY_URL_PORT" \
 bun run smoke:s3
+
+BLINKORA_BASE_URL="http://127.0.0.1:$PORT" \
+BLINKORA_SMOKE_USER="s3_smoke_$STAMP" \
+BLINKORA_SMOKE_PASSWORD="S3Smoke!local" \
+BLINKORA_S3_BROWSER_SMOKE_ISOLATED=1 \
+BLINKORA_S3_SMOKE_CUSTOM_PATH="$S3_CUSTOM_PATH" \
+BLINKORA_S3_BROWSER_CUSTOM_PATH="$S3_BROWSER_CUSTOM_PATH" \
+bun run smoke:s3-browser
 
 [[ "$(sqlite3 "$DB_PATH" 'PRAGMA integrity_check;')" == "ok" ]] || {
   echo "error: SQLite integrity_check failed after real S3 smoke" >&2

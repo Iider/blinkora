@@ -11,6 +11,7 @@ const browserExecutable = process.env.BLINKORA_BROWSER_EXECUTABLE
 const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`;
 const user = `browser_smoke_${stamp}`;
 const password = 'BrowserSmoke!local';
+const scenario = process.env.BLINKORA_BROWSER_SMOKE_SCENARIO?.trim() || 'full';
 const FONT_FIXTURE_PATH = '/System/Library/Fonts/Symbol.ttf';
 const NOTE_TYPE_LABELS = ['闪念', '笔记', '待办'];
 
@@ -134,11 +135,14 @@ async function runTrpcFixtureMutation(page, procedure, input) {
   const result = await page.evaluate(async ({ procedure, input }) => {
     const storedToken = window.localStorage.getItem('blinkoraToken');
     const token = storedToken ? JSON.parse(storedToken)?.token : null;
+    const storedWorkspaceId = window.localStorage.getItem('blinkoraCurrentWorkspaceId');
+    const workspaceId = storedWorkspaceId ? JSON.parse(storedWorkspaceId) : null;
     const response = await fetch(`/api/trpc/${procedure}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(workspaceId ? { 'x-workspace-id': String(workspaceId) } : {}),
       },
       body: JSON.stringify({ json: input }),
     });
@@ -147,7 +151,10 @@ async function runTrpcFixtureMutation(page, procedure, input) {
   }, { procedure, input });
 
   assert(result.ok, `Fixture mutation ${procedure} failed.`, { status: result.status });
-  return result.payload?.result?.data?.json;
+  const payload = Array.isArray(result.payload) ? result.payload[0] : result.payload;
+  const data = payload?.result?.data?.json;
+  assert(data !== undefined, `Fixture mutation ${procedure} returned a tRPC error.`, payload);
+  return data;
 }
 
 async function registerAndSignIn(page) {
@@ -322,8 +329,9 @@ async function editNote(page, originalContent, updatedContent, beforeSave, path 
   await page.keyboard.press('End');
   await page.keyboard.insertText(updatedContent.slice(originalContent.length));
   await beforeSave?.();
-  await saveEditedNote(page);
+  const response = await saveEditedNote(page);
   await noteCard(page, updatedContent).waitFor({ state: 'visible', timeout: 10_000 });
+  return response;
 }
 
 async function attachFileToEditedNote(page, fileName, {
@@ -344,7 +352,9 @@ async function attachFileToEditedNote(page, fileName, {
   });
   const response = await uploaded;
   assert(response.ok(), 'Upload attachment request failed.', { status: response.status() });
+  const uploadedFile = await response.json();
   await page.getByText(fileName, { exact: true }).last().waitFor({ state: 'visible', timeout: 10_000 });
+  return uploadedFile;
 }
 
 async function addReferenceToEditedNote(page, targetContent) {
@@ -369,6 +379,64 @@ async function saveEditedNote(page) {
   await sendButtons.last().click();
   const response = await saved;
   assert(response.ok(), 'Save edited note request failed.', { status: response.status() });
+  return response;
+}
+
+async function removeAttachmentFromCurrentEditor(page) {
+  const editor = page.locator('#vditor-edit');
+  const attachment = editor.locator(
+    'xpath=following-sibling::div[contains(concat(" ", normalize-space(@class), " "), " attachment-container ")]',
+  );
+  const standaloneDeleteRequests = [];
+  const recordStandaloneDelete = request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/file/delete') {
+      standaloneDeleteRequests.push(request.url());
+    }
+  };
+  page.on('request', recordStandaloneDelete);
+  try {
+    const deleteButton = attachment.getByRole('button', { name: '删除', exact: true });
+    await deleteButton.waitFor({ state: 'visible', timeout: 10_000 });
+    await deleteButton.click();
+    const confirmation = page.getByText('该操作将删除资源，你确定吗？', { exact: true });
+    await confirmation.waitFor({ state: 'visible', timeout: 10_000 });
+    const confirmationPanel = confirmation.locator(
+      'xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " px-1 ")][1]',
+    );
+    const confirmButton = confirmationPanel.getByRole('button', { name: '确认', exact: true });
+    await confirmButton.click();
+    try {
+      await attachment.waitFor({ state: 'hidden', timeout: 2_000 });
+    } catch {
+      const editorState = await editor.evaluate(element => {
+        let current = element;
+        while (current && !current.__storeInstance) current = current.parentElement;
+        const store = current?.__storeInstance;
+        return store ? {
+          mode: store.mode,
+          editingNoteId: store.editingNoteId,
+          deletedAttachmentPaths: [...store.deletedAttachmentPaths],
+          files: store.files.map(file => ({
+            name: file.name,
+            attachedToNote: file.attachedToNote,
+            path: file.uploadPromise?.value || file.preview,
+          })),
+        } : { storeFound: false };
+      });
+      fail('Confirmed editor attachment deletion did not remove the attachment from the editor.', {
+        editorState,
+        confirmationVisible: await confirmation.isVisible().catch(() => false),
+        standaloneDeleteRequests,
+        attachmentText: (await attachment.innerText()).slice(0, 500),
+      });
+    }
+    await page.waitForTimeout(200);
+  } finally {
+    page.off('request', recordStandaloneDelete);
+  }
+  assert(standaloneDeleteRequests.length === 0,
+    'Editor attachment removal called the standalone delete endpoint before Note save.',
+    standaloneDeleteRequests);
 }
 
 async function verifyNoteProperties(page, content, noteId, {
@@ -377,6 +445,7 @@ async function verifyNoteProperties(page, content, noteId, {
 }) {
   const properties = {
     browser_boolean: true,
+    browser_link: 'GitHub：[browser-use/browser-harness](https://github.com/browser-use/browser-harness)',
     browser_list: ['alpha', '中文', '🙂'],
     browser_null: null,
     browser_number: 42.5,
@@ -384,6 +453,7 @@ async function verifyNoteProperties(page, content, noteId, {
   };
   const serializedValues = {
     browser_boolean: 'true',
+    browser_link: properties.browser_link,
     browser_list: JSON.stringify(properties.browser_list),
     browser_null: 'null',
     browser_number: String(properties.browser_number),
@@ -435,8 +505,47 @@ async function verifyNoteProperties(page, content, noteId, {
   for (const key of Object.keys(properties)) {
     await page.getByText(key, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
   }
+
+  const propertyLink = page.getByRole('link', { name: 'browser-use/browser-harness', exact: true });
+  await propertyLink.waitFor({ state: 'visible', timeout: 10_000 });
+  assert(
+    await propertyLink.getAttribute('href') === 'https://github.com/browser-use/browser-harness',
+    'Markdown Note property link changed its destination.',
+  );
+  assert(await propertyLink.getAttribute('target') === '_blank',
+    'Markdown Note property link did not retain its new-tab behavior.');
+  const openedLink = page.context().waitForEvent('page', { timeout: 10_000 });
+  await propertyLink.click();
+  const linkedPage = await openedLink;
+  await linkedPage.waitForURL(
+    url => url.href.startsWith('https://github.com/browser-use/browser-harness'),
+    { timeout: 10_000 },
+  );
+  await linkedPage.close();
+
   await page.keyboard.press('Escape');
   await editProperties.waitFor({ state: 'hidden', timeout: 10_000 });
+
+  await page.reload({ waitUntil: 'networkidle' });
+  const reloadedCard = noteCard(page, content);
+  await reloadedCard.waitFor({ state: 'visible', timeout: 10_000 });
+  const cardMarker = `properties-${stamp}`;
+  await reloadedCard.evaluate((element, marker) => {
+    element.setAttribute('data-browser-smoke-card', marker);
+  }, cardMarker);
+  const stableCard = page.locator(`[data-browser-smoke-card="${cardMarker}"]`);
+  assert(await stableCard.getByText('browser_boolean', { exact: true }).count() === 0,
+    'Note properties unexpectedly appeared on the card front.');
+  await flipCard(page, stableCard);
+  await stableCard.locator('[title="翻回正面"]').waitFor({ state: 'visible', timeout: 10_000 });
+  await stableCard.getByText('browser_boolean', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await stableCard.getByText('笔记', { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  await page.reload({ waitUntil: 'networkidle' });
+  const frontCard = noteCard(page, content);
+  await frontCard.waitFor({ state: 'visible', timeout: 10_000 });
+  await frontCard.getByText(content, { exact: true }).waitFor({ state: 'visible', timeout: 10_000 });
+  assert(await frontCard.getByText('browser_boolean', { exact: true }).count() === 0,
+    'Reloaded Note card did not return to its property-free front face.');
   return { note: returnedNote, properties };
 }
 
@@ -493,6 +602,103 @@ async function verifyNoteTypeConversions(page, visibleContent, expectedNote, exp
     await page.goto(listUrl(conversion.path).toString(), { waitUntil: 'networkidle' });
     await noteCard(page, visibleContent).waitFor({ state: 'visible', timeout: 10_000 });
   }
+}
+
+function serializePropertyValue(value) {
+  if (Array.isArray(value)) return JSON.stringify(value);
+  if (value === null) return 'null';
+  return String(value);
+}
+
+async function verifyPropertyValidationAndClear(page, content, expectedNote, expectedProperties) {
+  const preservedMetadataValue = `preserved metadata ${stamp}`;
+  const preparedNote = await runTrpcFixtureMutation(page, 'notes.upsert', {
+    id: expectedNote.id,
+    metadata: {
+      ...(expectedNote.metadata ?? {}),
+      browser_preserved: preservedMetadataValue,
+    },
+  });
+  assert(preparedNote?.metadata?.browser_preserved === preservedMetadataValue,
+    'Property validation fixture did not preserve its unrelated metadata field.', preparedNote);
+
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  const card = noteCard(page, content);
+  await card.waitFor({ state: 'visible', timeout: 10_000 });
+  await card.click({ position: { x: 200, y: 80 } });
+  const editProperties = page.getByRole('button', { name: '编辑属性', exact: true });
+  const saveProperties = page.getByRole('button', { name: '保存属性', exact: true });
+  await editProperties.waitFor({ state: 'visible', timeout: 10_000 });
+  await editProperties.click();
+
+  const propertyKeys = Object.keys(expectedProperties).sort((left, right) => left.localeCompare(right));
+  let keyInputs = page.getByRole('textbox', { name: '属性', exact: true });
+  let valueInputs = page.getByRole('textbox', { name: '内容', exact: true });
+  assert(await keyInputs.count() === propertyKeys.length,
+    'Property editor did not render every saved property row.');
+
+  await keyInputs.nth(1).fill(propertyKeys[0]);
+  await saveProperties.click();
+  await page.getByText(`属性「${propertyKeys[0]}」重复了。`, { exact: true })
+    .waitFor({ state: 'visible', timeout: 10_000 });
+  await keyInputs.nth(1).fill(propertyKeys[1]);
+
+  await keyInputs.nth(0).fill('');
+  await saveProperties.click();
+  await page.getByText('请先填写属性名。', { exact: true })
+    .waitFor({ state: 'visible', timeout: 10_000 });
+  await keyInputs.nth(0).fill(propertyKeys[0]);
+
+  await valueInputs.nth(0).fill('{ nested: true }');
+  await saveProperties.click();
+  await page.getByText(`属性「${propertyKeys[0]}」的内容格式不对`, { exact: false })
+    .waitFor({ state: 'visible', timeout: 10_000 });
+  await valueInputs.nth(0).fill(serializePropertyValue(expectedProperties[propertyKeys[0]]));
+
+  keyInputs = page.getByRole('textbox', { name: '属性', exact: true });
+  valueInputs = page.getByRole('textbox', { name: '内容', exact: true });
+  for (let index = 0; index < propertyKeys.length; index += 1) {
+    await keyInputs.nth(index).fill('');
+    await valueInputs.nth(index).fill('');
+  }
+  const cleared = waitForTrpcMutation(page, 'notes.upsert');
+  await saveProperties.click();
+  const clearResponse = await cleared;
+  assert(clearResponse.ok(), 'Clearing Note properties failed.', { status: clearResponse.status() });
+  const clearInput = trpcRequestJsonInput(clearResponse, 'notes.upsert');
+  assertJsonEqual(Object.keys(clearInput).sort(), ['id', 'metadata'],
+    'Clear Note properties submitted unrelated replacement fields.');
+  assert(clearInput?.metadata?.browser_preserved === preservedMetadataValue,
+    'Clearing Note properties removed an unrelated metadata field.', clearInput?.metadata);
+  assert(!Object.hasOwn(clearInput?.metadata ?? {}, 'properties'),
+    'Clearing Note properties retained an empty properties object.', clearInput?.metadata);
+  const clearedNote = await trpcResponseJson(clearResponse, 'notes.upsert');
+  assert(
+    clearedNote?.content === expectedNote.content
+      && clearedNote?.attachments?.length === expectedNote.attachments.length
+      && clearedNote?.references?.length === expectedNote.references.length,
+    'Clearing Note properties changed content, attachments, or references.', clearedNote,
+  );
+
+  await editProperties.waitFor({ state: 'visible', timeout: 10_000 });
+  await editProperties.click();
+  for (const [index, key] of propertyKeys.entries()) {
+    keyInputs = page.getByRole('textbox', { name: '属性', exact: true });
+    valueInputs = page.getByRole('textbox', { name: '内容', exact: true });
+    await keyInputs.nth(index).fill(key);
+    await valueInputs.nth(index).fill(serializePropertyValue(expectedProperties[key]));
+  }
+  const restored = waitForTrpcMutation(page, 'notes.upsert');
+  await saveProperties.click();
+  const restoreResponse = await restored;
+  assert(restoreResponse.ok(), 'Restoring Note properties failed.', { status: restoreResponse.status() });
+  const restoredNote = await trpcResponseJson(restoreResponse, 'notes.upsert');
+  assertJsonEqual(restoredNote?.metadata?.properties, expectedProperties,
+    'Restoring Note properties changed a JSON type or value.');
+  assert(restoredNote?.metadata?.browser_preserved === preservedMetadataValue,
+    'Restoring Note properties removed an unrelated metadata field.', restoredNote?.metadata);
+  await page.keyboard.press('Escape');
+  return restoredNote;
 }
 
 async function verifyGlobalSearch(page, content) {
@@ -976,6 +1182,164 @@ async function deleteRecycledCard(page, content) {
   await card.waitFor({ state: 'hidden', timeout: 10_000 });
 }
 
+async function authenticatedResourceStatus(page, resourcePath) {
+  const auth = await page.evaluate(() => {
+    const stored = window.localStorage.getItem('blinkoraToken');
+    const storedWorkspaceId = window.localStorage.getItem('blinkoraCurrentWorkspaceId');
+    return {
+      token: stored ? JSON.parse(stored)?.token ?? '' : '',
+      workspaceId: storedWorkspaceId ? JSON.parse(storedWorkspaceId) : null,
+    };
+  });
+  assert(auth.token, 'Browser session did not expose its account token for resource verification.');
+  const response = await page.request.get(new URL(resourcePath, base).toString(), {
+    headers: {
+      Authorization: `Bearer ${auth.token}`,
+      ...(auth.workspaceId ? { 'x-workspace-id': String(auth.workspaceId) } : {}),
+    },
+    failOnStatusCode: false,
+  });
+  return response.status();
+}
+
+async function permanentlyDeleteCard(page, content, {
+  expectedOrphanAttachmentName,
+  deleteOrphanAttachments,
+}) {
+  await page.goto(listUrl('trash').toString(), { waitUntil: 'networkidle' });
+  const card = await openCardMenu(page, content);
+  const deleteItem = page.locator('[data-key="DeleteItem"]').last();
+  await deleteItem.waitFor({ state: 'visible', timeout: 10_000 });
+
+  const impactRequested = waitForTrpcMutation(page, 'notes.deleteImpact');
+  await deleteItem.click();
+  const impactResponse = await impactRequested;
+  assert(impactResponse.ok(), 'Shared-resource delete impact request failed.', {
+    status: impactResponse.status(),
+  });
+  const impact = await trpcResponseJson(impactResponse, 'notes.deleteImpact');
+  const orphanAttachments = impact?.orphanAttachments ?? [];
+  if (expectedOrphanAttachmentName) {
+    assert(
+      orphanAttachments.some(attachment => attachment.name === expectedOrphanAttachmentName),
+      'Delete impact did not identify the expected unreferenced attachment.',
+      orphanAttachments,
+    );
+  } else {
+    assert(orphanAttachments.length === 0,
+      'Delete impact incorrectly classified a shared attachment as unreferenced.', orphanAttachments);
+  }
+
+  const dialog = page.getByRole('dialog').filter({ hasText: '此操作会彻底删除卡片' }).last();
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  const deleted = waitForTrpcMutation(page, 'notes.deleteMany');
+  if (expectedOrphanAttachmentName) {
+    await dialog.getByText(expectedOrphanAttachmentName, { exact: true })
+      .waitFor({ state: 'visible', timeout: 10_000 });
+    await dialog.getByRole('button', { name: '仅删除卡片', exact: true })
+      .waitFor({ state: 'visible', timeout: 10_000 });
+    await dialog.getByRole('button', { name: '连同资源删除', exact: true }).click();
+  } else {
+    assert(await dialog.getByRole('button', { name: '连同资源删除', exact: true }).count() === 0,
+      'Shared attachment unexpectedly exposed the destructive resource-delete choice.');
+    await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  }
+  const deleteResponse = await deleted;
+  assert(deleteResponse.ok(), 'Permanent shared-resource fixture deletion failed.', {
+    status: deleteResponse.status(),
+  });
+  const requestInput = trpcRequestJsonInput(deleteResponse, 'notes.deleteMany');
+  assert(requestInput?.deleteOrphanAttachments === deleteOrphanAttachments,
+    'Permanent deletion submitted an unexpected resource-deletion choice.', requestInput);
+  await card.waitFor({ state: 'hidden', timeout: 10_000 });
+}
+
+async function verifySharedAttachmentProtection(page) {
+  const owner = `browser shared attachment owner ${stamp}`;
+  const updatedOwner = `${owner} (edited)`;
+  const attachmentName = `browser-shared-attachment-${stamp}.txt`;
+  const attachmentBody = `shared browser attachment ${stamp}`;
+
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  await createNote(page, '笔记', owner, 'path=notes');
+  let uploadedFile;
+  await editNote(page, owner, updatedOwner, async () => {
+    uploadedFile = await attachFileToEditedNote(page, attachmentName, {
+      buffer: Buffer.from(attachmentBody),
+    });
+  });
+  const attachmentPath = uploadedFile?.filePath ?? uploadedFile?.path;
+  assert(
+    typeof attachmentPath === 'string'
+      && attachmentPath.startsWith('/api/file/')
+      && uploadedFile?.filePath === uploadedFile?.path,
+    'Local shared attachment upload returned an invalid compatibility path.',
+    { filePath: uploadedFile?.filePath, path: uploadedFile?.path },
+  );
+
+  const consumer = `browser shared attachment consumer ${stamp} ${attachmentPath}`;
+  await createNote(page, '笔记', consumer, 'path=notes');
+  await invokeCardMenuAction(page, updatedOwner, 'TrashItem', 'notes.trashMany');
+  await permanentlyDeleteCard(page, updatedOwner, {
+    deleteOrphanAttachments: false,
+  });
+  assert(await authenticatedResourceStatus(page, attachmentPath) === 200,
+    'Deleting one card removed an attachment still referenced by another card.');
+
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  await invokeCardMenuAction(page, consumer, 'TrashItem', 'notes.trashMany');
+  await permanentlyDeleteCard(page, consumer, {
+    expectedOrphanAttachmentName: attachmentName,
+    deleteOrphanAttachments: true,
+  });
+  assert(await authenticatedResourceStatus(page, attachmentPath) === 404,
+    'Deleting the final referencing card did not remove its selected unused attachment.');
+}
+
+async function verifyTransactionalEditorAttachmentDeletion(page) {
+  const original = `browser transactional attachment ${stamp}`;
+  const withAttachment = `${original} (attached)`;
+  const withoutAttachment = `${withAttachment} (removed)`;
+  const attachmentName = `browser-transactional-attachment-${stamp}.txt`;
+  let uploadedFile;
+
+  await page.goto(listUrl('notes').toString(), { waitUntil: 'networkidle' });
+  await createNote(page, '笔记', original, 'path=notes');
+  await editNote(page, original, withAttachment, async () => {
+    uploadedFile = await attachFileToEditedNote(page, attachmentName);
+  });
+  const attachmentPath = uploadedFile?.filePath ?? uploadedFile?.path;
+  assert(
+    typeof attachmentPath === 'string' && attachmentPath.startsWith('/api/file/'),
+    'Transactional attachment fixture returned an invalid local path.',
+    uploadedFile,
+  );
+
+  const saveResponse = await editNote(page, withAttachment, withoutAttachment, async () => {
+    await removeAttachmentFromCurrentEditor(page);
+  });
+  const saveInput = trpcRequestJsonInput(saveResponse, 'notes.upsert');
+  assert(
+    saveInput?.deletedAttachmentPaths?.length === 1
+      && saveInput.deletedAttachmentPaths[0] === attachmentPath
+      && Array.isArray(saveInput.attachments)
+      && saveInput.attachments.length === 0,
+    'Editor did not submit local attachment deletion in the Note transaction.',
+    saveInput,
+  );
+  const updatedNote = await trpcResponseJson(saveResponse, 'notes.upsert');
+  assert(updatedNote?.attachments?.length === 0,
+    'Updated Note still returned the transactionally deleted local attachment.',
+    updatedNote?.attachments);
+  assert(await authenticatedResourceStatus(page, attachmentPath) === 404,
+    'Transactionally deleted local attachment remained readable.');
+
+  await invokeCardMenuAction(page, withoutAttachment, 'TrashItem', 'notes.trashMany');
+  await permanentlyDeleteCard(page, withoutAttachment, {
+    deleteOrphanAttachments: false,
+  });
+}
+
 async function restoreRecycledCards(page, contents) {
   await page.goto(listUrl('trash').toString(), { waitUntil: 'networkidle' });
   for (const content of contents) {
@@ -1179,6 +1543,41 @@ async function verifyBackupImport(page, archive) {
 
 function noteCard(page, content) {
   return page.locator('.blinkora-flip-card').filter({ hasText: content });
+}
+
+async function flipCard(page, card) {
+  await card.hover();
+  const cardElement = await card.elementHandle();
+  assert(cardElement, 'Card flip target was detached before interaction.');
+  const point = await card.evaluate(element => {
+    const interactiveSelector = [
+      '[data-drag-ignore="true"]',
+      'a',
+      'button',
+      'input',
+      'textarea',
+      'select',
+      '[contenteditable="true"]',
+      '[role="button"]',
+    ].join(',');
+    const rect = element.getBoundingClientRect();
+    const y = rect.top + Math.min(20, rect.height / 2);
+    for (let x = rect.right - 8; x >= rect.left + 8; x -= 8) {
+      const target = document.elementFromPoint(x, y);
+      if (target && element.contains(target) && !target.closest(interactiveSelector)) {
+        return { x, y };
+      }
+    }
+    return null;
+  });
+  assert(point, 'Card header did not expose a non-interactive flip target.');
+  await page.mouse.click(point.x, point.y);
+  await page.waitForTimeout(350);
+  await page.waitForFunction(
+    element => !element.querySelector('.blinkora-card-flip-out, .blinkora-card-flip-in'),
+    cardElement,
+    { timeout: 5_000 },
+  );
 }
 
 async function visibleElement(page, locator, description) {
@@ -1818,6 +2217,15 @@ const page = await desktop.newPage();
 const diagnostics = createDiagnostics(page, 'desktop');
 
 try {
+  if (scenario === 'attachment-transaction') {
+    const workspace = `browser attachment transaction workspace ${stamp}`;
+    await registerAndSignIn(page);
+    await createAndSelectWorkspace(page, workspace);
+    await verifyTransactionalEditorAttachmentDeletion(page);
+    assert(diagnostics.length === 0,
+      'Focused attachment transaction smoke reported an error response or console error.', diagnostics);
+    console.log('focused browser smoke passed: transactional editor attachment deletion');
+  } else {
   const blinkora = `browser UI blinkora ${stamp}`;
   const tagParent = `browser_smoke_tag_${stamp.replace(/[^a-zA-Z0-9]/g, '')}`;
   const tagChild = `${tagParent}_child`;
@@ -1875,6 +2283,12 @@ try {
     propertyFixture.note,
     propertyFixture.properties,
   );
+  propertyFixture.note = await verifyPropertyValidationAndClear(
+    page,
+    updatedNote,
+    propertyFixture.note,
+    propertyFixture.properties,
+  );
   await verifyTodoCompletion(page, updatedTodo);
   await verifyCardStateActions(page, updatedNote, updatedBlinkora);
   await verifyGlobalSearch(page, updatedBlinkora);
@@ -1903,6 +2317,8 @@ try {
   });
   await deleteResource(page, renamedAttachmentName);
   await switchWorkspace(page, '默认工作区', workspace);
+  await verifySharedAttachmentProtection(page);
+  await verifyTransactionalEditorAttachmentDeletion(page);
   const paginationBlinkoras = await createPaginationFixtures(page, {
     targetType: '闪念',
     path: '',
@@ -2074,7 +2490,8 @@ try {
   await verifyMobile(browser, diagnostics);
 
   assert(diagnostics.length === 0, 'Browser diagnostics reported an error response or console error.', diagnostics);
-  console.log('browser smoke passed: desktop/mobile login, daily review, workspace create/switch/rename/default/delete, single and multi-card Workspace move, three note types plus round-trip conversion, edit/history/tag-tree/attachment/reference/custom typed properties, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, date-range/tag+attachment/attachment/link/Todo-content/without-tag filters with reset and reload retention where supported, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource download/attachment/folder rename/nesting/move/sibling-delete protection and multi-select delete; no console errors or local 4xx/5xx');
+  console.log('browser smoke passed: desktop/mobile login, daily review, workspace create/switch/rename/default/delete, single and multi-card Workspace move, three note types plus round-trip conversion, edit/history/tag-tree/attachment/reference/custom typed properties, Todo complete/restore, pin/archive/recycle/restore, comment tree create/reply/edit/delete, date-range/tag+attachment/attachment/link/Todo-content/without-tag filters with reset and reload retention where supported, operation-log content filtering, local-font selection/reload/reset, Blinkora/Note/Todo/all/archive/trash pagination page-two reload/delete retention/out-of-range reset, Workspace Agent token guide, S3 form protection, workspace Markdown export/import plus full JSON export/import, global search, resource download/attachment/folder rename/nesting/move/sibling-delete protection, transactional editor attachment deletion, and multi-select delete; no console errors or local 4xx/5xx');
+  }
 } finally {
   await desktop.close();
   await browser.close();
