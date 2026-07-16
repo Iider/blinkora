@@ -34,12 +34,17 @@ const credentials = {
 };
 const customPath = normalizeCustomPath(process.env.BLINKORA_S3_BROWSER_CUSTOM_PATH);
 const stamp = `${Date.now()}-${randomUUID().slice(0, 8)}`;
-const noteContent = `S3 browser image lifecycle ${stamp}`;
-const imageName = `s3-browser-${stamp}.png`;
 const imageBytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
   'base64',
 );
+
+function imageFixture(kind) {
+  return {
+    content: `S3 browser ${kind} ${stamp}`,
+    imageName: `s3-browser-${kind}-${stamp}.png`,
+  };
+}
 
 function fail(message, details) {
   console.error(`\nFAIL: ${message}`);
@@ -302,14 +307,14 @@ async function selectNoteType(page, targetType) {
   }
 }
 
-async function createImageNote(page) {
+async function createImageNote(page, fixture) {
   await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
   await waitForApp(page);
   await selectNoteType(page, '笔记');
 
   const editor = page.locator('#vditor-create .vditor-ir [contenteditable="true"]:visible');
   await editor.click();
-  await page.keyboard.insertText(noteContent);
+  await page.keyboard.insertText(fixture.content);
 
   const imageRead = page.waitForResponse(response => {
     const url = new URL(response.url());
@@ -322,7 +327,7 @@ async function createImageNote(page) {
       && new URL(response.url()).pathname === '/api/file/upload'
   ), { timeout: 60_000 });
   await page.locator('#global-editor input[type="file"]').first().setInputFiles({
-    name: imageName,
+    name: fixture.imageName,
     mimeType: 'image/png',
     buffer: imageBytes,
   });
@@ -358,13 +363,13 @@ async function createImageNote(page) {
     { noteId: note?.id, attachmentCount: note?.attachments?.length },
   );
 
-  const card = page.locator('.blinkora-flip-card').filter({ hasText: noteContent });
+  const card = page.locator('.blinkora-flip-card').filter({ hasText: fixture.content });
   await card.waitFor({ state: 'visible', timeout: 10_000 });
   const preview = card.locator('img').first();
   await waitForImageReady(preview, 'S3 image card preview');
   assert(!(await preview.getAttribute('src'))?.includes('image-fallback.svg'),
     'S3 image card rendered the fallback image.');
-  return { note, upload };
+  return { ...fixture, note, upload };
 }
 
 async function waitForImageReady(image, description) {
@@ -411,12 +416,171 @@ async function verifyUploadedBytes(page, path) {
     'Authenticated S3 image bytes changed after upload.');
 }
 
-function noteCard(page) {
-  return page.locator('.blinkora-flip-card').filter({ hasText: noteContent });
+async function resourceStatus(page, path) {
+  const response = await page.request.get(new URL(path, base).toString(), {
+    headers: await browserAuthHeaders(page),
+    failOnStatusCode: false,
+  });
+  return response.status();
 }
 
-async function deleteImageFromEditor(page, upload) {
-  const card = noteCard(page);
+async function createTextNote(page, content) {
+  await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
+  await waitForApp(page);
+  await selectNoteType(page, '笔记');
+
+  const editor = page.locator('#vditor-create .vditor-ir [contenteditable="true"]:visible');
+  await editor.click();
+  await page.keyboard.insertText(content);
+  const saved = waitForTrpcMutation(page, 'notes.upsert');
+  await page.locator('#global-editor div[class*="w-[60px]"]').click();
+  const response = await saved;
+  assert(response.ok(), 'Saving the S3 shared-resource consumer Note failed.', {
+    status: response.status(),
+  });
+  const note = await trpcResponseJson(response, 'notes.upsert');
+  assert(Number.isInteger(note?.id), 'S3 shared-resource consumer Note omitted its id.', note);
+  await noteCard(page, content).waitFor({ state: 'visible', timeout: 10_000 });
+  return note;
+}
+
+async function openCardMenu(page, content) {
+  const card = noteCard(page, content);
+  await card.waitFor({ state: 'visible', timeout: 10_000 });
+  await card.hover();
+  await card.getByRole('button', { name: '更多信息', exact: true }).click();
+  return card;
+}
+
+async function trashCard(page, content) {
+  await page.goto(new URL('/?path=notes', base).toString(), { waitUntil: 'networkidle' });
+  const card = await openCardMenu(page, content);
+  const action = page.locator('[data-key="TrashItem"]').last();
+  await action.waitFor({ state: 'visible', timeout: 10_000 });
+  const trashed = waitForTrpcMutation(page, 'notes.trashMany');
+  await action.click();
+  const response = await trashed;
+  assert(response.ok(), 'Moving an S3 deletion fixture to trash failed.', {
+    status: response.status(),
+  });
+  await card.waitFor({ state: 'hidden', timeout: 10_000 });
+}
+
+async function permanentlyDeleteCard(page, content, {
+  expectedOrphanAttachmentName,
+  deleteOrphanAttachments,
+}) {
+  await page.goto(new URL('/?path=trash', base).toString(), { waitUntil: 'networkidle' });
+  const card = await openCardMenu(page, content);
+  const deleteItem = page.locator('[data-key="DeleteItem"]').last();
+  await deleteItem.waitFor({ state: 'visible', timeout: 10_000 });
+
+  const impactRequested = waitForTrpcMutation(page, 'notes.deleteImpact');
+  await deleteItem.click();
+  const impactResponse = await impactRequested;
+  assert(impactResponse.ok(), 'S3 card delete-impact request failed.', {
+    status: impactResponse.status(),
+  });
+  const impact = await trpcResponseJson(impactResponse, 'notes.deleteImpact');
+  const orphanAttachments = impact?.orphanAttachments ?? [];
+  if (expectedOrphanAttachmentName) {
+    assert(
+      orphanAttachments.some(attachment => attachment.name === expectedOrphanAttachmentName),
+      'S3 card delete impact omitted the expected orphan attachment.',
+      orphanAttachments,
+    );
+  } else {
+    assert(orphanAttachments.length === 0,
+      'S3 card delete impact misclassified a shared attachment as orphaned.', orphanAttachments);
+  }
+
+  const dialog = page.getByRole('dialog').filter({ hasText: '此操作会彻底删除卡片' }).last();
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  const deleted = waitForTrpcMutation(page, 'notes.deleteMany', 60_000);
+  if (expectedOrphanAttachmentName) {
+    await dialog.getByText(expectedOrphanAttachmentName, { exact: true })
+      .waitFor({ state: 'visible', timeout: 10_000 });
+    const actionName = deleteOrphanAttachments ? '连同资源删除' : '仅删除卡片';
+    await dialog.getByRole('button', { name: actionName, exact: true }).click();
+  } else {
+    assert(await dialog.getByRole('button', { name: '连同资源删除', exact: true }).count() === 0,
+      'Shared S3 attachment unexpectedly exposed the destructive resource-delete choice.');
+    await dialog.getByRole('button', { name: '确认', exact: true }).click();
+  }
+
+  const deleteResponse = await deleted;
+  assert(deleteResponse.ok(), 'Permanent S3 card deletion failed.', {
+    status: deleteResponse.status(),
+  });
+  const requestInput = trpcRequestJsonInput(deleteResponse, 'notes.deleteMany');
+  assert(requestInput?.deleteOrphanAttachments === deleteOrphanAttachments,
+    'Permanent S3 card deletion submitted the wrong resource choice.', requestInput);
+  await card.waitFor({ state: 'hidden', timeout: 10_000 });
+}
+
+async function cleanupRetainedObject(page, path) {
+  const response = await page.request.post(new URL('/api/file/delete', base).toString(), {
+    headers: { ...await browserAuthHeaders(page), 'content-type': 'application/json' },
+    data: { attachment_path: path },
+    failOnStatusCode: false,
+  });
+  assert(response.ok(), 'Cleaning the intentionally retained S3 smoke object failed.', {
+    status: response.status(),
+  });
+  assert(await resourceStatus(page, path) === 404,
+    'The intentionally retained S3 smoke object remained after explicit cleanup.');
+}
+
+async function verifyPermanentCardDeletionChoices(page, uploadedPaths) {
+  const onlyCard = await createImageNote(page, imageFixture('delete-card-only'));
+  uploadedPaths.add(onlyCard.upload.path);
+  await trashCard(page, onlyCard.content);
+  await permanentlyDeleteCard(page, onlyCard.content, {
+    expectedOrphanAttachmentName: onlyCard.imageName,
+    deleteOrphanAttachments: false,
+  });
+  assert(await resourceStatus(page, onlyCard.upload.path) === 200,
+    'Choosing card-only deletion removed the retained S3 object.');
+
+  const deleteResource = await createImageNote(page, imageFixture('delete-with-resource'));
+  uploadedPaths.add(deleteResource.upload.path);
+  await trashCard(page, deleteResource.content);
+  await permanentlyDeleteCard(page, deleteResource.content, {
+    expectedOrphanAttachmentName: deleteResource.imageName,
+    deleteOrphanAttachments: true,
+  });
+  assert(await resourceStatus(page, deleteResource.upload.path) === 404,
+    'Choosing resource deletion left the orphan S3 object readable.');
+
+  const sharedOwner = await createImageNote(page, imageFixture('shared-owner'));
+  uploadedPaths.add(sharedOwner.upload.path);
+  const sharedConsumerContent = `S3 browser shared consumer ${stamp} ${sharedOwner.upload.path}`;
+  await createTextNote(page, sharedConsumerContent);
+
+  await trashCard(page, sharedOwner.content);
+  await permanentlyDeleteCard(page, sharedOwner.content, {
+    deleteOrphanAttachments: false,
+  });
+  assert(await resourceStatus(page, sharedOwner.upload.path) === 200,
+    'Deleting one sharing card removed an S3 object still referenced by another card.');
+
+  await trashCard(page, sharedConsumerContent);
+  await permanentlyDeleteCard(page, sharedConsumerContent, {
+    expectedOrphanAttachmentName: sharedOwner.imageName,
+    deleteOrphanAttachments: true,
+  });
+  assert(await resourceStatus(page, sharedOwner.upload.path) === 404,
+    'Deleting the final sharing card left its selected orphan S3 object readable.');
+
+  await cleanupRetainedObject(page, onlyCard.upload.path);
+}
+
+function noteCard(page, content) {
+  return page.locator('.blinkora-flip-card').filter({ hasText: content });
+}
+
+async function deleteImageFromEditor(page, fixture) {
+  const card = noteCard(page, fixture.content);
   await card.waitFor({ state: 'visible', timeout: 10_000 });
   await card.click({ position: { x: 200, y: 80 } });
   const edit = page.getByRole('button', { name: '编辑', exact: true });
@@ -458,7 +622,7 @@ async function deleteImageFromEditor(page, upload) {
   const saveInput = trpcRequestJsonInput(saveResponse, 'notes.upsert');
   assert(
     saveInput?.deletedAttachmentPaths?.length === 1
-      && saveInput.deletedAttachmentPaths[0] === upload.path
+      && saveInput.deletedAttachmentPaths[0] === fixture.upload.path
       && Array.isArray(saveInput.attachments)
       && saveInput.attachments.length === 0,
     'Editor did not submit the S3 deletion as part of the Note transaction.',
@@ -468,7 +632,7 @@ async function deleteImageFromEditor(page, upload) {
   assert(updatedNote?.attachments?.length === 0,
     'Saved Note still returned the deleted S3 attachment.', updatedNote?.attachments);
 
-  const resource = await page.request.get(new URL(upload.path, base).toString(), {
+  const resource = await page.request.get(new URL(fixture.upload.path, base).toString(), {
     headers: await browserAuthHeaders(page),
     failOnStatusCode: false,
   });
@@ -494,10 +658,10 @@ async function switchBackToLocal(page) {
     .waitFor({ state: 'visible', timeout: 10_000 });
 }
 
-async function bestEffortCleanup(page, uploadedPath) {
+async function bestEffortCleanup(page, uploadedPaths) {
   try {
     const headers = await browserAuthHeaders(page);
-    if (uploadedPath) {
+    for (const uploadedPath of uploadedPaths) {
       await page.request.post(new URL('/api/file/delete', base).toString(), {
         headers: { ...headers, 'content-type': 'application/json' },
         data: { attachment_path: uploadedPath },
@@ -526,7 +690,7 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 const diagnostics = createDiagnostics(page);
-let uploadedPath = '';
+const uploadedPaths = new Set();
 let completed = false;
 
 try {
@@ -535,21 +699,23 @@ try {
   page.__s3SmokePhase = 'settings-validation';
   await verifyS3ConfigurationFlow(page);
   page.__s3SmokePhase = 'image-create';
-  const fixture = await createImageNote(page);
-  uploadedPath = fixture.upload.path;
+  const fixture = await createImageNote(page, imageFixture('editor-lifecycle'));
+  uploadedPaths.add(fixture.upload.path);
   page.__s3SmokePhase = 'image-read';
-  await verifyUploadedBytes(page, uploadedPath);
+  await verifyUploadedBytes(page, fixture.upload.path);
   page.__s3SmokePhase = 'image-editor-delete';
-  await deleteImageFromEditor(page, fixture.upload);
+  await deleteImageFromEditor(page, fixture);
+  page.__s3SmokePhase = 'card-deletion-choices';
+  await verifyPermanentCardDeletionChoices(page, uploadedPaths);
   page.__s3SmokePhase = 'local-restore';
   await switchBackToLocal(page);
   assert(diagnostics.length === 0,
     'S3 browser smoke observed console, page, or unexpected local HTTP errors.', diagnostics);
   completed = true;
-  console.log('S3 browser smoke passed: settings validation/fallback, isolated PNG upload and preview, byte-identical read, transactional editor deletion, and local-storage restore');
+  console.log('S3 browser smoke passed: settings validation/fallback, isolated PNG upload and preview, byte-identical read, transactional editor deletion, permanent card-only/resource/shared deletion choices, and local-storage restore');
 } finally {
   if (!completed) {
-    await bestEffortCleanup(page, uploadedPath);
+    await bestEffortCleanup(page, uploadedPaths);
   }
   await context.close();
   await browser.close();
