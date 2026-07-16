@@ -154,12 +154,7 @@ export const StorageSetting = observer(() => {
         />}
         <Item
           leftContent={<>{t('s3-endpoint')}</>}
-          rightContent={<Input value={store.s3Endpoint} onChange={e => store.s3Endpoint = e.target.value} placeholder={t('s3-endpoint')} onBlur={async (e) => {
-            await PromiseCall(api.config.update.mutate({
-              key: 's3Endpoint',
-              value: e.target.value
-            }), { autoAlert: false })
-          }} />} />
+          rightContent={<Input name="s3Endpoint" value={store.s3Endpoint} onChange={e => store.s3Endpoint = e.target.value} placeholder={t('s3-endpoint')} />} />
         <Item
           leftContent={<>{t('s3-access-key')}</>}
           rightContent={<PasswordInput
@@ -168,12 +163,7 @@ export const StorageSetting = observer(() => {
             value={store.s3AccessKeyId}
             onChange={e => store.s3AccessKeyId = e.target.value}
             placeholder={t('s3-access-key')}
-            onBlur={async (e) => {
-              await PromiseCall(api.config.update.mutate({
-                key: 's3AccessKeyId',
-                value: e.target.value
-              }), { autoAlert: false })
-            }} />} />
+          />} />
         <Item
           leftContent={<>{t('s3-secret-key')}</>}
           rightContent={<PasswordInput
@@ -182,42 +172,23 @@ export const StorageSetting = observer(() => {
             value={store.s3AccessKeySecret}
             onChange={e => store.s3AccessKeySecret = e.target.value}
             placeholder={t('s3-secret-key')}
-            onBlur={async (e) => {
-              await PromiseCall(api.config.update.mutate({
-                key: 's3AccessKeySecret',
-                value: e.target.value
-              }), { autoAlert: false })
-            }} />} />
+          />} />
         <Item
           leftContent={<>{t('s3-bucket')}</>}
-          rightContent={<Input value={store.s3Bucket} onChange={e => store.s3Bucket = e.target.value} placeholder={t('s3-bucket')} onBlur={async (e) => {
-            await PromiseCall(api.config.update.mutate({
-              key: 's3Bucket',
-              value: e.target.value
-            }), { autoAlert: false })
-          }} />} />
+          rightContent={<Input name="s3Bucket" value={store.s3Bucket} onChange={e => store.s3Bucket = e.target.value} placeholder={t('s3-bucket')} />} />
         <Item
           leftContent={<>{t('s3-region-id')}</>}
-          rightContent={<Input value={store.s3Region} onChange={e => store.s3Region = e.target.value} placeholder={t('s3-region-id')} onBlur={async (e) => {
-            await PromiseCall(api.config.update.mutate({
-              key: 's3Region',
-              value: e.target.value
-            }), { autoAlert: false })
-          }} />} />
+          rightContent={<Input name="s3Region" value={store.s3Region} onChange={e => store.s3Region = e.target.value} placeholder={t('s3-region-id')} />} />
         <Item
           leftContent={<>
             <div>{t('s3-custom-path')}</div>
           </>}
           rightContent={<Input
+            name="s3CustomPath"
             value={store.s3CustomPath}
             onChange={e => store.s3CustomPath = e.target.value}
             placeholder={t('s3-custom-path')}
-            onBlur={async (e) => {
-              await PromiseCall(api.config.update.mutate({
-                key: 's3CustomPath',
-                value: e.target.value
-              }), { autoAlert: false })
-            }} />} />
+          />} />
         <Item
           type="col"
           leftContent={<>{t('s3-configuration-note')}</>}

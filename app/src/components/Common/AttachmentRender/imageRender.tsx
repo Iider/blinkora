@@ -25,40 +25,60 @@ export const ImageThumbnailRender = ({ src, className }: { src: string, classNam
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
     let objectUrl = '';
 
     const fetchImage = async () => {
       setLoading(true);
+      setIsOriginalError(false);
+
+      // Blob and data previews must stay exact; a query suffix invalidates them.
+      if (src.startsWith('blob:') || src.startsWith('data:')) {
+        setCurrentSrc(src);
+        setLoading(false);
+        return;
+      }
+
       try {
-        // Try to get thumbnail first
-        const response = await axiosInstance.get(getBlinkoraEndpoint(`${src}?thumbnail=true`), {
+        const separator = src.includes('?') ? '&' : '?';
+        const response = await axiosInstance.get(getBlinkoraEndpoint(`${src}${separator}thumbnail=true`), {
           responseType: 'blob'
         });
 
         objectUrl = URL.createObjectURL(response.data);
+        if (cancelled) {
+          URL.revokeObjectURL(objectUrl);
+          objectUrl = '';
+          return;
+        }
         setCurrentSrc(objectUrl);
-      } catch (error) {
+      } catch {
+        if (cancelled) return;
         try {
-          // If thumbnail fails, try original image
-          const response = await axiosInstance.get(src, {
+          const response = await axiosInstance.get(getBlinkoraEndpoint(src), {
             responseType: 'blob'
           });
 
           objectUrl = URL.createObjectURL(response.data);
+          if (cancelled) {
+            URL.revokeObjectURL(objectUrl);
+            objectUrl = '';
+            return;
+          }
           setCurrentSrc(objectUrl);
-        } catch (error) {
-          // If both fail, use fallback
+        } catch {
+          if (cancelled) return;
           setIsOriginalError(true);
         }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     fetchImage();
 
-    // Clean up created object URLs when component unmounts
     return () => {
+      cancelled = true;
       if (objectUrl) {
         URL.revokeObjectURL(objectUrl);
       }

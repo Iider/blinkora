@@ -25,10 +25,6 @@ export default function Component() {
   const navigate = useNavigate();
   const blinkora = RootStore.Get(BlinkoraStore);
 
-  useEffect(() => {
-    blinkora.config.call();
-  }, []);
-
   const SignIn = new PromiseState({
     function: async () => {
       try {

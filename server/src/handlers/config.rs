@@ -34,9 +34,21 @@ fn list(ctx: ProcedureContext, _input: Value) -> ProcedureFuture {
             .fetch_all(ctx.state.pool())
             .await?
         } else {
-            sqlx::query(r#"SELECT key, config, "userId" FROM config WHERE "userId" IS NULL"#)
-                .fetch_all(ctx.state.pool())
-                .await?
+            sqlx::query(
+                r#"SELECT key, config, "userId", "workspaceId" FROM config
+                   WHERE "userId" IS NULL
+                     AND key IN (
+                       'customTitle',
+                       'customBackgroundUrl',
+                       'isCloseBackgroundAnimation',
+                       'signinFooterEnabled',
+                       'signinFooterText',
+                       'themeColor',
+                       'themeForegroundColor'
+                     )"#,
+            )
+            .fetch_all(ctx.state.pool())
+            .await?
         };
         let mut out = serde_json::Map::new();
         for row in rows {
@@ -437,9 +449,30 @@ async fn save_s3_values(
 
 #[cfg(test)]
 mod tests {
-    use super::save_s3_values;
+    use super::{list, save_s3_values};
     use crate::handlers::test_support::HandlerTestFixture;
-    use serde_json::json;
+    use serde_json::{json, Value};
+
+    #[tokio::test]
+    async fn public_config_list_returns_only_display_settings() {
+        let fixture = HandlerTestFixture::new("public-config-list").await;
+        sqlx::query(r#"INSERT INTO config (key, config) VALUES ($1, $2), ($3, $4)"#)
+            .bind("customTitle")
+            .bind(json!("Public Blinkora"))
+            .bind("s3AccessKeySecret")
+            .bind(json!("must-not-leak"))
+            .execute(&fixture.pool)
+            .await
+            .unwrap();
+
+        let mut public_ctx = fixture.ctx.clone();
+        public_ctx.user = None;
+        let output = list(public_ctx, Value::Null).await.unwrap();
+
+        assert_eq!(output.get("customTitle"), Some(&json!("Public Blinkora")));
+        assert!(output.get("s3AccessKeySecret").is_none());
+        fixture.cleanup().await;
+    }
 
     #[tokio::test]
     async fn s3_configuration_is_saved_as_one_transaction() {
