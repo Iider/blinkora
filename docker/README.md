@@ -39,6 +39,24 @@ openssl rand -hex 32
 
 把生成的随机值写入 `BLINKORA_SECRET`。
 
+## 更新
+
+代码或前端资源变更后，先在项目根目录重新生成 release，再重建并启动镜像：
+
+```bash
+bun run build:rust-release
+cd docker
+docker compose up -d --build
+```
+
+本机缺少 Linux Rust 交叉编译环境时，使用 Docker builder 生成 release：
+
+```bash
+BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
+```
+
+部署完成后使用 `docker compose ps` 和 `docker compose logs --tail=80 web` 检查服务状态。
+
 ## 数据目录
 
 | 路径 | 容器路径 | 用途 |

@@ -1,8 +1,10 @@
 # Blinkora
 
-Blinkora 是一个 Docker-first 的 Web-only 私人笔记和记忆底座，聚焦长期笔记、wiki 式记忆、标签、附件、引用、回顾、搜索、导出和私有批注。
+[English](README.md) | 简体中文
 
-Blinkora 由 Rust 后端直接托管浏览器应用。默认部署只运行一个 Docker Web 容器；个人 macOS 也可以不使用 Docker，直接运行同一个 Rust 服务。SQLite 和附件统一保存在 `DATA_DIR`。原生客户端、离线安装/运行时壳、公开分享、社交功能和对话式 AI 功能都不在当前产品范围内。
+Blinkora 是一个 Docker-first、Web-only 的私人笔记和记忆底座，聚焦长期笔记、wiki 式知识、标签、附件、引用、每日回顾、操作日志、搜索、导出和私有批注。
+
+Rust 后端通过单个二进制提供浏览器应用、API、健康检查、SQLite 首次初始化和内置前端资源。SQLite 与附件统一保存在 `DATA_DIR`。原生客户端、公开分享、社交功能，以及内置的对话式 AI、RAG、embedding、向量或语义检索运行时不在当前产品范围内。
 
 ## 运行栈
 
@@ -11,89 +13,87 @@ Blinkora 由 Rust 后端直接托管浏览器应用。默认部署只运行一�
 | Web 前端 | `app/` | React/Vite 前端 |
 | Rust 后端 | `server/` | 唯一维护的服务端 |
 | 数据库结构 | `db/schema.sqlite.sql` | 构建时内置的 SQLite schema |
-| 共享代码 | `shared/` | 前端和 Rust API 兼容的共享类型/工具 |
-| Docker 部署 | `docker/` | 默认部署入口 |
+| 共享代码 | `shared/` | 前端友好的共享类型和工具 |
+| Docker 部署 | `docker/` | 默认单容器部署入口 |
 
-Rust 后端以单二进制承接 REST API、tRPC 兼容入口、文件接口、MCP SSE、健康检查、首启建表和 React/Vite 静态资源托管。
+## 环境要求
 
-当前搜索只提供关键词、metadata、类型、标签、附件、链接、TODO 和日期筛选；不内置 RAG、embedding、向量检索或语义检索。Workspace Agent/MCP 令牌只是给外部 Agent 的授权读写入口，不等同于 RAG 索引。
+- Bun 1.2.8 或更高版本
+- Node.js 20 或更高版本，用于验收和烟测脚本
+- Docker 与 Compose，用于 Docker 部署和 Docker 兜底的 Linux 构建
+- Rust toolchain，用于服务端本机开发和 macOS 本机部署
 
-## Docker 部署
+## 快速开始
 
-在开发机或 CI 生成 release 产物：
+### Docker
+
+Docker 是默认部署方式：
 
 ```bash
 bun install
 bun run build:rust-release
-```
-
-启动 Rust runtime：
-
-```bash
 cd docker
 docker compose up -d
 ```
 
-本机默认入口是 [http://localhost:6676](http://localhost:6676)。公网或正式部署时复制 `docker/.env.tmpl` 为 `docker/.env`，替换 `BLINKORA_SECRET`。
+访问 [http://localhost:6676](http://localhost:6676)。正式环境密钥、重新构建、存储目录和烟测说明见 [Docker 部署](docker/README.md)。
 
-`bun run build:rust-release` 会同步生成 `docker/release/rust` 部署副本。部署服务器拿到 `docker/` 和其中的 `release/rust` 后，只需要 Docker。
+### Linux 无头服务器
 
-## Linux 无头单二进制部署
-
-Linux 服务器使用一个内置前端静态资源与 SQLite schema 的 x86_64 静态二进制：
+构建内置前端与 SQLite schema 的 x86_64 Linux 静态二进制：
 
 ```bash
 BLINKORA_RUST_DOCKER_BUILD=1 bun run build:linux-headless
 ```
 
-发布物不依赖 Docker、Bun、Node.js、Rust、SQLite CLI、GUI 或 FUSE。通过 systemd 运行，数据与密钥放在二进制外的持久目录；详见 [Linux 无头单二进制部署](docs/LINUX_HEADLESS_DEPLOYMENT.md)。
+目标服务器不需要 Docker、Bun、Node.js、Rust、SQLite CLI、GUI 或 FUSE。使用 systemd 或其他进程守护程序运行，配置与数据保存在二进制外。安装、升级和回退见 [Linux 无头单二进制部署](docs/LINUX_HEADLESS_DEPLOYMENT.md)。
 
-## macOS 本机持久化部署
+### macOS
 
-macOS 本机模式不需要 Docker：
+不使用 Docker，将 Rust 服务安装为 `launchd` 常驻任务：
 
 ```bash
 bun run deploy:local install
 ```
 
-脚本会构建 macOS 本机 Rust 服务，并安装 `launchd` 常驻服务。完整说明见 [本机持久化部署](docs/LOCAL_PERSISTENT_DEPLOYMENT.md)。
+日常检查使用 `bun run deploy:local status` 和 `bun run deploy:local logs`。前置条件、更新、备份与恢复见 [macOS 本机持久化部署](docs/LOCAL_PERSISTENT_DEPLOYMENT.md)。
 
-常用检查：
-
-```bash
-bun run deploy:local status
-bun run deploy:local logs
-```
-
-访问地址仍是 [http://localhost:6676](http://localhost:6676)。
-
-## 开发命令
+## 本地开发
 
 ```bash
 bun install
 bun run dev:rust
 bun run dev:frontend
+```
+
+前端默认运行在 `http://localhost:5173`，并把 API 请求代理到 `http://127.0.0.1:6677` 的 Rust 后端。可通过 `BLINKORA_DEV_FRONTEND_PORT` 和 `BLINKORA_DEV_BACKEND_URL` 覆盖。
+
+常用检查：
+
+```bash
 bun run typecheck
 bun run build:web --force
-bun run build:rust-release
 bun run verify:rust
 ```
 
-前端开发服务默认使用 `http://localhost:5173`，并把 API 请求代理到 Rust 开发后端 `http://127.0.0.1:6677`。可通过 `BLINKORA_DEV_FRONTEND_PORT` 或 `BLINKORA_DEV_BACKEND_URL` 覆盖。
+服务端开发和数据库初始化细节见 [Rust 服务端](server/README.md)。
 
-## 数据目录
+## 数据与存储
 
-- SQLite、附件和应用数据：`docker/data/blinkora`
-- 备份/导出目录：`docker/data/backup`
+| 部署方式 | 持久化数据目录 |
+| --- | --- |
+| Docker | `docker/data/blinkora` |
+| macOS 本机服务 | `~/.blinkora/local/data` |
+| Linux 无头服务器 | 部署者指定的 `DATA_DIR` |
 
-macOS 本机持久化部署的数据目录为 `~/.blinkora/local/data`。
+附件默认使用本地文件系统。超级管理员可以在设置页启用 S3 兼容存储，系统只有在上传、读取和删除校验都成功后才会切换。调整 schema、存储或部署方式前，应一起备份 SQLite、附件和导出文件。Workspace 删除与附件清理规则见 [Workspace 数据生命周期](docs/WORKSPACE_DATA_LIFECYCLE.md)。
 
-## 存储配置
+## Workspace Agent 接入
 
-默认使用本地文件系统，附件保存在 `docker/data/blinkora/files`。也可以在设置页切换到 S3 兼容对象存储，适用于阿里云 OSS、腾讯 COS 等兼容 S3 API 的服务。
+设置 → 基本信息中创建的工作区令牌，只授权外部 Agent 通过 MCP 和白名单 API 访问一个 Workspace。它不是账号令牌，也不能访问其他 Workspace。数据库备份可能包含令牌材料，需要按敏感数据保护；不要把令牌写进源码、skill、脚本、文档或 Git 历史。
 
-S3 配置项是全局配置，只有超级管理员可以修改。需要填写端点、访问密钥 ID、访问密钥、桶和地区；自定义路径可选，例如 `blinkora/`。自定义路径为空时，文件直接写入桶根目录。
+令牌权限、MCP 配置、skill 下载、操作日志和烟测方式见 [Workspace Agent 接入](docs/WORKSPACE_AGENT_ACCESS.md)。
 
-点击“保存并验证”后，Blinkora 会临时上传、读取并删除一个校验文件。验证通过才启用 S3；验证失败时实际存储保持本地，但 S3 表单会继续显示，方便直接修正配置。
+## 文档
 
-任何 schema 或存储改动前，都要保持导出和备份路径可用。
+通过[文档索引](docs/README.md)查找部署手册、产品行为约定、迁移记录和测试清单。
