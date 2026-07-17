@@ -108,6 +108,9 @@ async fn stage_attachment_deletion(
             .await?
             .ok_or_else(|| anyhow!("S3 config not found"))?;
         let key = s3_key_from_api_path(api_path).ok_or_else(|| anyhow!("Invalid S3 path"))?;
+        if !s3::object_exists(&config, &key).await? {
+            return Ok(StagedAttachmentDeletion { location: None });
+        }
         let staged_key = format!(
             "{}.__blinkora-trash/{}",
             config.custom_path,
@@ -794,6 +797,33 @@ fn validate_s3_key(key: &str) -> Option<&str> {
 mod tests {
     use super::*;
     use crate::handlers::test_support::HandlerTestFixture;
+    use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    async fn configure_test_s3(fixture: &HandlerTestFixture, endpoint: &str) {
+        let values = [
+            ("objectStorage", json!("s3")),
+            ("s3Endpoint", json!(endpoint)),
+            ("s3Region", json!("test-region")),
+            ("s3Bucket", json!("test-bucket")),
+            ("s3AccessKeyId", json!("test-key")),
+            ("s3AccessKeySecret", json!("test-secret")),
+            ("s3CustomPath", json!("")),
+            ("s3ForcePathStyle", json!(true)),
+        ];
+        for (key, value) in values {
+            sqlx::query(r#"INSERT INTO config (key, config) VALUES ($1, $2)"#)
+                .bind(key)
+                .bind(crate::util::config_json(value))
+                .execute(&fixture.pool)
+                .await
+                .unwrap();
+        }
+    }
 
     async fn seed_attachment(fixture: &HandlerTestFixture, api_path: &str) -> i32 {
         let name = api_path.rsplit('/').next().unwrap();
@@ -854,6 +884,46 @@ mod tests {
             .unwrap();
         finalize_attachment_deletions(staged).await.unwrap();
         assert!(!fs::try_exists(&file_path).await.unwrap());
+        fixture.cleanup().await;
+    }
+
+    #[tokio::test]
+    async fn missing_s3_attachment_is_treated_as_already_deleted() {
+        let fixture = HandlerTestFixture::new("missing-s3-attachment-delete").await;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let (request_tx, request_rx) = mpsc::channel();
+        let responder = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let count = stream.read(&mut request).unwrap();
+            request_tx
+                .send(String::from_utf8_lossy(&request[..count]).into_owned())
+                .unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+        });
+        configure_test_s3(&fixture, &endpoint).await;
+
+        let staged = stage_attachment_deletions(
+            &fixture.ctx,
+            &["/api/s3file/missing-image.jpg".to_string()],
+        )
+        .await
+        .expect("a missing S3 object must not block attachment cleanup");
+
+        assert!(matches!(
+            staged.as_slice(),
+            [StagedAttachmentDeletion { location: None }]
+        ));
+        assert!(request_rx
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .starts_with("HEAD /test-bucket/missing-image.jpg "));
+        responder.join().unwrap();
         fixture.cleanup().await;
     }
 
