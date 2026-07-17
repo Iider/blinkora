@@ -16,7 +16,7 @@ bun run dev:rust
 bun run build:linux-headless
 ```
 
-产物为 `release/linux/blinkora-server-<version>-linux-x86_64` 和同名 SHA-256 文件。目标服务器直接运行该静态二进制，不需要 Bun、Node.js、Rust、SQLite CLI 或容器运行时。
+产物包括单独的 `blinkora-server-<version>-linux-x86_64`、可直接转交给用户或 Agent 的 `.tar.gz` 部署包，以及各自的 SHA-256 文件。分享包内置安装说明、校验清单和 systemd 安装器。目标服务器直接运行静态二进制，不需要 Bun、Node.js、Rust、SQLite CLI 或容器运行时。
 
 本机缺少 Linux musl 交叉编译环境时，构建脚本会尝试 Docker builder；也可以显式设置 `BLINKORA_RUST_DOCKER_BUILD=1`。该 builder 只存在于构建机，定义在 `docker/rust-builder.Dockerfile`，不生成运行时镜像。
 

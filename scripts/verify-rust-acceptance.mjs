@@ -25,6 +25,7 @@ run('local S3 smoke script syntax', 'bash', ['-n', 'scripts/s3-smoke-local.sh'])
 run('M2 read-only clone smoke script syntax', 'bash', ['-n', 'scripts/m2-readonly-clone-smoke.sh']);
 run('M2 final cutover script syntax', 'bash', ['-n', 'scripts/m2-final-cutover.sh']);
 run('M2 cutover rollback guardrails', 'bash', ['scripts/verify-m2-cutover-guardrails.sh']);
+run('Linux share package guardrails', 'bash', ['scripts/verify-linux-share-package.sh']);
 run('local deployment environment cleanup', 'bash', ['scripts/verify-local-persistent-env-cleanup.sh']);
 run('SQLite runtime residuals', 'node', ['scripts/verify-sqlite-runtime-residuals.mjs']);
 run('FNAS systemd unit template', 'node', ['scripts/verify-fnas-systemd-unit.mjs']);

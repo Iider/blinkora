@@ -16,7 +16,7 @@
     "typecheck": "bun run typecheck:web && bun run typecheck:shared",
     "typecheck:web": "bun run --cwd app typecheck",
     "typecheck:shared": "tsc --noEmit -p shared/tsconfig.json --pretty false",
-    "test": "node --check scripts/rust-smoke.mjs && node --check scripts/workspace-agent-smoke.mjs && node --check scripts/sqlite-two-factor-smoke.mjs && node --check scripts/browser-smoke.mjs && node --check scripts/s3-browser-smoke.mjs && node --check scripts/verify-fnas-sqlite-systemd-unit.mjs && bash -n scripts/build-linux-headless.sh && bash -n scripts/browser-smoke-local.sh && bash -n scripts/s3-smoke-local.sh && bash -n scripts/m2-readonly-clone-smoke.sh && bash -n scripts/m2-final-cutover.sh",
+    "test": "node --check scripts/rust-smoke.mjs && node --check scripts/workspace-agent-smoke.mjs && node --check scripts/sqlite-two-factor-smoke.mjs && node --check scripts/browser-smoke.mjs && node --check scripts/s3-browser-smoke.mjs && node --check scripts/verify-fnas-sqlite-systemd-unit.mjs && bash -n scripts/build-linux-headless.sh && bash -n scripts/package-linux-share.sh && bash -n deploy/linux-package/install.sh && bash -n scripts/browser-smoke-local.sh && bash -n scripts/s3-smoke-local.sh && bash -n scripts/m2-readonly-clone-smoke.sh && bash -n scripts/m2-final-cutover.sh",
     "test:rust": "bun run verify:rust",
     "test:all": "bun run test && bun run test:rust",
     "clean": "turbo run clean && rm -rf node_modules",

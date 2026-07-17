@@ -10,17 +10,41 @@ Blinkora 的 Linux 交付面只支持无头服务器。发布物是一个静态�
 bun run build:linux-headless
 ```
 
-产物为 `release/linux/blinkora-server-<version>-linux-x86_64` 和同名 `.sha256`。发布前后都应校验 SHA-256。单文件只包含程序代码和只读资源；SQLite、附件、日志和密钥绝不打进二进制。
+产物包括：
+
+- `release/linux/blinkora-server-<version>-linux-x86_64` 与同名 `.sha256`；
+- `release/linux/blinkora-<version>-linux-x86_64.tar.gz` 与同名 `.sha256`。
+
+压缩包用于直接分享，内含二进制、`AGENTS.md`、简明说明、systemd 安装器、版本元数据和逐文件 `MANIFEST.sha256`。单文件和压缩包都不包含 SQLite、附件、日志或密钥。
 
 构建机缺少 Linux musl 交叉编译环境时，脚本会尝试临时 Docker builder；也可以显式设置 `BLINKORA_RUST_DOCKER_BUILD=1`。Docker 只参与构建，目标服务器始终直接运行二进制。
+
+## 分享包部署
+
+把 `.tar.gz` 和外层 `.sha256` 一起发给对方。接收方校验并解压后，Agent 应先读取包根目录的 `AGENTS.md`：
+
+```bash
+sha256sum --check blinkora-<version>-linux-x86_64.tar.gz.sha256
+tar -xzf blinkora-<version>-linux-x86_64.tar.gz
+cd blinkora-<version>-linux-x86_64
+./install.sh verify-package
+./install.sh check
+sudo ./install.sh install
+./install.sh status
+```
+
+安装器固定使用下方 systemd 布局，默认只监听 `127.0.0.1:6676`。它会保留已有环境文件和数据，升级前备份旧二进制；新服务未通过健康检查时恢复此前的二进制、unit 和启用状态。若发现同名 systemd unit 使用不同 `ExecStart`，或现有环境文件使用其他 `DATA_DIR`，安装器会拒绝覆盖，交由用户决定是否迁移。
 
 ## systemd 部署
 
 以下示例以 `blinkora` 系统账号、`/opt/blinkora` 程序目录和 `/var/lib/blinkora` 数据目录为例。数据目录必须是本机磁盘，不能是 NFS、SMB 或云盘同步目录。
 
 ```bash
-sudo useradd --system --create-home --home-dir /var/lib/blinkora --shell /usr/sbin/nologin blinkora
-sudo install -d -o blinkora -g blinkora -m 0700 /opt/blinkora /opt/blinkora/backups /var/lib/blinkora/data
+sudo groupadd --system blinkora
+sudo useradd --system --gid blinkora --home-dir /var/lib/blinkora --shell /usr/sbin/nologin blinkora
+sudo install -d -o root -g root -m 0755 /opt/blinkora
+sudo install -d -o root -g root -m 0700 /opt/blinkora/backups
+sudo install -d -o blinkora -g blinkora -m 0700 /var/lib/blinkora /var/lib/blinkora/data
 sudo install -d -o root -g root -m 0700 /etc/blinkora
 sudo install -o root -g root -m 0755 \
   blinkora-server-<version>-linux-x86_64 /opt/blinkora/blinkora-server
@@ -31,7 +55,7 @@ sudo sh -c 'umask 077; { \
 } > /etc/blinkora/blinkora.env'
 ```
 
-上述命令原子创建权限为 `0600` 的 `/etc/blinkora/blinkora.env`，不会把密钥输出到终端。不要把 `BLINKORA_SECRET` 放到 shell 历史、命令行、Git 或聊天记录。
+上述命令以 `0600` 权限创建 `/etc/blinkora/blinkora.env`，不会把密钥输出到终端。不要把 `BLINKORA_SECRET` 放到 shell 历史、命令行、Git 或聊天记录。
 
 创建 `/etc/systemd/system/blinkora.service`：
 
@@ -45,11 +69,13 @@ Wants=network-online.target
 Type=simple
 User=blinkora
 Group=blinkora
+WorkingDirectory=/var/lib/blinkora
 EnvironmentFile=/etc/blinkora/blinkora.env
 ExecStart=/opt/blinkora/blinkora-server
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=20s
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 
@@ -70,7 +96,7 @@ curl -fsS http://127.0.0.1:6676/health
 
 ## 升级、备份与回退
 
-升级只替换二进制，绝不替换 `DATA_DIR`。服务收到停止信号时会先等待最多 20 秒让已有请求完成，超时后由 systemd 结束进程：
+手工升级只替换二进制，分享包安装器还会同步仓库维护的 systemd unit；两种方式都绝不替换环境文件或 `DATA_DIR`。服务收到停止信号时会先等待最多 20 秒让已有请求完成，超时后由 systemd 结束进程：
 
 ```bash
 sudo systemctl stop blinkora.service

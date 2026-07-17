@@ -8,7 +8,7 @@
 
 ## 部署与运维
 
-- [Linux 无头单二进制部署](./LINUX_HEADLESS_DEPLOYMENT.md)：x86_64 Linux 服务器的 systemd、升级、回退与数据目录规范。
+- [Linux 无头单二进制部署](./LINUX_HEADLESS_DEPLOYMENT.md)：x86_64 Linux 分享包、Agent 部署、systemd、升级、回退与数据目录规范。
 - [飞牛常驻部署](./FNAS_PERSISTENT_DEPLOYMENT.md)：飞牛服务器上的单 Rust 服务、SQLite 数据目录和物理备份。
 - [macOS 本机持久化部署](./LOCAL_PERSISTENT_DEPLOYMENT.md)：通过 `launchd` 常驻运行，SQLite 与附件保存在本机数据目录。
 

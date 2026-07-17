@@ -29,6 +29,8 @@ Linux x86_64 静态单二进制：
 bun run build:linux-headless
 ```
 
+同一命令还会生成带 `AGENTS.md`、安装器、systemd unit 和校验清单的 `.tar.gz` 分享包。包结构由 `bun run verify:rust` 中的隔离守卫验证。
+
 macOS 本机常驻服务：
 
 ```bash

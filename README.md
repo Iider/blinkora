@@ -4,7 +4,7 @@ English | [简体中文](README.zh-CN.md)
 
 Blinkora is a native-binary-first, Web-only private note and memory base for long-term notes, wiki-style knowledge, tags, attachments, references, daily review, operation logs, search, export, and private annotations.
 
-One Rust executable serves the browser app, APIs, health checks, first-run SQLite initialization, and embedded frontend assets. SQLite and attachments stay under `DATA_DIR`; upgrades replace only the executable. Blinkora does not require a container runtime.
+One Rust executable serves the browser app, APIs, health checks, first-run SQLite initialization, and embedded frontend assets. SQLite and attachments stay under `DATA_DIR`; upgrades never replace configuration or data. Blinkora does not require a container runtime.
 
 Native clients, public sharing, social features, built-in conversational AI, RAG, embeddings, vector search, and semantic search are outside the current product scope.
 
@@ -16,6 +16,7 @@ Native clients, public sharing, social features, built-in conversational AI, RAG
 | Rust backend | `server/` | Only maintained service runtime |
 | Database schema | `db/schema.sqlite.sql` | Build-time embedded SQLite schema |
 | Shared code | `shared/` | Frontend-friendly shared types and utilities |
+| Release templates | `deploy/linux-package/` | Agent guide, installer, and systemd unit embedded in Linux share packages |
 | Release scripts | `scripts/` | Linux packaging, macOS service installation, smoke, and backup |
 
 ## Release Scope
@@ -48,7 +49,7 @@ bun install
 bun run build:linux-headless
 ```
 
-The output is `release/linux/blinkora-server-<version>-linux-x86_64` plus its SHA-256 file. Docker is optional on the build machine when the native Linux musl cross-compiler is unavailable; the target server never needs it.
+Outputs include the standalone binary and SHA-256 file plus a shareable `blinkora-<version>-linux-x86_64.tar.gz` deployment package. The archive contains an Agent guide, installer, systemd unit, version metadata, and per-file checksums; after extraction, the recipient's Agent should read `AGENTS.md` before running preflight and installation. Docker is optional on the build machine when the native Linux musl cross-compiler is unavailable; the target server never needs it.
 
 ## macOS
 

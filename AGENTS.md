@@ -25,6 +25,7 @@ blinkora/
 ├── db/              # Runtime SQLite schema
 ├── shared/          # Shared utilities and types
 ├── scripts/         # Build, native deployment, migration, and smoke scripts
+├── deploy/          # Native Linux share-package templates and NAS units
 ├── docker/          # Optional Linux Rust builder; never a runtime image
 └── docs/            # Architecture notes, runbooks, tasks, and records
 ```
@@ -69,7 +70,7 @@ bun run verify:rust
 ## Development Boundaries
 
 - Keep the product Web-only and native-binary-first. Do not add a container runtime or container-based user deployment without a new explicit design decision.
-- Keep production data, configuration, logs, and secrets outside the binary. Upgrades replace only the executable.
+- Keep production data, configuration, logs, and secrets outside the binary. Upgrades may replace the executable and maintained service definition, but never configuration or data.
 - Do not reintroduce RAG, embedding, semantic search, or conversational AI behavior without a fresh design and explicit implementation plan.
 - Do not build approval, moderation, publishing-review, or content-audit semantics on top of `isReviewed`; add a separate model if that product need is explicitly designed.
 - Prefer hard deletion over feature flags for features outside the current product scope.
@@ -90,7 +91,7 @@ Primary x86_64 Linux release:
 bun run build:linux-headless
 ```
 
-The output is `release/linux/blinkora-server-<version>-linux-x86_64` plus its SHA-256 file. The target server runs the binary directly under systemd; configuration and data remain outside the executable. See `docs/LINUX_HEADLESS_DEPLOYMENT.md`.
+The output includes the standalone binary, a shareable `.tar.gz` package, and their SHA-256 files. The package contains an Agent guide and guarded systemd installer. The target server runs the binary directly; configuration and data remain outside the executable. See `docs/LINUX_HEADLESS_DEPLOYMENT.md`.
 
 Personal macOS persistent deployment:
 

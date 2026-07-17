@@ -32,3 +32,5 @@ else
 fi
 
 echo "Linux headless single binary created: $OUTPUT_PATH"
+
+"$ROOT_DIR/scripts/package-linux-share.sh" "$OUTPUT_PATH" "$VERSION"

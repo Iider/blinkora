@@ -1,0 +1,21 @@
+[Unit]
+Description=Blinkora SQLite Web service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=blinkora
+Group=blinkora
+WorkingDirectory=/var/lib/blinkora
+EnvironmentFile=/etc/blinkora/blinkora.env
+ExecStart=/opt/blinkora/blinkora-server
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -4,7 +4,7 @@
 
 Blinkora 是一个原生单二进制优先、Web-only 的私人笔记和记忆底座，聚焦长期笔记、wiki 式知识、标签、附件、引用、每日回顾、操作日志、搜索、导出和私有批注。
 
-一个 Rust 可执行文件同时提供浏览器应用、API、健康检查、SQLite 首次初始化和内置前端资源。SQLite 与附件保存在 `DATA_DIR`，升级只替换可执行文件。Blinkora 不依赖容器运行时。
+一个 Rust 可执行文件同时提供浏览器应用、API、健康检查、SQLite 首次初始化和内置前端资源。SQLite 与附件保存在 `DATA_DIR`，升级不会替换配置或数据。Blinkora 不依赖容器运行时。
 
 原生客户端、公开分享、社交功能、内置对话式 AI、RAG、embedding、向量检索和语义检索不在当前产品范围内。
 
@@ -16,6 +16,7 @@ Blinkora 是一个原生单二进制优先、Web-only 的私人笔记和记忆�
 | Rust 后端 | `server/` | 唯一维护的服务运行时 |
 | 数据库结构 | `db/schema.sqlite.sql` | 构建时内置的 SQLite schema |
 | 共享代码 | `shared/` | 前端友好的共享类型和工具 |
+| 发布模板 | `deploy/linux-package/` | Linux 分享包内的 Agent 指南、安装器和 systemd unit |
 | 发布脚本 | `scripts/` | Linux 打包、macOS 服务安装、烟测和备份 |
 
 ## 发布范围
@@ -48,7 +49,7 @@ bun install
 bun run build:linux-headless
 ```
 
-产物为 `release/linux/blinkora-server-<version>-linux-x86_64` 和同名 SHA-256 文件。本机缺少 Linux musl 交叉编译环境时，可以在构建机上使用 Docker 兜底；目标服务器始终不需要 Docker。
+产物包括单独的二进制及 SHA-256 文件，以及可以直接分享的 `blinkora-<version>-linux-x86_64.tar.gz` 部署包。分享包内含 Agent 指南、安装脚本、systemd unit、版本元数据和逐文件校验清单；对方的 Agent 解压后应先阅读 `AGENTS.md`，再执行预检和安装。本机缺少 Linux musl 交叉编译环境时，可以在构建机上使用 Docker 兜底；目标服务器始终不需要 Docker。
 
 ## macOS
 
