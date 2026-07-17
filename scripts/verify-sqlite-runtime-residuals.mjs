@@ -12,11 +12,10 @@ const publicRuntimeFiles = [
   'README.md',
   'README.zh-CN.md',
   'SECURITY.md',
-  'docker/.env.tmpl',
   'docker/README.md',
-  'docker/compose.yml',
   'docs/BUN_NETWORK_STRATEGY.md',
   'docs/FNAS_PERSISTENT_DEPLOYMENT.md',
+  'docs/LINUX_HEADLESS_DEPLOYMENT.md',
   'docs/LOCAL_PERSISTENT_DEPLOYMENT.md',
   'docs/NOTE_STATE_LIFECYCLE.md',
   'docs/README.md',
@@ -31,6 +30,12 @@ const runtimeSourceRoots = [
   'server/build.rs',
   'db/schema.sqlite.sql',
   'server/Cargo.toml',
+  'docker/rust-builder.Dockerfile',
+];
+
+const retiredContainerRuntimeFiles = [
+  'docker/.env.tmpl',
+  'docker/compose.yml',
   'docker/dockerfile.rust',
   'docker/dockerfile.rust.fullbuild',
 ];
@@ -42,8 +47,14 @@ const deploymentResidues = [
   ['PostgreSQL default port', /(^|[^\d])(?:5432|55433)(?=$|[^\d])/],
   [
     'PostgreSQL runtime environment variable',
-    /\b(?:DATABASE_URL|POSTGRES(?:QL)?_[A-Z0-9_]*|PGHOST|PGPORT|PGUSER|PGPASSWORD|PGDATABASE)\b/,
+    /\b(?:DATABASE_URL|POSTGRES(?:QL)?_(?:URL|HOST|PORT|USER|PASSWORD|DATABASE|DB)|PGHOST|PGPORT|PGUSER|PGPASSWORD|PGDATABASE)\b/,
   ],
+];
+
+const containerRuntimeResidues = [
+  ['Docker Compose runtime command', /\bdocker\s+compose\b/i],
+  ['retired Blinkora container identity', /\bblinkora-web\b/i],
+  ['retired Docker data directory', /\bdocker\/data\/blinkora\b/i],
 ];
 
 const postgresSqlResidues = [
@@ -59,7 +70,7 @@ const postgresSqlResidues = [
 function readProjectFile(path) {
   const absolutePath = resolve(rootDir, path);
   if (!existsSync(absolutePath)) {
-    throw new Error(`required SQLite deployment file is missing: ${path}`);
+    throw new Error(`required SQLite runtime file is missing: ${path}`);
   }
   return readFileSync(absolutePath, 'utf8');
 }
@@ -95,18 +106,18 @@ function assertNoMatches(files, residues) {
   }
 }
 
-function assertComposeHasOnlyWebService() {
-  const compose = readProjectFile('docker/compose.yml');
-  const services = [...compose.matchAll(/^ {2}([a-zA-Z][\w-]*):\s*$/gm)].map((match) => match[1]);
-  if (services.length !== 1 || services[0] !== 'web') {
-    throw new Error(`docker/compose.yml must define exactly the SQLite web service; found: ${services.join(', ') || 'none'}`);
+function assertContainerRuntimeIsRetired() {
+  const remaining = retiredContainerRuntimeFiles.filter((path) => existsSync(resolve(rootDir, path)));
+  if (remaining.length > 0) {
+    throw new Error(`retired container runtime files must stay absent:\n${remaining.map((path) => `- ${path}`).join('\n')}`);
   }
 }
 
 const runtimeSourceFiles = runtimeSourceRoots.flatMap(collectSourceFiles);
 
 assertNoMatches(publicRuntimeFiles, deploymentResidues);
+assertNoMatches(publicRuntimeFiles, containerRuntimeResidues);
 assertNoMatches(runtimeSourceFiles, postgresSqlResidues);
-assertComposeHasOnlyWebService();
+assertContainerRuntimeIsRetired();
 
-console.log(`SQLite runtime residual check passed (${publicRuntimeFiles.length} deployment files, ${runtimeSourceFiles.length} runtime source files).`);
+console.log(`SQLite runtime residual check passed (${publicRuntimeFiles.length} runtime documents, ${runtimeSourceFiles.length} runtime source files).`);

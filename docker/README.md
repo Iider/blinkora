@@ -1,86 +1,11 @@
-# Blinkora Docker 部署目录
+# Linux 二进制构建兜底
 
-`docker/` 是默认部署入口。生成 release 后，用户进入这个目录执行 `docker compose up -d` 即可启动 Rust 主栈。
+`docker/` 只保留构建机使用的 Rust Linux builder，不提供容器运行时、Compose 部署或用户数据目录。Blinkora 的正式交付物是静态单二进制，目标服务器不需要 Docker。
 
-## 文件
-
-| 路径 | 用途 |
-| --- | --- |
-| `compose.yml` | 默认 Rust 部署入口 |
-| `dockerfile.rust` | Rust runtime 镜像，只复制预构建产物 |
-| `dockerfile.rust.fullbuild` | Docker 内编译兜底，只用于构建机或排障 |
-| `.env.tmpl` | 正式部署环境变量模板 |
-| `release/rust/` | `bun run build:rust-release` 生成的部署产物 |
-| `data/` | 宿主机持久化数据 |
-
-## 部署
-
-在项目根目录生成 release：
+本机缺少 Linux musl 交叉编译环境时，可以强制使用 builder：
 
 ```bash
-bun run build:rust-release
+BLINKORA_RUST_DOCKER_BUILD=1 bun run build:linux-headless
 ```
 
-进入部署目录启动：
-
-```bash
-cd docker
-docker compose up -d
-docker compose ps
-docker compose logs --tail=80 web
-```
-
-本机私用可以直接启动。公网或正式部署时先创建 `docker/.env`：
-
-```bash
-cp .env.tmpl .env
-openssl rand -hex 32
-```
-
-把生成的随机值写入 `BLINKORA_SECRET`。
-
-## 更新
-
-代码或前端资源变更后，先在项目根目录重新生成 release，再重建并启动镜像：
-
-```bash
-bun run build:rust-release
-cd docker
-docker compose up -d --build
-```
-
-本机缺少 Linux Rust 交叉编译环境时，使用 Docker builder 生成 release：
-
-```bash
-BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
-```
-
-部署完成后使用 `docker compose ps` 和 `docker compose logs --tail=80 web` 检查服务状态。
-
-## 数据目录
-
-| 路径 | 容器路径 | 用途 |
-| --- | --- | --- |
-| `data/blinkora` | `/app/.blinkora` | 附件、图片和临时上传 |
-| `data/backup` | `/app/backup` | 导出备份目录 |
-
-SQLite 文件为 `data/blinkora/blinkora.sqlite3`，与附件一起持久化。目录会由服务设为仅当前运行用户可读写。
-
-## 存储
-
-默认附件存储在 `data/blinkora/files`。切换到 S3 兼容对象存储后，上传文件写入设置页配置的桶和自定义路径；本地目录仍保留用于临时文件和导出。
-
-S3 配置在应用设置页维护，不写入 `docker/.env`。填写端点、访问密钥 ID、访问密钥、桶、地区后执行“保存并验证”。验证通过才启用 S3；验证失败时运行时继续使用本地存储，设置页保留 S3 表单以便继续修改。
-
-## Smoke
-
-```bash
-BLINKORA_BASE_URL=http://127.0.0.1:6676 \
-BLINKORA_SMOKE_USER=<test-user> \
-BLINKORA_SMOKE_PASSWORD=<test-password> \
-bun run smoke:rust
-```
-
-## 静态资源规则
-
-Rust 二进制内置 React/Vite 前端、Vditor / Lute 等静态资源与 SQLite schema；镜像只复制 `/app/blinkora-server`。缺失的 `.js`、`.css` 等带扩展名资源应返回 `404`，不能 fallback 到 `index.html`。
+脚本先构建前端，再通过 [rust-builder.Dockerfile](./rust-builder.Dockerfile) 编译 Rust 服务端，最后生成 `release/linux/blinkora-server-<version>-linux-x86_64` 及 SHA-256 文件。builder 镜像和临时容器会在产物复制完成后删除。

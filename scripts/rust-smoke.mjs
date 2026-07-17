@@ -17,7 +17,7 @@ const s3SmokeAccessKey = process.env.BLINKORA_S3_SMOKE_ACCESS_KEY || '';
 const s3SmokeSecretKey = process.env.BLINKORA_S3_SMOKE_SECRET_KEY || '';
 const s3SmokeCustomPath = process.env.BLINKORA_S3_SMOKE_CUSTOM_PATH || `smoke-${stamp}/`;
 const uploadByUrlPort = Number(process.env.BLINKORA_UPLOAD_BY_URL_PORT || 55988);
-const uploadByUrlHost = process.env.BLINKORA_UPLOAD_BY_URL_HOST || 'host.docker.internal';
+const uploadByUrlHost = process.env.BLINKORA_UPLOAD_BY_URL_HOST || '127.0.0.1';
 const uploadByUrlSourceURL = process.env.BLINKORA_UPLOAD_BY_URL_SOURCE_URL || `http://${uploadByUrlHost}:${uploadByUrlPort}/upload-by-url-${stamp}.txt`;
 
 function fail(message, details) {

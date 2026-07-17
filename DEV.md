@@ -1,42 +1,56 @@
-# Docker Development Notes
+# Development Notes
 
-当前默认运行栈是 Rust 后端，`server/` 就是唯一维护的服务端。
+`server/` 是唯一维护的服务端。开发环境直接运行 Rust 后端和 Vite 前端，不使用容器运行时。
 
-## Rust 默认运行方式
+## 本地开发
 
-```bash
-bun run build:rust-release
-cd docker
-docker compose build web
-docker compose up -d
-docker compose ps
-```
-
-访问地址：
-
-```text
-http://localhost:6676
-```
-
-## Rust 运行身份
-
-- Compose project：`blinkora`
-- Web container：`blinkora-web`
-- Web image：`blinkora-web:latest`
-- Port mapping：`6676:6676`
-- SQLite 与附件数据：`docker/data/blinkora`
-
-
-## 最小烟测
+终端一：
 
 ```bash
-curl -I http://localhost:6676/
-curl -I http://localhost:6676/signin
-curl -s http://localhost:6676/health
-sqlite3 docker/data/blinkora/blinkora.sqlite3 'PRAGMA integrity_check;'
+bun run dev:rust
 ```
 
-## 固化烟测
+终端二：
+
+```bash
+bun run dev:frontend
+```
+
+| 服务 | 默认地址 | 数据目录 |
+| --- | --- | --- |
+| Rust 开发后端 | `http://127.0.0.1:6677` | `.blinkora/dev` |
+| Vite 前端 | `http://localhost:5173` | 代理到 Rust 开发后端 |
+
+## 发布形态检查
+
+Linux x86_64 静态单二进制：
+
+```bash
+bun run build:linux-headless
+```
+
+macOS 本机常驻服务：
+
+```bash
+bun run deploy:local install
+bun run deploy:local status
+```
+
+## 最小检查
+
+```bash
+bun run typecheck
+bun run build:web --force
+bun run verify:rust
+```
+
+开发数据库完整性：
+
+```bash
+sqlite3 .blinkora/dev/blinkora.sqlite3 'PRAGMA integrity_check;'
+```
+
+对已启动的隔离或测试服务执行 API smoke：
 
 ```bash
 BLINKORA_BASE_URL=http://127.0.0.1:6676 \

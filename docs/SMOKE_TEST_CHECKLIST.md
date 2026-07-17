@@ -1,6 +1,6 @@
 # Blinkora 核心产品烟测清单
 
-本文档用于每次改动前端、容器、端口、语言、评论、回收站、资源删除、Workspace 或认证链路后，快速确认当前 Blinkora 仍可作为本地 Web 服务稳定使用。
+本文档用于每次改动前端、发布二进制、端口、语言、评论、回收站、资源删除、Workspace 或认证链路后，快速确认当前 Blinkora 仍可作为本地 Web 服务稳定使用。
 
 ## 使用规则
 
@@ -9,7 +9,7 @@
 - M1 聚焦交互：`TMPDIR=/private/tmp BLINKORA_SMOKE_CARGO_TARGET_DIR=/private/tmp/blinkora-m1-cargo-target BLINKORA_BROWSER_SMOKE_SCENARIO=m1-review BLINKORA_M1_REVIEW_ARTIFACTS_DIR=/private/tmp/blinkora-m1-review-artifacts-approved bun run smoke:browser-local`。共生成并人工复核 11 张临时截图；截图仅作本轮目视证据，复核后清理，不提交包含会话信息的浏览器产物。
 
 - 当前统一入口：`http://localhost:6676`。
-- 当前主运行栈：Rust，统一入口为 `6676`。完整 Docker 部署只使用 `blinkora-web`；本机持久化部署由 macOS `launchd` 运行。两种模式都使用 `DATA_DIR` 下的 SQLite 和附件目录。
+- 当前主运行栈：一个内置前端与 SQLite schema 的 Rust 二进制，统一入口为 `6676`。Linux 通过 systemd 常驻，macOS 通过 `launchd` 常驻，数据都保存在 `DATA_DIR`。
 - Rust 后端固定 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_SMOKE_USER=<test-user> BLINKORA_SMOKE_PASSWORD=<test-password> bun run smoke:rust`，覆盖健康检查、静态资源、登录/注册、用户详情、Public、字体、Workspace、配置、普通关键词/筛选检索、笔记编辑、只改类型不丢正文、历史版本/引用/排序、标签、评论/回复/更新/删除/转 TODO、附件资源页文件夹创建/列表/重命名/移动/删除、文件上传、错误 workspace 文件读/删拒绝、同前缀兄弟文件夹不误删、导出、备份导入为新 Workspace、导入后附件路径替换与恢复文件读取、回收站、批量删除、MCP SSE 未鉴权拒绝、握手、工具清单、note/comment/tag tree 工具调用主路径、Workspace Agent token 创建/列表回显/资源下载/越权拒绝/撤销失效。
 - macOS 原生浏览器 smoke：`bun run smoke:browser-local` 会建立临时 release、SQLite 和服务，不使用 Docker，也拒绝访问常驻 `6676` 服务。它以本机 Chrome 跑桌面/390×844 登录、工作区创建/自动切换/重载后回显、三类笔记创建、每日回顾、闪念/笔记/待办编辑（各自历史；笔记另含嵌套标签、附件新增、删除与引用）、待办完成/恢复、置顶、归档/恢复、回收站/恢复及确认后的彻底删除、评论树新建/回复/编辑/两级删除、日期范围、附件、外链、Markdown 待办与无标签条件筛选/重置（可持久筛选另验证刷新后回显）、操作日志正文/操作者/笔记类型/操作类型组合筛选、隔离库中本地字体的选择/重载/恢复默认、嵌套标签树父/子节点筛选/刷新后回显，以及闪念、笔记、待办、全部、归档和回收站列表的页码分页（均覆盖第 2 页刷新、删除后保持页码与越界页回首页）。它还验证单卡移动到默认工作区后的评论树、工作区 Agent 令牌生成及调用指南回显、S3 未填凭据时禁止验证、临时空工作区经设置页 Markdown 导出后重新导入、全量 JSON 导出后再通过设置页全量恢复并删除导入副本、全局笔记/附件搜索和资源目录创建/附件与目录重命名/嵌套、附件移入目录后移回根目录、两项附件多选删除和同前缀兄弟目录删除保护，要求 console error 与本机 4xx/5xx 均为 0；结束前检查 SQLite 完整性、外键、连续历史版本、编辑操作日志、迁移笔记的历史/评论/附件/标签工作区归属、已删除附件不存在、Workspace/历史/评论/附件/标签关联 orphan 和目录记录，并删除临时数据。
 - 高风险浏览器回归：同一命令还验证字符串/数字/布尔/`null`/数组自定义属性、Markdown 链接、重复名/非法值拦截、清空与恢复、卡片正反面隔离；仅改 metadata 不丢正文、附件与引用，Note/Blinkora/Todo 往返不丢数据，标签与附件组合筛选，附件下载字节一致，编辑器附件随 `notes.upsert` 事务删除且不提前调用文件删除接口，共享资源只在最后一个引用消失后才允许物理删除，以及 Workspace 重命名、默认保护、两卡批量移动和当前 Workspace 级联删除零残留。
@@ -17,7 +17,7 @@
 - 备份性能差分只允许指向本机回环地址上的一次性夹具，并且必须显式设置 `BLINKORA_BACKUP_PERF_ISOLATED=1`。导出报告存在缺失附件、导入报告存在未恢复附件时，脚本立即失败且不删除导入工作区；不得把该脚本指向常驻服务或真实数据。
 - Workspace Agent 专项 smoke：`BLINKORA_BASE_URL=http://127.0.0.1:6676 BLINKORA_ACCOUNT_TOKEN=<account_jwt> bun run smoke:agent`，只覆盖工作区令牌、MCP 工具、Skill/指南下载、Workspace 隔离、越权拒绝和刷新失效。
 - Web 端口固定使用 `6676`，避免 Chromium / Edge 的 unsafe port 限制。
-- 优先使用浏览器真实交互验证，必要时再补充容器日志和接口检查。
+- 优先使用浏览器真实交互验证，必要时再补充 systemd/launchd 日志和接口检查。
 - 使用明确测试前缀，例如 `烟测 2026-05-19`，便于清理。
 - 烟测过程中创建的测试笔记、评论、附件和临时 Workspace 应在结束前清理，清理不了的内容必须记录。
 - 不为自动化方便读取或暴露真实访问令牌。若需要验证 API token，请使用用户明确授权的测试 token。
@@ -33,9 +33,8 @@
 执行人：
 入口：
 构建版本 / 提交：
-Docker compose 文件：
-运行模式：完整 Docker / 本机持久化
-容器状态：
+运行方式：Linux systemd / macOS launchd / 隔离原生服务
+服务状态与日志：
 通过项：
 失败项：
 临时跳过项：
@@ -47,12 +46,12 @@ Docker compose 文件：
 
 | 状态 | 检查项 | 操作 | 预期结果 |
 | --- | --- | --- | --- |
-| 当前范围不适用（macOS 本地） | 完整 Docker 服务健康 | 完整 Docker 模式下，在 `docker/` 执行 `docker compose ps` | `blinkora-web` 为 healthy，`data/blinkora/blinkora.sqlite3` 存在 |
+| 自动通过（飞牛常驻服务） | Linux systemd 服务健康 | 执行 `systemctl status --no-pager blinkora-sqlite.service` 并请求 `/health` | unit 为 active，健康接口返回 `200`，`DATA_DIR` 中的 SQLite 存在 |
 | 自动通过（2026-07-16 常驻服务） | 本机持久化服务健康 | 本机持久化模式下，执行 `bun run deploy:local status` | `com.blinkora.local` 为 running，SQLite 探针与健康接口均通过 |
 | 自动通过（2026-07-16 常驻服务） | 本机部署更新生效 | 本机持久化模式下执行 `bun run deploy:local update`，再运行 `curl -fsS -o /dev/null -w '%{http_code}\\n' http://127.0.0.1:6676/` 并刷新 `http://localhost:6676` | 命令输出 `200`；页面加载二进制内置的最新静态资源，新功能可见 |
 | 自动通过（完整隔离 smoke） | Web 端口正确 | 打开 Rust 主栈 `http://localhost:6676` | 页面可打开，不出现 `ERR_UNSAFE_PORT` |
 | 自动通过（完整隔离 smoke） | Web 端口统一 | 搜索当前文档或配置中的 Web 入口 | 运行入口使用 `6676` |
-| 自动通过（隔离 smoke + 常驻日志） | 启动日志无新错误 | Docker 模式看 `docker compose logs --tail=80 web`；本机持久化模式看 `tail -n 80 ~/.blinkora/local/logs/blinkora.out.log ~/.blinkora/local/logs/blinkora.err.log` | 除未登录请求外，无新增服务端异常 |
+| 自动通过（隔离 smoke + 常驻日志） | 启动日志无新错误 | Linux 使用 `journalctl -u <unit> -n 80 --no-pager`；macOS 查看 `~/.blinkora/local/logs` | 除未登录请求外，无新增服务端异常 |
 | 自动通过（完整隔离 smoke） | 前端控制台无错误 | 浏览器打开首页并查看 console | 无白屏错误、chunk 加载错误、i18n key 直出 |
 | 自动通过（完整隔离 smoke） | Vditor / Lute 资源 | 打开首页编辑器并查看 network / console；或请求 `/vditor-assets/dist/js/lute/lute.min.js` | 编辑器出现 `.vditor`，Lute 资源返回 JS，不出现 `Unexpected token '<'` 或 `Lute is not defined` |
 | 自动通过（完整隔离 smoke） | 静态资源 fallback | 请求一个不存在的 `.js`，如 `/vditor-assets/dist/js/missing-smoke.js` | 返回 `404`，不返回 `index.html` |
@@ -148,7 +147,7 @@ Docker compose 文件：
 | 自动通过（隔离真实 OSS） | S3 / OSS 上传 | 在 S3 存储模式下上传测试图片 | 对象存入配置的 Bucket / Custom Path，上传响应同时包含 `filePath` / `path`，卡片图片预览不出现 404 |
 | 自动通过（隔离真实 OSS） | S3 / OSS 编辑删除 | 编辑卡片删除 S3 图片附件并保存 | 前端立即移除；保存成功后 OSS 对象删除，保存失败时对象恢复，不出现半写 |
 | 自动通过（隔离真实 OSS） | S3 / OSS 删卡同步删资源 | 带 S3 图片的卡片进回收站后彻底删除并选择同步删除资源 | 卡片和仅被当前卡片引用的 S3 对象都被删除 |
-| 自动通过（完整隔离 smoke） | 本地存储映射 | 切换或验证本地存储模式后上传测试附件 | Docker 模式文件落在 `docker/data/blinkora/files`；本机持久化模式文件落在 `~/.blinkora/local/data/files` |
+| 自动通过（完整隔离 smoke） | 本地存储映射 | 切换或验证本地存储模式后上传测试附件 | 文件落在当前服务 `DATA_DIR/files`，数据库记录与文件路径一致 |
 | 自动通过（完整隔离 smoke） | 本地资源删除 | 删除本地附件或同步删除带附件卡片 | 数据库记录和映射目录中的测试文件一起清理 |
 
 ### 5.1 存储配置专项
@@ -217,7 +216,7 @@ Docker compose 文件：
 | 自动通过（完整隔离 smoke） | 删除测试标签 | 若创建了测试标签，清理标签 | 标签面板无测试标签残留 |
 | 自动通过（完整隔离 smoke） | 删除测试 Workspace | 若创建了临时 Workspace 且 UI 支持删除，删除它 | 默认 Workspace 保留，临时 Workspace 不再出现在下拉 |
 | 自动通过（完整隔离 smoke） | 复查 Workspace 残留 | 按 `docs/WORKSPACE_DATA_LIFECYCLE.md` 执行关键词和 orphan 检查 | 临时 Workspace 关键词命中为 0，关系表无 orphan |
-| 自动通过（隔离 smoke + 常驻日志） | 复查日志 | Docker 模式看 `docker compose logs --tail=80 web`；本机持久化模式看 `~/.blinkora/local/logs` | 无烟测期间新增服务端异常 |
+| 自动通过（隔离 smoke + 常驻日志） | 复查日志 | Linux 查看对应 systemd journal；macOS 查看 `~/.blinkora/local/logs` | 无烟测期间新增服务端异常 |
 
 ## 通过标准
 

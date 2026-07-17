@@ -17,27 +17,3 @@ COPY dist/public /build/dist/public
 COPY .agents/skills/blinkora-workspace /build/.agents/skills/blinkora-workspace
 
 RUN cargo build --release --locked --target "$RUST_TARGET"
-
-FROM debian:bookworm-slim AS runner
-
-WORKDIR /app
-
-ARG RUST_TARGET=x86_64-unknown-linux-musl
-
-ENV NODE_ENV=production
-ENV BIND_ADDR=0.0.0.0
-ENV PORT=6676
-ENV DATA_DIR=/app/.blinkora
-ENV TRUST_PROXY=1
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tzdata wget \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY --from=backend-builder /build/server/target/${RUST_TARGET}/release/blinkora-server /app/blinkora-server
-
-RUN chmod +x /app/blinkora-server
-
-EXPOSE 6676
-
-CMD ["/app/blinkora-server"]

@@ -7,10 +7,12 @@ Blinkora 的 Linux 交付面只支持无头服务器。发布物是一个静态�
 在开发机或 CI 执行：
 
 ```bash
-BLINKORA_RUST_DOCKER_BUILD=1 bun run build:linux-headless
+bun run build:linux-headless
 ```
 
 产物为 `release/linux/blinkora-server-<version>-linux-x86_64` 和同名 `.sha256`。发布前后都应校验 SHA-256。单文件只包含程序代码和只读资源；SQLite、附件、日志和密钥绝不打进二进制。
+
+构建机缺少 Linux musl 交叉编译环境时，脚本会尝试临时 Docker builder；也可以显式设置 `BLINKORA_RUST_DOCKER_BUILD=1`。Docker 只参与构建，目标服务器始终直接运行二进制。
 
 ## systemd 部署
 

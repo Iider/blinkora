@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "bun run dev:frontend",
     "dev:frontend": "turbo run dev --filter=@blinkora/frontend",
-    "dev:rust": "PATH=\"/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH\" PORT=\"${PORT:-6677}\" DATA_DIR=\"${DATA_DIR:-docker/data/blinkora}\" cargo run --manifest-path server/Cargo.toml",
+    "dev:rust": "PATH=\"/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH\" PORT=\"${PORT:-6677}\" DATA_DIR=\"${DATA_DIR:-.blinkora/dev}\" cargo run --manifest-path server/Cargo.toml",
     "build:web": "turbo run build:web",
     "build:linux-headless": "bash scripts/build-linux-headless.sh",
     "typecheck": "bun run typecheck:web && bun run typecheck:shared",
@@ -49,7 +49,7 @@
     "turbo": "2.7.2"
   },
   "engines": {
-    "bun": ">=1.0.0",
+    "bun": ">=1.2.8",
     "node": ">=20.0.0"
   }
 }

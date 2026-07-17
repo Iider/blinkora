@@ -3,7 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_DIR="$ROOT_DIR/release/rust"
-DOCKER_RELEASE_DIR="$ROOT_DIR/docker/release/rust"
 TARGET_DIR="${CARGO_TARGET_DIR:-/private/tmp/blinkora-server-target}"
 TARGET_OS="${TARGETOS:-linux}"
 HOST_ARCH="$(uname -m)"
@@ -19,7 +18,7 @@ case "$TARGET_ARCH" in
   *) echo "error: unsupported Rust target architecture: $TARGET_ARCH" >&2; exit 1 ;;
 esac
 if [[ "$TARGET_OS" != "linux" ]]; then
-  echo "error: only linux Rust release artifacts are supported for Docker deployment" >&2
+  echo "error: only Linux Rust release artifacts are supported" >&2
   exit 1
 fi
 RUST_TARGET="${RUST_TARGET:-${RUST_TARGET_ARCH}-unknown-linux-musl}"
@@ -30,7 +29,7 @@ if ! command -v bun >/dev/null 2>&1; then
   echo "error: bun is required to build frontend release artifacts" >&2
   exit 1
 fi
-rm -rf "$RELEASE_DIR" "$DOCKER_RELEASE_DIR"
+rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 
 bun run build:web --force
@@ -54,7 +53,9 @@ build_with_cargo() {
     else
       echo "warning: rustup is unavailable; attempting the configured cargo target directly" >&2
     fi
-    CARGO_TARGET_DIR="$TARGET_DIR" cargo build --release --locked --target "$RUST_TARGET"
+    if ! CARGO_TARGET_DIR="$TARGET_DIR" cargo build --release --locked --target "$RUST_TARGET"; then
+      exit 1
+    fi
     cp "$TARGET_DIR/$RUST_TARGET/release/blinkora-server" "$RELEASE_DIR/blinkora-server"
   )
 }
@@ -69,7 +70,7 @@ build_with_docker() {
 
   docker build \
     --target backend-builder \
-    -f docker/dockerfile.rust.fullbuild \
+    -f docker/rust-builder.Dockerfile \
     --build-arg "RUST_TARGET=$RUST_TARGET" \
     -t "$image" \
     .
@@ -89,7 +90,7 @@ fi
 
 if ! file "$RELEASE_DIR/blinkora-server" | grep -q 'ELF .* executable'; then
   file "$RELEASE_DIR/blinkora-server" >&2
-  echo "error: release/rust/blinkora-server must be a Linux ELF executable for Docker runtime" >&2
+  echo "error: release/rust/blinkora-server must be a Linux ELF executable" >&2
   exit 1
 fi
 if ! file "$RELEASE_DIR/blinkora-server" | grep -Eq 'statically linked|static-pie linked'; then
@@ -98,10 +99,5 @@ if ! file "$RELEASE_DIR/blinkora-server" | grep -Eq 'statically linked|static-pi
   exit 1
 fi
 
-mkdir -p "$DOCKER_RELEASE_DIR"
-cp "$RELEASE_DIR/blinkora-server" "$DOCKER_RELEASE_DIR/blinkora-server"
-
 chmod +x "$RELEASE_DIR/blinkora-server"
-chmod +x "$DOCKER_RELEASE_DIR/blinkora-server"
 echo "Single-binary Linux release is ready in $RELEASE_DIR/blinkora-server"
-echo "Docker deployment binary is ready in $DOCKER_RELEASE_DIR/blinkora-server"

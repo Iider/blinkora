@@ -2,55 +2,57 @@
 
 English | [简体中文](README.zh-CN.md)
 
-Blinkora is a Docker-first, Web-only private note and memory base for long-term notes, wiki-style knowledge, tags, attachments, references, daily review, operation logs, search, export, and private annotations.
+Blinkora is a native-binary-first, Web-only private note and memory base for long-term notes, wiki-style knowledge, tags, attachments, references, daily review, operation logs, search, export, and private annotations.
 
-The Rust backend serves the browser app, APIs, health checks, first-run SQLite initialization, and embedded frontend assets from one binary. SQLite and attachments are stored together under `DATA_DIR`. Native clients, public sharing, social features, and built-in conversational AI, RAG, embedding, vector, or semantic-search runtimes are outside the current product scope.
+One Rust executable serves the browser app, APIs, health checks, first-run SQLite initialization, and embedded frontend assets. SQLite and attachments stay under `DATA_DIR`; upgrades replace only the executable. Blinkora does not require a container runtime.
+
+Native clients, public sharing, social features, built-in conversational AI, RAG, embeddings, vector search, and semantic search are outside the current product scope.
 
 ## Runtime
 
 | Module | Path | Role |
 | --- | --- | --- |
-| Web frontend | `app/` | React/Vite frontend |
-| Rust backend | `server/` | Only maintained server runtime |
+| Web frontend | `app/` | React/Vite frontend embedded into the release binary |
+| Rust backend | `server/` | Only maintained service runtime |
 | Database schema | `db/schema.sqlite.sql` | Build-time embedded SQLite schema |
 | Shared code | `shared/` | Frontend-friendly shared types and utilities |
-| Docker deployment | `docker/` | Default single-container deployment |
+| Release scripts | `scripts/` | Linux packaging, macOS service installation, smoke, and backup |
 
-## Requirements
+## Release Scope
 
-- Bun 1.2.8 or later
-- Node.js 20 or later for acceptance and smoke scripts
-- Docker with Compose for Docker deployment and Docker-backed Linux builds
-- Rust toolchain for native backend development and macOS local deployment
+| Platform | Delivery |
+| --- | --- |
+| x86_64 headless Linux | Static single binary; primary release target |
+| macOS | Native Rust service installed through `launchd` |
+| Windows and Linux arm64 | Not packaged yet |
 
-## Quick Start
+## Run the Linux Binary
 
-### Docker
+Use the prebuilt `blinkora-server-<version>-linux-x86_64` release file. A temporary local-only start needs no installer:
 
-Docker is the default deployment path:
+```bash
+chmod +x blinkora-server-<version>-linux-x86_64
+mkdir -p data
+NODE_ENV=production \
+BLINKORA_SECRET="$(openssl rand -hex 32)" \
+DATA_DIR="$PWD/data" \
+./blinkora-server-<version>-linux-x86_64
+```
+
+Open `http://127.0.0.1:6676`. For persistent or network access, use the [Linux systemd guide](docs/LINUX_HEADLESS_DEPLOYMENT.md); it stores a stable secret outside the binary and covers upgrades, backup, and rollback.
+
+Maintainers build the release with:
 
 ```bash
 bun install
-bun run build:rust-release
-cd docker
-docker compose up -d
+bun run build:linux-headless
 ```
 
-Open [http://localhost:6676](http://localhost:6676). Production secrets, rebuilds, storage paths, and smoke tests are documented in [docker/README.md](docker/README.md).
+The output is `release/linux/blinkora-server-<version>-linux-x86_64` plus its SHA-256 file. Docker is optional on the build machine when the native Linux musl cross-compiler is unavailable; the target server never needs it.
 
-### Headless Linux
+## macOS
 
-Build a static x86_64 Linux binary with the frontend and SQLite schema embedded:
-
-```bash
-BLINKORA_RUST_DOCKER_BUILD=1 bun run build:linux-headless
-```
-
-The release does not require Docker, Bun, Node.js, Rust, SQLite CLI, a GUI, or FUSE on the target server. Use systemd or another process supervisor and keep configuration and data outside the binary. See [Linux headless deployment](docs/LINUX_HEADLESS_DEPLOYMENT.md) for installation, upgrades, and rollback.
-
-### macOS
-
-Install the Rust service as a persistent `launchd` job without Docker:
+Build and install the native Rust service as a persistent `launchd` job:
 
 ```bash
 bun run deploy:local install
@@ -66,7 +68,7 @@ bun run dev:rust
 bun run dev:frontend
 ```
 
-The frontend runs at `http://localhost:5173` and proxies API requests to the Rust backend at `http://127.0.0.1:6677` by default. Override them with `BLINKORA_DEV_FRONTEND_PORT` and `BLINKORA_DEV_BACKEND_URL`.
+The frontend runs at `http://localhost:5173` and proxies API requests to the Rust backend at `http://127.0.0.1:6677`. Development data defaults to `.blinkora/dev`. Override the endpoints with `BLINKORA_DEV_FRONTEND_PORT` and `BLINKORA_DEV_BACKEND_URL`.
 
 Common checks:
 
@@ -80,13 +82,13 @@ Backend-specific development and initialization details are in [server/README.md
 
 ## Data and Storage
 
-| Deployment | Persistent data |
+| Runtime | Persistent data |
 | --- | --- |
-| Docker | `docker/data/blinkora` |
-| macOS local service | `~/.blinkora/local/data` |
 | Headless Linux | Operator-selected `DATA_DIR` |
+| macOS local service | `~/.blinkora/local/data` |
+| Local development | `.blinkora/dev` |
 
-Attachments use the local filesystem by default. A superadmin can enable S3-compatible storage from the settings page after an upload/read/delete validation succeeds. Keep SQLite, attachments, and exports backed up together before schema, storage, or deployment changes. Workspace deletion and attachment cleanup rules are documented in [Workspace data lifecycle](docs/WORKSPACE_DATA_LIFECYCLE.md).
+Attachments use the local filesystem by default. A superadmin can enable S3-compatible storage after upload/read/delete validation succeeds. Keep SQLite, attachments, and exports backed up together before schema, storage, or deployment changes. Workspace deletion and attachment cleanup rules are documented in [Workspace data lifecycle](docs/WORKSPACE_DATA_LIFECYCLE.md).
 
 ## Workspace Agent Access
 

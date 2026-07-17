@@ -8,9 +8,6 @@ dist
 !dist/public/
 !dist/public/**
 release/**
-!release/
-!release/rust/
-!release/rust/blinkora-server
 build
 **/build
 .turbo
@@ -60,8 +57,6 @@ CONTRIBUTING.md
 !.agents/skills/blinkora-workspace/references/
 !.agents/skills/blinkora-workspace/references/*.md
 
-docker-compose*.yml
-docker-compose*.yaml
 docker/data
 docker/data/**
 docker/backups

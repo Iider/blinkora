@@ -1,13 +1,13 @@
 # 国内网络下继续使用 Bun 的策略
 
-本文件记录在国内网络环境、Windows 开发环境和 Docker 构建环境中使用 Bun 的推荐做法。当前运行栈为 Rust 后端加 React/Vite 前端。
+本文件记录在国内网络环境、Windows 开发环境和 Linux 发布物构建环境中使用 Bun 的推荐做法。当前运行栈为 Rust 后端加 React/Vite 前端。
 
 ## 当前策略
 
 - 本地开发默认使用项目级 `bunfig.toml`，将 Bun registry 指向 `https://registry.npmmirror.com`。
-- Rust 默认 Docker 构建只复制 `docker/release/rust` 产物，不需要 `USE_MIRROR`、`NPM_REGISTRY`、`BUN_REGISTRY` 或 cargo registry。
+- Linux 正式交付物是静态单二进制，目标服务器不运行 Bun、Cargo 或容器运行时。
 - 本机持久化部署会在 macOS 本机直接跑 Bun 和 Cargo，首次安装依赖或编译 Rust crate 时需要本机网络可用。
-- Rust crate 下载只发生在开发机/CI 的 `bun run build:rust-release`、本机持久化部署的 native cargo build，或 `docker/dockerfile.rust.fullbuild` 兜底路径。
+- Rust crate 下载只发生在开发机/CI 的 Linux release 构建、macOS 本机构建，或 `docker/rust-builder.Dockerfile` 兜底路径。
 - `bun.lock` 继续作为 Bun 路径的锁文件提交；依赖变更必须刷新并验证。
 - `npmmirror` 只作为加速路径，不作为唯一可信路径；遇到 integrity、同步延迟或平台包异常时，回退官方源或内部缓存源。
 
@@ -64,32 +64,23 @@ export BUN_INSTALL_CACHE_DIR="$HOME/.cache/bun-install"
 
 如需长期生效，可以加入个人 shell 配置文件。
 
-## Rust Docker 构建
+## Linux 单二进制构建
 
-主部署路径：
+在开发机或 CI 构建 x86_64 Linux 发布物：
 
 ```bash
-bun run build:rust-release
-cd docker
-docker compose up -d
+bun run build:linux-headless
 ```
 
-这条路径中，Docker build 只需要拉取 Debian slim 基础镜像并复制 `docker/release/rust/blinkora-server`。前端静态资源和 SQLite schema 已内置于该二进制，因此不会执行 `cargo build`，也不会访问 npm/Bun registry 或 Rust crate 下载链路。最终运行容器不包含 Node、Bun、npm、cargo、Go 或 Rust 编译器。
+脚本先执行前端构建，再生成静态 Rust 二进制。产物位于 `release/linux/`，目标服务器直接运行二进制，不需要 Bun、Node.js、Rust、SQLite CLI 或 Docker。
 
 如果本机不能直接交叉编译 Linux Rust 二进制，可在开发机或 CI 临时使用 Docker builder 生成 release 产物：
 
 ```bash
-BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
+BLINKORA_RUST_DOCKER_BUILD=1 bun run build:linux-headless
 ```
 
-如果确实需要在 Docker 内完成 Rust 编译，可使用兜底 Dockerfile：
-
-```bash
-bun run build:web --force
-docker build -f docker/dockerfile.rust.fullbuild -t blinkora-web:latest .
-```
-
-兜底路径会访问 Rust crate 下载链路，应配置内部 cargo registry/cache 或放在网络条件稳定的 CI 中执行；不建议作为国内服务器默认部署路径。
+Docker 只运行 `docker/rust-builder.Dockerfile` 的临时构建阶段；脚本复制二进制后会删除临时容器和镜像。该路径会访问 Rust crate 下载链路，应配置内部 cargo registry/cache 或放在网络条件稳定的 CI 中执行。Docker 不进入目标服务器的部署链路。
 
 ## 本机持久化部署
 
@@ -125,8 +116,8 @@ bun run deploy:local install
 | npm/Bun integrity check failed | 公共镜像源同步是否异常 | 回退官方源，保留锁文件 |
 | Rust release 构建下载 crate 失败 | Cargo registry 网络 | 使用 CI、内部 cargo cache，或 `BLINKORA_RUST_DOCKER_BUILD=1` |
 | `deploy:local install` 首次构建失败 | Bun 或 Cargo 依赖是否没下载完 | 先跑 `bun install` 和 `cargo fetch --manifest-path server/Cargo.toml` |
-| 本机缺 `aarch64-linux-musl-gcc` 或其他 Linux musl 交叉编译器 | 是否在本机原生交叉编译 | 直接用 `BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release` 生成部署产物 |
-| Rust Docker build 访问 npm/Bun registry | 是否误用了 Rust fullbuild | 默认应使用 `docker/dockerfile.rust`，并先运行 `bun run build:rust-release` |
+| 本机缺 `aarch64-linux-musl-gcc` 或其他 Linux musl 交叉编译器 | 是否在本机原生交叉编译 | 使用 `BLINKORA_RUST_DOCKER_BUILD=1 bun run build:linux-headless` 生成部署产物 |
+| Docker builder 下载 crate 失败 | Cargo registry 或构建机网络 | 配置内部 cargo cache/registry，或改由网络稳定的 CI 构建 |
 
 ## 后续收敛
 

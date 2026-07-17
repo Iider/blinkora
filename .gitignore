@@ -27,12 +27,10 @@ release
 target
 tmp/
 ~/
-docker/data/*
-!docker/data/
-!docker/data/.gitignore
-docker/backups/*
-!docker/backups/
-!docker/backups/.gitignore
+# Legacy container-runtime data stays ignored so removing Docker support never
+# exposes or deletes an existing local database or backup.
+docker/data/
+docker/backups/
 # Local audit / session archives
 AUDIT_TASKS.md
 docs/internal/

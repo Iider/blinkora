@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-Blinkora is a Docker-first Web-only private note and memory base. The target product is a clean single-user foundation for long-term notes, wiki-style memory, tags, attachments, references, daily review, search, export, and private annotations.
+Blinkora is a native-binary-first, Web-only private note and memory base. The target product is a clean single-user foundation for long-term notes, wiki-style memory, tags, attachments, references, daily review, search, export, and private annotations.
 
-Blinkora is shipped as a browser app served by the Rust backend. Default deployment is one Docker Web container; personal macOS machines may run the same Rust service locally through `launchd`, without Docker. SQLite and attachments stay under `DATA_DIR`. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
+Blinkora is shipped as a browser app served by one Rust binary. The binary embeds the React frontend and SQLite schema; SQLite and attachments stay under `DATA_DIR`. Headless x86_64 Linux uses systemd, and personal macOS machines use `launchd`. Docker is not a runtime or deployment target; it is allowed only as an optional build-machine fallback for Linux cross-compilation. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
 
 ## Tech Stack
 
@@ -24,8 +24,9 @@ blinkora/
 ├── server/          # Primary Rust backend
 ├── db/              # Runtime SQLite schema
 ├── shared/          # Shared utilities and types
-├── docker/          # Rust Docker deployment
-└── docs/            # Architecture notes, tasks, and records
+├── scripts/         # Build, native deployment, migration, and smoke scripts
+├── docker/          # Optional Linux Rust builder; never a runtime image
+└── docs/            # Architecture notes, runbooks, tasks, and records
 ```
 
 ## Common Commands
@@ -39,16 +40,16 @@ bun install
 ### Development
 
 ```bash
-bun run dev:rust      # Primary Rust dev backend, default http://127.0.0.1:6677
-bun run dev:frontend  # Vite dev server, default http://localhost:5173 and proxies API to Rust dev backend
+bun run dev:rust      # Rust dev backend on http://127.0.0.1:6677
+bun run dev:frontend  # Vite on http://localhost:5173, proxying to the Rust backend
 ```
 
 ### Build and Verify
 
 ```bash
 bun run typecheck
-bun run build:web --force  # use before release packaging when validating frontend changes
-bun run build:rust-release
+bun run build:web --force
+bun run build:linux-headless
 bun run deploy:local install
 bun run verify:rust
 ```
@@ -67,7 +68,8 @@ bun run verify:rust
 
 ## Development Boundaries
 
-- Keep the product Web-only and Docker-first. Local persistent deployment is allowed for personal macOS use, but should stay small and reuse the same Rust backend.
+- Keep the product Web-only and native-binary-first. Do not add a container runtime or container-based user deployment without a new explicit design decision.
+- Keep production data, configuration, logs, and secrets outside the binary. Upgrades replace only the executable.
 - Do not reintroduce RAG, embedding, semantic search, or conversational AI behavior without a fresh design and explicit implementation plan.
 - Do not build approval, moderation, publishing-review, or content-audit semantics on top of `isReviewed`; add a separate model if that product need is explicitly designed.
 - Prefer hard deletion over feature flags for features outside the current product scope.
@@ -76,47 +78,36 @@ bun run verify:rust
 
 ## Environment
 
-Root `.env` values for local Bun commands:
+The service reads `NODE_ENV`, `BIND_ADDR`, `PORT`, `DATA_DIR`, `BLINKORA_SECRET`, and `RUST_LOG`. Production deployments store them in a permission-restricted environment file outside the repository. Storage credentials are configured in the app settings and stored in application configuration.
 
-```env
-BLINKORA_SECRET=your-secret-key
-```
-
-Docker deployment runs from `docker/`; `docker/compose.yml` has local defaults and can optionally read `docker/.env` for production secrets. Local persistent deployment stores its generated runtime env in `~/.blinkora/local/blinkora.env`. Storage credentials are configured in the app settings and stored in application config, not required root `.env` keys.
+Local macOS deployment stores its generated environment file in `~/.blinkora/local/blinkora.env`. Linux systemd examples use `/etc/blinkora/blinkora.env`.
 
 ## Deployment
 
-Primary full Docker deployment:
+Primary x86_64 Linux release:
 
 ```bash
-bun run build:rust-release
-cd docker
-docker compose up -d
+bun run build:linux-headless
 ```
 
-The default full Docker runtime identity is:
+The output is `release/linux/blinkora-server-<version>-linux-x86_64` plus its SHA-256 file. The target server runs the binary directly under systemd; configuration and data remain outside the executable. See `docs/LINUX_HEADLESS_DEPLOYMENT.md`.
 
-- web container: `blinkora-web`
-- SQLite and attachments: `docker/data/blinkora` on the host, mounted to `/app/.blinkora`
-- local URL: `http://localhost:6676`
-
-Personal macOS local persistent deployment:
+Personal macOS persistent deployment:
 
 ```bash
 bun run deploy:local install
 ```
 
-This mode runs the Rust Web service through `launchd` as `com.blinkora.local`, stores SQLite and attachments in `~/.blinkora/local/data`, and serves `http://localhost:6676`.
+This installs the Rust Web service through `launchd` as `com.blinkora.local`, stores SQLite and attachments in `~/.blinkora/local/data`, and serves `http://localhost:6676`.
 
 ## Ports
 
-- Rust Docker Web app and API: `6676`
-- Rust local persistent Web app and API: `6676`
+- Rust persistent Web app and API: `6676`
 - Rust local dev API default: `6677`
 - Frontend Vite dev server default: `5173`
 
 ## Requirements
 
-- Bun >= 1.0.0
-- Rust toolchain for `build:rust-release`, or Docker builder fallback
-- Docker for full runtime; no Docker is needed for local persistent deployment
+- A prebuilt Linux release has no Docker, Bun, Node.js, Rust, SQLite CLI, GUI, or FUSE runtime dependency.
+- Source builds require Bun 1.2.8+, Node.js 20+, and a Rust toolchain.
+- Docker is optional on build machines when the native Linux musl cross-compiler is unavailable.

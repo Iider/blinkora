@@ -4,6 +4,8 @@
 
 当前正式 SQLite 服务刻意使用新的名称和目录，不会复用旧 PostgreSQL 安装：
 
+表中的 `/docker/` 是飞牛上沿用的历史目录名，不代表服务运行在 Docker 中。
+
 | 内容 | SQLite 正式位置 |
 | --- | --- |
 | systemd 服务 | `blinkora-sqlite.service` |
@@ -21,11 +23,10 @@
 开发机先构建 x86_64 Linux release：
 
 ```bash
-TARGETARCH=amd64 DOCKER_DEFAULT_PLATFORM=linux/amd64 \
-BLINKORA_RUST_DOCKER_BUILD=1 bun run build:rust-release
+bun run build:linux-headless
 ```
 
-将单个 `blinkora-server`、`deploy/fnas/blinkora-sqlite.service` 和受限权限的 `blinkora.env` 上传到飞牛临时目录。二进制已经内置 schema 与 Web 静态资源；生产路径已经有数据时，更新只允许替换 `local/bin/blinkora-server`，不得重建或覆盖 `data/app`。
+将 `release/linux/blinkora-server-<version>-linux-x86_64`、`deploy/fnas/blinkora-sqlite.service` 和受限权限的 `blinkora.env` 上传到飞牛临时目录。安装时把发布文件命名为 `local/bin/blinkora-server`。二进制已经内置 schema 与 Web 静态资源；生产路径已经有数据时，更新只允许替换 `local/bin/blinkora-server`，不得重建或覆盖 `data/app`。
 
 环境文件的最小内容如下；`BLINKORA_SECRET` 必须使用已有服务的随机值或新生成的 32 字节随机值，绝不能填写示例文本。
 
