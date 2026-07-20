@@ -38,6 +38,8 @@ bun run deploy:local install
 bun run deploy:local status
 ```
 
+Windows 当前不在开发、构建、测试或发布范围内。不要新增 Windows 打包脚本，也不要把一次交叉编译成功视为平台支持；恢复 Windows 版本前需要先做独立设计和验收计划。
+
 ## 最小检查
 
 ```bash

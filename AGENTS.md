@@ -6,6 +6,8 @@ Blinkora is a native-binary-first, Web-only private note and memory base. The ta
 
 Blinkora is shipped as a browser app served by one Rust binary. The binary embeds the React frontend and SQLite schema; SQLite and attachments stay under `DATA_DIR`. Headless x86_64 Linux uses systemd, and personal macOS machines use `launchd`. Docker is not a runtime or deployment target; it is allowed only as an optional build-machine fallback for Linux cross-compilation. Native clients, public sharing, social features, and conversational AI features are outside the product scope.
 
+Windows is not a supported build, test, or release target. Windows development and packaging are paused; restoring them requires a new explicit design decision and platform acceptance plan.
+
 ## Tech Stack
 
 - **Frontend**: React 18, TypeScript, Vite, TailwindCSS, HeroUI
@@ -70,6 +72,7 @@ bun run verify:rust
 ## Development Boundaries
 
 - Keep the product Web-only and native-binary-first. Do not add a container runtime or container-based user deployment without a new explicit design decision.
+- Do not add Windows launchers, installers, services, packaging, or release automation without a new explicit design decision.
 - Keep production data, configuration, logs, and secrets outside the binary. Upgrades may replace the executable and maintained service definition, but never configuration or data.
 - Do not reintroduce RAG, embedding, semantic search, or conversational AI behavior without a fresh design and explicit implementation plan.
 - Do not build approval, moderation, publishing-review, or content-audit semantics on top of `isReviewed`; add a separate model if that product need is explicitly designed.

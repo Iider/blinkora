@@ -25,7 +25,10 @@ Native clients, public sharing, social features, built-in conversational AI, RAG
 | --- | --- |
 | x86_64 headless Linux | Static single binary; primary release target |
 | macOS | Native Rust service installed through `launchd` |
-| Windows and Linux arm64 | Not packaged yet |
+| Windows | Unsupported; development and release work is paused |
+| Linux arm64 | Unsupported; no release is currently planned |
+
+Windows is not a current build, test, or delivery target. Restoring support requires a new design for first-run setup, data paths, background execution, upgrades, signing, and clean-system acceptance; a successful compilation alone does not make it supported.
 
 ## Run the Linux Binary
 

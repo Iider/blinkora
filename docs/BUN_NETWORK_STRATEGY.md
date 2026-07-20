@@ -1,6 +1,6 @@
 # 国内网络下继续使用 Bun 的策略
 
-本文件记录在国内网络环境、Windows 开发环境和 Linux 发布物构建环境中使用 Bun 的推荐做法。当前运行栈为 Rust 后端加 React/Vite 前端。
+本文件记录在国内网络环境、本机 macOS 开发环境和 Linux 发布物构建环境中使用 Bun 的推荐做法。当前运行栈为 Rust 后端加 React/Vite 前端。
 
 ## 当前策略
 
@@ -36,25 +36,6 @@ bun install --lockfile-only --ignore-scripts
 ```bash
 bun install --frozen-lockfile
 ```
-
-## Windows 缓存设置
-
-建议给 Bun 设置固定缓存目录，避免每个项目重复下载大依赖。
-
-PowerShell：
-
-```powershell
-[Environment]::SetEnvironmentVariable("BUN_INSTALL_CACHE_DIR", "D:\DevCache\bun-install", "User")
-```
-
-设置后重新打开终端，再验证：
-
-```powershell
-bun --version
-bun install --frozen-lockfile
-```
-
-如果 Windows Defender 明显拖慢依赖安装，可考虑把 Bun 缓存目录加入 Defender 排除项。该操作涉及系统安全策略，应由使用者按机器情况自行决定，不写入项目脚本。
 
 ## macOS/Linux 缓存设置
 
